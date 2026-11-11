@@ -215,3 +215,53 @@ test('T7: no prompt text is kept unless config.recordPrompts is on (then redacte
     }, on ? { recordPrompts: true } : {});
   }
 });
+
+// The final assistant line of a turn is written after the Stop / SubagentStop hook has started (measurement).
+const call = (id: string, model: string, n: number) => JSON.stringify({ type: 'assistant', message: { id, model, usage: { input_tokens: n, output_tokens: n } } }) + '\n';
+
+test('costs: a subagent\'s and the lead\'s last line written after their stop are still counted', () => withDaemon(async d => {
+  const repo = makeRepo({ 'src/a.ts': 'a\n' });
+  try {
+    const main = path.join(d.home, 'late.jsonl');
+    const sub = path.join(d.home, 'agent-l1.jsonl');
+    fs.writeFileSync(main, JSON.stringify({ type: 'user', promptId: 'p-late', message: { role: 'user', content: 'x' } }) + '\n' + call('m1', 'claude-opus-5-5', 100));
+    fs.writeFileSync(sub, call('s1', 'claude-haiku-5-5', 10));
+    const post = session(d, 'late', repo, main);
+    await post({ hook_event_name: 'UserPromptSubmit', prompt: L0_PROMPT, prompt_id: 'p-late' });
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_late',
+      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x\n[scope: src/**]', model: 'haiku', effort: 'low' } });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'l1', agent_type: 'agentic-router:coder' });
+    write(repo, 'src/a.ts', 'b\n');
+    const stopped = post({ hook_event_name: 'SubagentStop', agent_id: 'l1', agent_type: 'agentic-router:coder', stop_hook_active: false, agent_transcript_path: sub });
+    setTimeout(() => fs.appendFileSync(sub, call('s2', 'claude-haiku-5-5', 20)), 150);
+    await stopped;
+    assert.deepEqual(rows(d, "SELECT calls FROM costs WHERE agent_id = 'l1' AND source = 'transcript'"), [{ calls: 2 }]);
+    const ended = post(stop());
+    setTimeout(() => fs.appendFileSync(main, call('m2', 'claude-opus-5-5', 200)), 150);
+    await ended;
+    await d.router.drain();
+    assert.equal(record(d, 'late').lead.calls, 2);
+  } finally { rmrf(repo); }
+}));
+
+test('costs: a subagent that never stopped is counted from its transcript next to the main one (partial)', () => withDaemon(async d => {
+  const main = path.join(d.home, 'cut.jsonl');
+  fs.writeFileSync(main, '');
+  const subDir = path.join(d.home, 'cut', 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.writeFileSync(path.join(subDir, 'agent-c1.jsonl'), call('x1', 'claude-opus-5-5', 1000) + call('x2', 'claude-opus-5-5', 1000) + call('x3', 'claude-opus-5-5', 1000));
+  const post = session(d, 'cut', d.home, main);
+  await post({ hook_event_name: 'UserPromptSubmit', prompt: L0_PROMPT });
+  await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_cut',
+    tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'SubagentStart', agent_id: 'c1', agent_type: 'agentic-router:coder' });
+  await post(stop('Started A in the background.'));                     // the session ends before A does
+  await d.router.drain();
+  const cost = rows(d, "SELECT calls, usd, note FROM costs WHERE agent_id = 'c1' AND source = 'transcript'");
+  assert.equal(cost.length, 1);
+  assert.equal(cost[0]!.calls, 3);
+  assert.match(String(cost[0]!.note), /partial: the subagent had not stopped when the request closed/);
+  const rec = record(d, 'cut');
+  assert.deepEqual(rec.runningAtClose, ['A']);
+  assert.ok(rec.costs.subtaskUsd > 0);
+}));

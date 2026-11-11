@@ -10,6 +10,7 @@ x-router:
   verify:
     - { kind: build, command: npm ci, ifExists: package-lock.json, ifMissing: node_modules }
     - { kind: test, command: npm test --if-present, ifExists: package.json }
+    - { kind: test, command: 'python -m pytest -q -x {relatedTests}', ifAnyExists: [pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py] }
 ---
 ## 작업 단위
 - 프롬프트 첫 줄의 `[subtask:<ID>]`가 이 작업의 ID다. 둘째 줄의 `[scope: <glob>, …]`가 수정 허용 경로이고, 없으면 저장소 전체(보호 경로 제외)다.

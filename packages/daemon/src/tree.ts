@@ -61,8 +61,8 @@ export interface TreeMarks {
 }
 
 /** Directories never entered: git internals, dependencies, Claude Code worktrees, virtualenvs. */
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.tox', '.mypy_cache', '.pytest_cache']);
-const SKIP_PATHS = ['.claude/worktrees'];
+export const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.tox', '.mypy_cache', '.pytest_cache']);
+export const SKIP_PATHS = ['.claude/worktrees'];
 export const MAX_SCAN_ENTRIES = 50_000;
 
 /**

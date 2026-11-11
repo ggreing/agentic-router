@@ -13,6 +13,37 @@ import { costUsd, type Usage } from '@agentic-router/core';
 
 export const MAX_TRANSCRIPT_BYTES = 256 * 1024 * 1024;
 
+/** Claude Code writes a turn's last assistant line after the Stop / SubagentStop hook has started. */
+export const TRANSCRIPT_QUIET_MS = 400;
+export const TRANSCRIPT_WAIT_MAX_MS = 4000;
+
+/**
+ * Waits until a transcript has not grown for `quietMs` (at most `maxMs`), so a read after a stop sees the
+ * final lines (measurement: the last call of the lead and of subagents was otherwise missed). A missing
+ * file returns at once.
+ */
+export async function waitForQuiet(file: string | undefined, quietMs = TRANSCRIPT_QUIET_MS, maxMs = TRANSCRIPT_WAIT_MAX_MS): Promise<void> {
+  if (!file) return;
+  const size = () => { try { return fs.statSync(file).size; } catch { return -1; } };
+  let last = size();
+  if (last < 0) return;
+  const end = Date.now() + maxMs;
+  let still = 0;
+  while (Date.now() < end && still < quietMs) {
+    await new Promise(r => setTimeout(r, 100));
+    const now = size();
+    still = now === last ? still + 100 : 0;
+    last = now;
+  }
+}
+
+/** A subagent's own transcript next to the main one: <session dir>/subagents/agent-<agentId>.jsonl. */
+export function subagentTranscriptPath(mainTranscript: string | undefined, agentId: string): string | undefined {
+  if (!mainTranscript || !path.isAbsolute(mainTranscript) || path.extname(mainTranscript) !== '.jsonl') return undefined;
+  if (!/^[A-Za-z0-9_-]+$/.test(agentId)) return undefined;
+  return path.join(path.dirname(mainTranscript), path.basename(mainTranscript, '.jsonl'), 'subagents', `agent-${agentId}.jsonl`);
+}
+
 export interface ModelUsage {
   modelId: string;
   calls: number;
@@ -185,6 +216,39 @@ export async function readEditedPaths(file: string | undefined, root: string): P
     return undefined;
   }
   return [...out];
+}
+
+const TAIL_BYTES = 256 * 1024;
+
+/**
+ * Decision 117: the model of the main session's latest assistant message (the end of its transcript),
+ * for a hook input that does not name the lead's model. Undefined when there is none yet.
+ */
+export function readLastModel(file: string | undefined): string | undefined {
+  if (!file || !path.isAbsolute(file) || path.extname(file) !== '.jsonl') return undefined;
+  let tail: string;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      tail = buf.subarray(0, fs.readSync(fd, buf, 0, len, size - len)).toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch {
+    return undefined;
+  }
+  const lines = tail.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (!line.includes('"assistant"')) continue;
+    try {
+      const o = JSON.parse(line) as { type?: unknown; isSidechain?: unknown; message?: { model?: unknown } };
+      const model = o.message?.model;
+      if (o.type === 'assistant' && o.isSidechain !== true && typeof model === 'string' && model !== '<synthetic>') return model;
+    } catch { /* a line cut at the read limit */ }
+  }
+  return undefined;
 }
 
 const TAG = /\[subtask:([A-Za-z0-9_-]+)\]/;

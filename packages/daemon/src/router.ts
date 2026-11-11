@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PRICING_PER_MTOK, costUsd, formatTriageContext, l3SignalRoles, ladderStep, readRoleFile, redact, triage,
+  PRICING_PER_MTOK, costUsd, formatTriageContext, l3SignalRoles, ladderStep, leadModelClass, readRoleFile, redact, stepUp, triage,
   type Level, type Role, type RouterDecision, type RouterEvent, type TeamPreset, type TriageResult, type Usage, type VerifySignal,
 } from '@agentic-router/core';
 import type { ConfigFile } from './config.ts';
@@ -21,9 +21,12 @@ import { requestChanges, takeRequestSnapshot, type ChangeStats, type RequestSnap
 import { BASH_NOT_FOUND, type Shell } from './shell.ts';
 import { checkAgentCall, isAgentTool, managedRole, parseScope, parseTag, scopeFileBody, startStep, stepOf } from './policy.ts';
 import { SessionQueue } from './queue.ts';
-import { readEditedPaths, readLeadUsage, readSubtaskTag, readTranscriptUsage, type LeadUsage, type TranscriptUsage } from './transcript.ts';
+import {
+  readEditedPaths, readLastModel, readLeadUsage, readSubtaskTag, readTranscriptUsage, subagentTranscriptPath, waitForQuiet,
+  type LeadUsage, type TranscriptUsage,
+} from './transcript.ts';
 import { resolveVerifyCommands } from './verify-source.ts';
-import { COMMAND_TIMEOUT_MS, TOTAL_TIMEOUT_MS, runVerify, type VerifyCommand, type VerifyPlan } from './verify.ts';
+import { COMMAND_TIMEOUT_MS, TOTAL_TIMEOUT_MS, isEnvFailure, runVerify, type VerifyCommand, type VerifyPlan } from './verify.ts';
 
 export interface VerifySettings {
   commandTimeoutMs: number;
@@ -63,6 +66,8 @@ export interface StatusView {
     presetSource: string | null;       // default | user | project | user+project (teams.yaml)
     forcedFrom: string | null;         // decision 107: the rules' level when config.forceLevel planned another
     replannedFrom: string | null;      // T6: the lead-direct level before the first router Agent call
+    leadModel: string | null;          // decision 117: the lead's model when the request opened
+    leadClass: string | null;          // opus | sonnet | haiku | other
   };
   roles: RoleView[];
   costUsd: number;
@@ -73,6 +78,8 @@ export interface StatusView {
   sessionCostUsd: number;
   /** Decision 97: the node, router home and port the hooks of the latest sessions report (latest 10). */
   clients: ClientRow[];
+  /** Spec 3.5 step changes: a miss raises a slot one step; stepping down after easy results waits for review scores. */
+  stepAdjust: { up: 'on'; down: 'deferred' };
 }
 
 export class Router {
@@ -95,7 +102,11 @@ export class Router {
     this.#config = o.config ?? {};
     this.#log = o.logger ?? nullLogger;
     // review #5 (budgets) and the teams.yaml layers (decision 88 gap)
-    this.#resolver = new PresetResolver({ ...(o.presets ? { base: o.presets } : {}), homeRoot: o.home.root, ...(this.#config.budgetsUsd ? { budgets: this.#config.budgetsUsd } : {}), log: this.#log });
+    this.#resolver = new PresetResolver({
+      ...(o.presets ? { base: o.presets } : {}), homeRoot: o.home.root, log: this.#log,
+      ...(this.#config.budgetsUsd ? { budgets: this.#config.budgetsUsd } : {}),
+      ...(this.#config.delegateFrom ? { delegateFrom: this.#config.delegateFrom } : {}),
+    });
     this.#verify = { commandTimeoutMs: COMMAND_TIMEOUT_MS, totalTimeoutMs: TOTAL_TIMEOUT_MS, ...o.verify };
     this.#secrets = o.secrets ?? [];
     this.#now = o.now ?? (() => new Date());
@@ -136,6 +147,9 @@ export class Router {
 
   async #handle(ev: RouterEvent): Promise<Outcome> {
     const ctx: Ctx = { requestId: null };
+    if (ev.leadModel && !ev.agentId && !ev.spooled) {
+      try { this.ledger.setSessionLeadModel(ev.sessionId, ev.leadModel, this.#at()); } catch { /* best effort */ }
+    }
     try {
       switch (ev.type) {
         case 'prompt_submit': return this.#promptSubmit(ev, ctx);
@@ -213,17 +227,27 @@ export class Router {
     }
     const req = this.#newRequest(ev, prompt);
     ctx.requestId = req.id;
-    return { context: this.#triageContext(req.triage, req.team, ev.cwd) };
+    return { context: this.#triageContext(req.triage, req.team, ev.cwd, req.leadModel) };
   }
 
   /** The brief for the lead; an uncertain triage also names the L2 team the lead would call (core). */
-  #triageContext(t: TriageResult, team: TeamPreset, cwd: string | undefined): string {
-    return formatTriageContext(t, team, this.#resolver.resolve(cwd).presets);   // the L2 and L3 of teams.yaml (decision 113)
+  #triageContext(t: TriageResult, team: TeamPreset, cwd: string | undefined, leadModel: string | null): string {
+    return formatTriageContext(t, team, this.#resolver.resolve(cwd, leadModel ?? undefined).presets);   // the L2 and L3 of teams.yaml (decision 113)
+  }
+
+  /**
+   * Decision 117: the lead's model for a new request: the hook input's, else the model of the main
+   * transcript's latest assistant message (a /model switch shows there), else the last one a hook input
+   * of the session named. Undefined: not known ('other', delegation from L2).
+   */
+  #leadModelFor(ev: RouterEvent): string | undefined {
+    return ev.leadModel ?? readLastModel(str(ev.raw.transcript_path)) ?? this.ledger.sessionLeadModel(ev.sessionId);
   }
 
   /** Opens a request; a pending `/router level` of the session (kept in the ledger) applies to it and is used up. */
   #newRequest(ev: RouterEvent, prompt: string, rationale?: string, when: { createdAt?: string; closedAt?: string } = {}): RequestRow {
-    const { presets, source } = this.#resolver.resolve(ev.cwd);
+    const leadModel = this.#leadModelFor(ev);
+    const { presets, source } = this.#resolver.resolve(ev.cwd, leadModel);
     const t = triage({ prompt, ...(ev.cwd ? { cwd: ev.cwd } : {}) }, presets);
     if (rationale) t.rationale = rationale;
     // Decision 107: a forced level (benchmarks, debugging) wins over the rules and over /router level.
@@ -235,7 +259,7 @@ export class Router {
         id: `r-${randomUUID()}`, sessionId: ev.sessionId, promptId: str(ev.raw.prompt_id) ?? null,
         createdAt: when.createdAt ?? (ev.spooled && ev.receivedAt ? ev.receivedAt : this.#at()),
         ...(when.closedAt ? { closedAt: when.closedAt } : {}),
-        triage: final, team: presets[final.level], presetSource: source,
+        triage: final, team: presets[final.level], presetSource: source, leadModel: leadModel ?? null, leadClass: leadModelClass(leadModel),
         ...(forced ? { forcedFrom: t.level } : {}),
       });
       if (!manual) return req;
@@ -286,12 +310,45 @@ export class Router {
         promptIds: new Set(prompts.map(p => p.promptId).filter((x): x is string => !!x)),
         from: req.createdAt, to: req.closedAt ?? this.#at(),
       };
-      const [changes, lead] = await Promise.all([
+      await waitForQuiet(transcript);
+      const [changes, lead, agents] = await Promise.all([
         snap ? requestChanges(snap).catch(e => { this.#log.warn('request changes not counted', { requestId, error: errorText(e) }); return null; }) : Promise.resolve(null),
         readLeadUsage(transcript, span),
+        this.#rereadAgents(requestId, transcript),
       ]);
-      await this.#queue.run(ev.sessionId || '_', () => this.#writeRecord(requestId, changes, lead, prompts));
+      await this.#queue.run(ev.sessionId || '_', () => {
+        for (const a of agents) this.#applyReread(a, requestId);
+        this.#writeRecord(requestId, changes, lead, prompts);
+      });
     })());
+  }
+
+  /**
+   * The cost of every agent of a request, read again when the request closes: a subagent whose last lines
+   * came after its stop, and one that never stopped (still running, or cut off when the session ended;
+   * its transcript is found next to the main one) are counted as far as their transcript goes.
+   */
+  async #rereadAgents(requestId: string, mainTranscript: string | undefined): Promise<Array<{ agentId: string; subtaskId: string | null; running: boolean; usage: TranscriptUsage }>> {
+    const out: Array<{ agentId: string; subtaskId: string | null; running: boolean; usage: TranscriptUsage }> = [];
+    for (const a of this.ledger.listAgents(requestId)) {
+      const file = a.transcriptPath ?? subagentTranscriptPath(mainTranscript, a.agentId);
+      if (!file || !fs.existsSync(file)) continue;
+      await waitForQuiet(file, 200, 1000);
+      out.push({ agentId: a.agentId, subtaskId: a.subtaskId, running: !a.stoppedAt, usage: await readTranscriptUsage(file) });
+    }
+    return out;
+  }
+
+  /** Replaces an agent's transcript cost when the new read found more API calls than were recorded. */
+  #applyReread(a: { agentId: string; subtaskId: string | null; running: boolean; usage: TranscriptUsage }, requestId: string): void {
+    if (!a.usage.ok || !a.usage.models.length) return;
+    const recorded = this.ledger.listCosts(requestId).filter(c => c.agent_id === a.agentId && c.source === 'transcript').reduce((s, c) => s + Number(c.calls ?? 0), 0);
+    const found = a.usage.models.reduce((s, m) => s + m.calls, 0);
+    if (found <= recorded) return;
+    const managed = !!a.subtaskId;
+    this.#recordTranscriptCost({ type: 'subagent_stop', sessionId: '', raw: {} } as unknown as RouterEvent, a.agentId, requestId, a.subtaskId, a.usage, managed,
+      a.running ? 'partial: the subagent had not stopped when the request closed' : undefined);
+    this.#log.info('subagent cost read again at request close', { requestId, agentId: a.agentId, calls: { recorded, found }, running: a.running });
   }
 
   #writeRecord(requestId: string, changes: ChangeStats | null, lead: LeadUsage, prompts: Array<{ promptId: string | null; notification: boolean }>): void {
@@ -315,7 +372,7 @@ export class Router {
     const subCost = (id: string) => round6(costs.filter(c => c.subtask_id === id && (c.source === 'transcript' || c.source === 'estimate') && c.usd !== null)
       .reduce((a, c) => a + Number(c.usd), 0));
     // the rules' own judgement: not a manual /router level and not the T6 re-plan
-    type Judged = TriageResult & { kind?: string; rule?: string; teamScore?: number; features?: Record<string, unknown> };
+    type Judged = TriageResult & { kind?: string; rule?: string; teamScore?: number; l3Signs?: boolean; features?: Record<string, unknown> };
     const all = [r.overriddenTriage, r.replannedFrom, r.triage].filter((x): x is TriageResult => !!x) as Judged[];
     const judged = all.find(t => t.source !== 'manual' && !/^re-planned at L[23]/.test(t.rationale)) ?? (r.triage as Judged);
     const extras = this.ledger.requestExtras(requestId);
@@ -328,13 +385,14 @@ export class Router {
       version: 1,
       triage: {
         kind: judged.kind ?? null, level: r.forcedFrom ?? judged.level, confidence: judged.confidence, source: judged.source,
-        rule: judged.rule ?? null, teamScore: judged.teamScore ?? null, taskType: judged.taskType, rationale: judged.rationale,
+        rule: judged.rule ?? null, teamScore: judged.teamScore ?? null, l3Signs: judged.l3Signs ?? null, taskType: judged.taskType, rationale: judged.rationale,
       },
       features: judged.features ?? null,
       plan: {
         level: r.level, preset: r.preset, leadDirect: r.team.leadDirect === true, presetSource: r.presetSource, budgetUsd: r.budgetUsd,
         forcedFrom: r.forcedFrom, replannedFrom: r.replannedFrom?.level ?? null,
         manualLevel: [r.triage, r.replannedFrom, r.overriddenTriage].find(t => t?.source === 'manual')?.level ?? null,
+        leadModel: r.leadModel, leadClass: r.leadClass,
       },
       outcome,
       changes,
@@ -344,6 +402,7 @@ export class Router {
         id: s.id, role: s.role, slot: s.slot, step: s.step, upCount: s.upCount, status: s.status, verdict: s.verdict, attempts: s.attempts, costUsd: subCost(s.id),
       })),
       verifyFailures: this.ledger.listAgents(requestId).reduce((a, x) => a + x.failCount, 0),
+      runningAtClose: subs.filter(s => s.status === 'running' || s.status === 'pending').map(s => s.id),
       lead: lead.ok
         ? { calls: lead.calls, model: lead.leadModel, models: lead.models, usd: round6(r.leadCostUsd), matchedBy: lead.matchedBy }
         : { calls: null, model: null, models: [], usd: null, reason: lead.reason },
@@ -386,7 +445,7 @@ export class Router {
   #routerLevel(ev: RouterEvent, level: Level | null, latest: RequestRow | undefined, ctx: Ctx): RouterDecision {
     if (!level) return { userMessage: '[agentic-router] usage: /router level L0|L1|L2|L3' };
     if (latest && latest.status !== 'closed') {
-      const { presets } = this.#resolver.resolve(ev.cwd);
+      const { presets } = this.#resolver.resolve(ev.cwd, latest.leadModel ?? undefined);
       const t = this.#manualTriage(latest.triage, level, presets);
       const team = presets[level];
       this.ledger.replanRequest(latest.id, t, team);
@@ -394,7 +453,7 @@ export class Router {
       ctx.requestId = latest.id;
       return {
         context: [
-          this.#triageContext(t, team, ev.cwd),
+          this.#triageContext(t, team, ev.cwd, latest.leadModel),
           `[agentic-router] level set manually to ${level} for request ${latest.id} (was ${latest.level}). Subtasks already running keep their step; new Agent calls must use the steps above.`,
         ].join('\n'),
       };
@@ -410,11 +469,12 @@ export class Router {
    * means L3; anything else means L2 (a call that matches neither team is then denied against L2). An L3
    * team that is lead-direct is never chosen.
    */
-  #escalate(req: RequestRow, ev: RouterEvent, role: Role, model: string | undefined, effort: string | undefined): RequestRow {
-    const { presets } = this.#resolver.resolve(ev.cwd);
+  #escalate(req: RequestRow, ev: RouterEvent, role: Role, model: string | undefined, effort: string | undefined, onlyL3 = false): RequestRow {
+    const { presets } = this.#resolver.resolve(ev.cwd, req.leadModel ?? undefined);
     const asked = stepOf(model, effort)?.step;
-    const signals = presets.L3.leadDirect ? [] : l3SignalRoles(presets.L2, presets.L3);
+    const signals = presets.L3.leadDirect ? [] : l3SignalRoles(onlyL3 ? req.team : presets.L2, presets.L3);
     const level: Level = asked && signals.includes(role) && asked === startStep(presets.L3, 'L3', role) ? 'L3' : 'L2';
+    if (onlyL3 && level !== 'L3') return req;   // a team request stays at its level
     const team = presets[level];
     const t = withKind({
       ...req.triage, level, preset: team.id, budgetUsd: team.budgetUsd,
@@ -422,6 +482,15 @@ export class Router {
     }, team);
     this.#log.info('lead-direct request re-planned as a team request', { requestId: req.id, from: req.level, to: level });
     return this.ledger.escalateRequest(req.id, t, team);
+  }
+
+  /**
+   * Decision 119: an L2 team request whose triage saw L3 signs (planned as L2) may still become L3 on its
+   * first Agent call; not one set by /router level or config.forceLevel.
+   */
+  #offersL3(req: RequestRow): boolean {
+    return (req.triage as { l3Signs?: unknown }).l3Signs === true && req.level === 'L2' && req.triage.source !== 'manual'
+      && !req.forcedFrom && !req.replannedFrom && this.ledger.listSubtasks(req.id).length === 0;
   }
 
   /** The request an Agent call belongs to; when the prompt was missed (daemon restart) a default one is opened. */
@@ -464,6 +533,9 @@ export class Router {
     // T6 (decisions 104-111): the lead of a lead-direct request decided to delegate: the request becomes
     // a team request at L2, and this call is checked against the L2 team like any other.
     if (req.team.leadDirect) req = this.#escalate(req, ev, role, str(input.model), str(input.effort));
+    // decision 119: an automatic L3 is planned with the L2 team; its brief offers the L3 team, which the
+    // lead takes by making its first call at the L3 start step of a signal role
+    else if (this.#offersL3(req)) req = this.#escalate(req, ev, role, str(input.model), str(input.effort), true);
 
     const subtasks = this.ledger.listSubtasks(req.id);
     const active = (s: SubtaskRow) => s.status === 'pending' || s.status === 'running';
@@ -476,6 +548,7 @@ export class Router {
       fableOptIn: this.#config.fableOptIn === true,
       busySlots: subtasks.filter(s => s.role === role && active(s) && s.id !== tag).map(s => s.slot),
       tagBusy,
+      slotSteps: Object.fromEntries(this.ledger.getSlots(req.id).filter(x => x.role === role).map(x => [x.slot, x.step])),
       ...(str(input.model) ? { model: str(input.model)! } : {}),
       ...(str(input.effort) ? { effort: str(input.effort)! } : {}),
     });
@@ -568,6 +641,33 @@ export class Router {
     return this.ledger.getAgent(agent.agentId);
   }
 
+  /**
+   * Spec 3.5: two failures in a row (a miss) raise the slot one ladder step; the next Agent call for that
+   * slot must use it. After MAX_STEP_UPS raises (or at the top step) a further miss goes to the user.
+   * Stepping down after easy results needs review scores and is not done yet.
+   */
+  #stepUpAfterMiss(requestId: string, sub: SubtaskRow, at: string): void {
+    const state = this.ledger.getSlots(requestId).find(x => x.role === sub.role && x.slot === sub.slot);
+    const ups = state?.upCount ?? 0;
+    const next = ups < MAX_STEP_UPS ? stepUp(sub.step, this.#config.fableOptIn === true) : null;
+    if (!next) {
+      this.ledger.updateSubtask(requestId, sub.id, { status: 'hitl', verdict: 'miss' }, at);
+      this.#log.warn('miss with no step left to try: the user decides', { requestId, subtaskId: sub.id, step: sub.step, ups });
+      return;
+    }
+    this.ledger.setSlot(requestId, sub.role, sub.slot, next, ups + 1, at);
+    this.ledger.updateSubtask(requestId, sub.id, { status: 'failed', verdict: 'miss', upCount: ups + 1 }, at);
+    this.#log.info('slot raised after a miss', { requestId, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: sub.step, to: next });
+  }
+
+  /** Spec 3.5: the step a slot now runs at after this subtask's miss, for the lead's next call. */
+  #raisedNote(sub: SubtaskRow): string {
+    const state = this.ledger.getSlots(sub.requestId).find(x => x.role === sub.role && x.slot === sub.slot);
+    if (!state || state.step === sub.step) return '';
+    const st = ladderStep(state.step);
+    return ` The ${sub.role} slot ${sub.slot} now runs one step higher, at ${state.step} (model="${st.alias}", effort="${st.effort}"): a new attempt must use these values.`;
+  }
+
   /** Moves an agent to another subtask of its request (the order-based pairing was wrong). */
   #rebind(agent: AgentRow, sub: SubtaskRow, by: string): void {
     const at = this.#at();
@@ -614,12 +714,13 @@ export class Router {
     // Replayed after an outage: the agent is long gone, nothing to verify or block.
     const plan = !ev.spooled && agent && sub && cwd ? this.#planVerify(agent, sub, cwd) : undefined;
     if (ev.spooled && agent) this.ledger.updateAgent(agentId, { stoppedAt: this.#at() });
+    if (agent && ev.agentTranscriptPath) this.ledger.updateAgent(agentId, { transcriptPath: ev.agentTranscriptPath });
     return {
       deferred: async () => {
-        const [usage, signals] = await Promise.all([
-          readTranscriptUsage(ev.agentTranscriptPath),
-          plan ? this.#runPlan(plan, sub!, agent!, ev.agentTranscriptPath) : Promise.resolve(undefined),
-        ]);
+        // verify first: by then Claude Code has written the subagent's last lines (measurement, decision 107 runs)
+        const signals = plan ? await this.#runPlan(plan, sub!, agent!, ev.agentTranscriptPath) : undefined;
+        await waitForQuiet(ev.agentTranscriptPath);
+        const usage = await readTranscriptUsage(ev.agentTranscriptPath);
         return () => {
           this.#recordTranscriptCost(ev, agentId, requestId, agent?.subtaskId ?? null, usage, managed);
           if (signals && plan) return this.#finishStop(ev, agentId, signals, plan);
@@ -630,7 +731,7 @@ export class Router {
     };
   }
 
-  #recordTranscriptCost(ev: RouterEvent, agentId: string, requestId: string | null, subtaskId: string | null, usage: TranscriptUsage, managed: boolean): void {
+  #recordTranscriptCost(ev: RouterEvent, agentId: string, requestId: string | null, subtaskId: string | null, usage: TranscriptUsage, managed: boolean, extraNote?: string): void {
     try {
       const at = this.#at();
       const base = { requestId, subtaskId, agentId, source: 'transcript' as const, createdAt: at };
@@ -659,6 +760,7 @@ export class Router {
         : [{ ...base, modelId: null, calls: 0, inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, usd: null, note: `unknown: ${reason}` }];
       if (!reason && rows.some(r => r.usd === null)) reason = 'model without a price';
       if (rows.some(r => r.source === 'estimate')) this.#log.warn('part of a subagent cost estimated: a model without a price', { agentId, requestId });
+      if (extraNote) for (const r of rows) (r as { note?: string }).note = (r as { note?: string }).note ? `${(r as { note?: string }).note}; ${extraNote}` : extraNote;
       // Decision 84: an estimate from the task notification stays until a readable transcript replaces it.
       if (reason && this.ledger.agentCostState(agentId) === 'estimate') {
         this.#log.warn('subagent transcript unreadable: keeping the notification estimate', { agentId, requestId, reason });
@@ -733,7 +835,7 @@ export class Router {
           return `${head}: the subagent ended with an error before it finished; verify did not run${tail}. Decide: dispatch a new attempt or report to the user.`;
         }
         return `${head}: verify failed again after one fix attempt (miss) — ${checks}${firstFailure ? `. First failure: ${firstFailure}` : ''}${tail}.`
-          + ' Decide: dispatch a new attempt with what failed, or report to the user.';
+          + this.#raisedNote(sub) + ' Decide: dispatch a new attempt with what failed, or report to the user.';
       case 'hitl': {
         if (sub.verdict === 'held') {
           if (signals.some(x => x.detail?.includes(`: held, ${BASH_NOT_FOUND}`))) {
@@ -743,7 +845,14 @@ export class Router {
           return `${head}: verify held: ${files ?? 'its inputs'} changed; ask the user to confirm before running${tail}.`;
         }
         if (sub.verdict === 'unverified') {
+          const env = signals.filter(isEnvFailure).map(x => (x.detail ?? '').split('; verify cannot run')[0]);
+          if (env.length) {
+            return `${head}: verify could not run in this environment (${env.join('; ')}); this is not counted as a failure, check the result yourself before relying on it${tail}.`;
+          }
           return `${head}: verify did not run (router was offline); check the result yourself before relying on it${tail}.`;
+        }
+        if (sub.verdict === 'miss') {
+          return `${head}: verify failed again at step ${sub.step} after ${MAX_STEP_UPS} step-ups — ${checks}${tail}. Ask the user how to continue (spec 3.5).`;
         }
         return `${head}: needs the user's decision before it can continue${tail}.`;
       }
@@ -834,7 +943,14 @@ export class Router {
         else this.#log.warn('verify held: its inputs changed during the subtask', { agentId, subtaskId: sub.id, files: outcome.held });
         return NONE;
       }
-      const failed = signals.filter(x => !x.ok);
+      // Decision 122: a check that could not run here (a tool is missing) is not the subagent's failure.
+      const failed = signals.filter(x => !x.ok && !isEnvFailure(x));
+      if (!failed.length && signals.some(isEnvFailure)) {
+        this.ledger.updateAgent(agentId, { stopCount: attempt, stoppedAt: at });
+        this.ledger.updateSubtask(agent.requestId, sub.id, { status: 'hitl', verdict: 'unverified' }, at);
+        this.#log.warn('verify could not run in this environment: subtask left unverified', { agentId, subtaskId: sub.id, commands: outcome.envMissing });
+        return NONE;
+      }
       if (!failed.length) {
         this.ledger.updateAgent(agentId, { stopCount: attempt, stoppedAt: at });
         this.ledger.updateSubtask(agent.requestId, sub.id, { status: 'passed', verdict: 'meet' }, at);
@@ -847,7 +963,7 @@ export class Router {
         return { block: { reason: blockReason(sub.id, failed, agent.snapshot?.isolated === false) } };
       }
       this.ledger.updateAgent(agentId, { stopCount: attempt, failCount: fails, stoppedAt: at });
-      this.ledger.updateSubtask(agent.requestId, sub.id, { status: 'failed', verdict: 'miss' }, at);
+      this.#stepUpAfterMiss(agent.requestId, sub, at);
       return NONE;
     } catch (e) {
       this.#log.error('subagent_stop finish failed', { agentId, error: errorText(e) });
@@ -1076,7 +1192,7 @@ export class Router {
       return `${s.id} ${s.role}#${s.slot} @${s.step} (model=${st.alias}, effort=${st.effort}) ${s.status}${s.verdict ? `/${s.verdict}` : ''}`;
     });
     return [
-      this.#triageContext(r.triage, r.team, undefined),
+      this.#triageContext(r.triage, r.team, undefined, r.leadModel),
       `[agentic-router] ledger (${why}): request ${r.id}, spent $${r.usedUsd.toFixed(4)} of $${r.budgetUsd}.`,
       subs.length ? `subtasks: ${subs.join('; ')}.` : 'no subtasks dispatched yet.',
     ].join('\n');
@@ -1085,8 +1201,10 @@ export class Router {
   status(sessionId?: string): StatusView {
     const r = sessionId ? this.ledger.latestRequest(sessionId) : this.ledger.latestRequestAny();
     const clients = this.ledger.recentClients(10);
-    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients };
+    const stepAdjust = { up: 'on', down: 'deferred' } as const;
+    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust };
     const subs = this.ledger.listSubtasks(r.id);
+    const slots = this.ledger.getSlots(r.id);
     const roles: RoleView[] = [];
     const seen = new Set<string>();
     const view = (role: string, slot: number, step: RoleView['step'], status: string, subtaskId: string | null): RoleView => {
@@ -1097,7 +1215,8 @@ export class Router {
       for (let slot = 0; slot < m.count; slot++) {
         const last = [...subs].reverse().find(s => s.role === m.role && s.slot === slot);
         seen.add(`${m.role}#${slot}`);
-        roles.push(last ? view(m.role, slot, last.step, last.status, last.id) : view(m.role, slot, m.start, 'idle', null));
+        const raised = slots.find(x => x.role === m.role && x.slot === slot)?.step;   // spec 3.5: the slot's step after a miss
+        roles.push(last ? view(m.role, slot, raised ?? last.step, last.status, last.id) : view(m.role, slot, raised ?? m.start, 'idle', null));
       }
     }
     for (const s of [...subs].reverse()) {
@@ -1111,12 +1230,14 @@ export class Router {
         budgetUsd: r.budgetUsd, usedUsd: r.usedUsd, leadCostUsd: r.leadCostUsd, confidence: r.triage.confidence, source: r.triage.source,
         leadDirect: r.team.leadDirect === true, outcome: r.outcome,
         presetSource: r.presetSource, forcedFrom: r.forcedFrom, replannedFrom: r.replannedFrom?.level ?? null,
+        leadModel: r.leadModel, leadClass: r.leadClass,
       },
       roles,
       costUsd: round6(r.usedUsd + r.leadCostUsd),
       ...((f) => ({ costEstimated: f.estimated, costUnknown: f.unknown }))(this.ledger.costFlags(r.id)),
       sessionCostUsd: round6(this.ledger.sessionCostUsd(r.sessionId)),
       clients,
+      stepAdjust,
     };
   }
 }
@@ -1143,6 +1264,8 @@ export function outputRateEstimate(modelId: string, tokens: number): number | nu
 const MAX_COMPACT_SUBTASKS = 20;
 /** Audit #11: an allowed subtask whose subagent has not started after this long never will. */
 const STALE_PENDING_MS = 30_000;
+/** Spec 3.5: at most this many step-ups per slot; a further miss is the user's decision. */
+const MAX_STEP_UPS = 3;
 /** Tools that write files (decision 103): a role file without any of them is read-only. */
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 /** Audit #14: the fallback for pricing an unknown model's tokens when the subagent's step is not known. */

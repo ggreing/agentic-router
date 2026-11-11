@@ -84,6 +84,8 @@ export interface AgentCallInput {
   fableOptIn: boolean;
   busySlots: number[];          // slots of this role whose subtask is pending or running
   tagBusy: boolean;             // the same subtask ID is already pending or running
+  /** Spec 3.5: the step a slot of this role was raised to after a miss (absent: the preset's start). */
+  slotSteps?: Record<number, Step>;
   ladder?: readonly LadderStep[];
 }
 
@@ -104,27 +106,34 @@ export function checkAgentCall(i: AgentCallInput): AgentCallCheck {
     const team = i.preset.roles.map(r => `${r.role} x${r.count}`).join(', ');
     return { ok: false, reason: `${id}: the ${i.level} team is fixed (${team}); a ${i.role} cannot be added.` };
   }
-  const expected = member?.start ?? defaultStartStep(i.level, i.role);
+  const start = member?.start ?? defaultStartStep(i.level, i.role);
+  const stepFor = (slot: number): Step => i.slotSteps?.[slot] ?? start;
+
+  // Free slots of the role, in order; past the team's count only when the lead may adjust the team.
+  const count = member?.count ?? 0;
+  const free: number[] = [];
+  for (let s = 0; s < count; s++) if (!i.busySlots.includes(s)) free.push(s);
+  if (!free.length) {
+    if (!i.preset.leadMayAdjust) return { ok: false, reason: `${id}: all ${count} ${i.role} slot(s) of the ${i.level} team are busy; wait for one to finish (a subtask that was allowed but never started can be dispatched again with the same ID).` };
+    free.push(firstFree(i.busySlots, count, Number.MAX_SAFE_INTEGER)!);
+  }
+  const expected = stepFor(free[0]!);
   const exp = ladder.find(s => s.step === expected);
   if (!exp) return { ok: false, reason: `${id}: ladder step ${expected} is not defined.` };
+  const where = (slot: number) => (i.slotSteps?.[slot] ? ` (slot ${slot} was raised to ${i.slotSteps[slot]} after a miss)` : '');
 
   if (exp.optIn && !i.fableOptIn) return { ok: false, reason: `${id}: step ${expected} needs the Fable opt-in, which is off.` };
   const asked = stepOf(i.model, i.effort, ladder);
   if (!i.model || !i.effort) {
-    return { ok: false, reason: `${id}: pass model and effort on the Agent call. The ${i.role} runs at step ${expected} (${describe(exp)}) for this ${i.level} request.` };
+    return { ok: false, reason: `${id}: pass model and effort on the Agent call. The ${i.role} runs at step ${expected} (${describe(exp)}) for this ${i.level} request${where(free[0]!)}.` };
   }
   if (asked?.optIn && !i.fableOptIn) return { ok: false, reason: `${id}: step ${asked.step} (Fable) needs the opt-in, which is off. Use ${describe(exp)}.` };
-  if (!asked || asked.step !== expected) {
-    return { ok: false, reason: `${id}: the ${i.role} runs at step ${expected} (${describe(exp)}) for this ${i.level} request, but the call asked for model="${i.model}", effort="${i.effort}". Call again with ${describe(exp)}.` };
+  // the first free slot takes the call, at its own step: a slot raised after a miss is used next (spec 3.5)
+  const slot = free[0]!;
+  if (!asked || asked.step !== stepFor(slot)) {
+    return { ok: false, reason: `${id}: the ${i.role} runs at step ${expected} (${describe(exp)}) for this ${i.level} request${where(free[0]!)}, but the call asked for model="${i.model}", effort="${i.effort}". Call again with ${describe(exp)}.` };
   }
-
-  const count = member?.count ?? 0;
-  let slot = firstFree(i.busySlots, 0, count);
-  if (slot === undefined) {
-    if (!i.preset.leadMayAdjust) return { ok: false, reason: `${id}: all ${count} ${i.role} slot(s) of the ${i.level} team are busy; wait for one to finish (a subtask that was allowed but never started can be dispatched again with the same ID).` };
-    slot = firstFree(i.busySlots, count, Number.MAX_SAFE_INTEGER)!;
-  }
-  return { ok: true, slot, step: expected };
+  return { ok: true, slot, step: stepFor(slot) };
 }
 
 function firstFree(busy: number[], from: number, to: number): number | undefined {

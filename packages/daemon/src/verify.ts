@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SignalKind, VerifySignal } from '@agentic-router/core';
+import { RELATED_TESTS_PLACEHOLDER, type SignalKind, type VerifySignal } from '@agentic-router/core';
 import { verifyEnv } from './env.ts';
 import {
   changedFiles, differsFromIndex, eolOnlyVsRef, fileFingerprint, flaggedFiles, gitMetaChanges, gitMetaOf, headRef, repoRoot,
@@ -12,7 +12,7 @@ import {
 import { matchesAny, matchesScope, scopeCaseInsensitive } from './glob.ts';
 import { tailText } from './payload.ts';
 import { verifyShell, zeroTestsRan, type Shell } from './shell.ts';
-import { changedKeys, eolOnly, sameContent, scanTree, type TreeMarks } from './tree.ts';
+import { SKIP_DIRS, SKIP_PATHS, changedKeys, eolOnly, sameContent, scanTree, type TreeMarks } from './tree.ts';
 
 export interface VerifyCommand {
   kind: SignalKind;
@@ -22,6 +22,8 @@ export interface VerifyCommand {
   ifExists?: string;
   /** Repo-relative path; while it exists the step is skipped and recorded as ok (decision 86), e.g. an install step. */
   ifMissing?: string;
+  /** Decision 122: repo-relative paths; the step runs when any of them exists (e.g. the pytest config files). */
+  ifAnyExists?: string[];
 }
 
 /** Decision Q2: 120 s per command, 240 s for the whole verification. */
@@ -59,6 +61,8 @@ export interface VerifyOutcome {
   artifacts?: Record<string, string>;
   /** Decision 98: no bash to run the commands in; they were held, not run. */
   noShell?: string;
+  /** Decision 122: commands that failed because a tool is missing here (not the subagent's failure). */
+  envMissing?: string[];
 }
 
 export interface VerifyPlan {
@@ -114,6 +118,11 @@ export async function runVerify(plan: VerifyPlan): Promise<VerifySignal[]> {
       if (present === 'invalid') { out.push({ kind: c.kind, ok: false, detail: `${c.command}: invalid ifExists path "${c.ifExists}"` }); continue; }
       if (!present) { out.push({ kind: c.kind, ok: true, detail: `${c.command}: skipped (no ${c.ifExists})` }); continue; }
     }
+    if (c.ifAnyExists !== undefined) {
+      const found = c.ifAnyExists.map(p => existsInTree(plan.root ?? plan.cwd, p));
+      if (found.includes('invalid')) { out.push({ kind: c.kind, ok: false, detail: `${c.command}: invalid ifAnyExists path in [${c.ifAnyExists.join(', ')}]` }); continue; }
+      if (!found.includes(true)) { out.push({ kind: c.kind, ok: true, detail: `${c.command}: skipped (none of ${c.ifAnyExists.join(', ')})` }); continue; }
+    }
     if (c.ifMissing !== undefined) {
       const present = existsInTree(plan.root ?? plan.cwd, c.ifMissing);
       if (present === 'invalid') { out.push({ kind: c.kind, ok: false, detail: `${c.command}: invalid ifMissing path "${c.ifMissing}"` }); continue; }
@@ -131,14 +140,27 @@ export async function runVerify(plan: VerifyPlan): Promise<VerifySignal[]> {
       out.push({ kind: c.kind, ok: false, detail: `${c.command}: held, ${shell.reason}` });
       continue;
     }
+    // decision 122: {relatedTests} becomes the test files related to this subtask's changes
+    let command = c.command;
+    if (command.includes(RELATED_TESTS_PLACEHOLDER)) {
+      const tests = relatedTests(plan.root ?? plan.cwd, sc?.changed ?? []);
+      if (!tests.length) { out.push({ kind: c.kind, ok: true, detail: `${c.command}: no related tests (not run; neither a pass nor a miss)` }); continue; }
+      command = command.split(RELATED_TESTS_PLACEHOLDER).join(tests.map(shQuote).join(' '));
+    }
     const limit = Math.min(c.timeoutMs ?? plan.commandTimeoutMs ?? COMMAND_TIMEOUT_MS, left);
-    const r = await runCommand(c.command, plan.cwd, limit, plan.signal, { env, shell });
-    const zero = !r.timedOut && !r.aborted ? zeroTestsRan(c.command, r.output, r.code) : undefined;
+    const r = await runCommand(command, plan.cwd, limit, plan.signal, { env, shell });
+    const zero = !r.timedOut && !r.aborted ? zeroTestsRan(command, r.output, r.code) : undefined;
     const ok = !r.timedOut && !r.aborted && r.code === 0 && !zero;
     const status = r.aborted ? 'aborted' : r.timedOut ? `timed out after ${Math.round(limit / 1000)}s`
       : zero ? `0 tests ran (${zero}; exit ${r.code ?? r.signal})` : `exit ${r.code ?? r.signal}`;
+    const missing = !ok && !zero && !r.timedOut && !r.aborted ? missingTool(r.code, r.output) : undefined;
+    if (missing) {
+      outcome.envMissing = [...(outcome.envMissing ?? []), c.command];
+      out.push({ kind: c.kind, ok: false, detail: `${command}: ${ENV_MARK}${missing} (exit ${r.code ?? r.signal}); verify cannot run this here, not counted as the subagent's failure` });
+      continue;
+    }
     const tail = ok ? '' : tailText(r.output, DETAIL_MAX, plan.secrets);
-    out.push({ kind: c.kind, ok, detail: `${c.command}: ${status}${tail ? `\n${tail}` : ''}` });
+    out.push({ kind: c.kind, ok, detail: `${command}: ${status}${tail ? `\n${tail}` : ''}` });
   }
   // What the commands themselves wrote (build info, caches) is recorded so the next stop does not count it.
   if (sc?.state && snap && plan.commands.length && !plan.signal?.aborted) {
@@ -161,6 +183,67 @@ export async function runVerify(plan: VerifyPlan): Promise<VerifySignal[]> {
   }
   if (sc) out.push(sc.signal);
   return out;
+}
+
+const TEST_FILE = /(^|\/)(test_[^/]*\.py|[^/]*_test\.py|[^/]*\.(test|spec)\.[cm]?[jt]sx?)$/;
+const MAX_RELATED = 50;
+
+/**
+ * Decision 122: the test files related to a subtask's changes: test files it changed or added, and for a
+ * changed module the tests named after it (test_<m>.py / <m>_test.py, <m>.test.* / <m>.spec.*) anywhere in
+ * the tree (dependencies, virtualenvs and git internals skipped). Sorted, at most MAX_RELATED.
+ */
+export function relatedTests(root: string, changed: readonly string[]): string[] {
+  const out = new Set<string>();
+  const names = new Set<string>();
+  for (const f of changed) {
+    if (!fs.existsSync(path.join(root, f))) continue;
+    if (TEST_FILE.test(f)) { out.add(f); continue; }
+    const base = path.posix.basename(f);
+    const py = /^(.+)\.py$/.exec(base);
+    if (py && py[1] !== '__init__' && py[1] !== 'conftest') { names.add(`test_${py[1]}.py`); names.add(`${py[1]}_test.py`); continue; }
+    const js = /^(.+)\.([cm]?[jt]sx?)$/.exec(base);
+    if (js) for (const k of ['test', 'spec']) names.add(`${js[1]}.${k}.${js[2]}`);
+  }
+  if (names.size) {
+    let seen = 0;
+    const walk = (dir: string, rel: string) => {
+      let entries: fs.Dirent[];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (++seen > 50_000) return;
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name) && !SKIP_PATHS.includes(r)) walk(path.join(dir, e.name), r); continue; }
+        if (e.isFile() && names.has(e.name)) out.add(r);
+      }
+    };
+    walk(root, '');
+  }
+  return [...out].sort().slice(0, MAX_RELATED);
+}
+
+/** A path as one bash word. */
+const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** Marks a signal whose command could not run in this environment (decision 122). */
+export const ENV_MARK = 'environment: ';
+
+export const isEnvFailure = (s: VerifySignal) => !s.ok && s.kind !== 'scope' && (s.detail ?? '').includes(`: ${ENV_MARK}`);
+
+/**
+ * Decision 122: a failure because a program is not installed here (bash "command not found" / exit 127,
+ * cmd.exe "is not recognized as an internal or external command", e.g. npm scripts on Windows) says
+ * nothing about the subagent's work. Returns what was missing, or undefined.
+ */
+export function missingTool(code: number | null, output: string): string | undefined {
+  const cmd = /'([^'\r\n]+)' is not recognized as an internal or external command/.exec(output);
+  if (cmd) return `${cmd[1]} not found`;
+  const sh = /(?:^|\n)(?:[^\n:]*: )?(?:line \d+: |\d+: )?([^\s:'"]+): (?:command )?not found\b/.exec(output);
+  if (sh && /command not found|: not found/.test(output)) return `${sh[1]} not found`;
+  if (/command not found|is not recognized as an internal or external command/.test(output)) return 'a command was not found';
+  if (/No module named '?pytest'?(\s|$)/.test(output)) return 'pytest not installed';   // the test runner itself is missing
+  if (code === 127) return 'a command was not found (exit 127)';
+  return undefined;
 }
 
 /** Repo-relative path syntax accepted for `ifExists` / `ifMissing` (same rule as core's role file schema). */
@@ -252,6 +335,8 @@ interface ScopeResult {
   /** Fingerprints of the changed files at check time (before the verify commands). */
   state?: Record<string, string>;
   meta?: GitMeta;
+  /** Files changed during the subtask (decision 122: what {relatedTests} looks at). */
+  changed?: string[];
 }
 
 export async function checkScope(cwd: string, spec: ScopeSpec): Promise<VerifySignal> {
@@ -308,7 +393,7 @@ async function scopeCheck(cwd: string, spec: ScopeSpec): Promise<ScopeResult> {
     if (outsideAll.length) parts.push(`outside the allowed scope [${spec.allowed.join(', ')}]: ${list(outsideAll)}`);
     if (prot.length) parts.push(`protected paths: ${list(prot)}`);
     const caveat = outsideAll.length || prot.length ? ' (may include the user\'s own uncommitted changes; not counted as a failure)' : '';
-    return { signal: { kind: 'scope', ok: true, detail: `${parts.join('; ')}${caveat}` } };
+    return { changed: candidates, signal: { kind: 'scope', ok: true, detail: `${parts.join('; ')}${caveat}` } };
   }
 
   // Files git does not report: assume-unchanged / skip-worktree, and protected files it ignores (.env).
@@ -362,10 +447,10 @@ async function scopeCheck(cwd: string, spec: ScopeSpec): Promise<ScopeResult> {
   if (eol.length) notes.push(`line endings only (not counted): ${list(eol.sort())}`);
   if (scan?.truncated || snap.truncated) notes.push('start snapshot truncated');
   const tail = notes.length ? `; ${notes.join('; ')}` : '';
-  if (problems.length) return { scan, state, ...(meta ? { meta } : {}), signal: { kind: 'scope', ok: false, detail: `${where}${problems.join('; ')}${tail}` } };
+  if (problems.length) return { scan, state, changed: mine, ...(meta ? { meta } : {}), signal: { kind: 'scope', ok: false, detail: `${where}${problems.join('; ')}${tail}` } };
   const note = spec.unscoped ? 'unscoped (no [scope: ...] line, whole repository allowed); ' : '';
   const counted = mine.length - unconfirmed.length;
-  return { scan, state, ...(meta ? { meta } : {}), signal: { kind: 'scope', ok: true, detail: `${where}${note}${counted} file(s) changed during the subtask${tail}` } };
+  return { scan, state, changed: mine, ...(meta ? { meta } : {}), signal: { kind: 'scope', ok: true, detail: `${where}${note}${counted} file(s) changed during the subtask${tail}` } };
 }
 
 function list(files: string[], max = 20): string {

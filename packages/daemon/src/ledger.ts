@@ -12,7 +12,7 @@ import type {
 } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -49,6 +49,9 @@ export interface RequestRow extends RequestRecord {
   forcedFrom: Level | null;
   /** T6: the triage of a lead-direct request before the lead's first router Agent call re-planned it at L2. */
   replannedFrom: TriageResult | null;
+  /** Decision 117: the lead's model when the request opened (null: not known) and its class. */
+  leadModel: string | null;
+  leadClass: string | null;
 }
 
 export interface SubtaskRow extends SubtaskRecord {
@@ -73,6 +76,8 @@ export interface AgentRow {
   snapshot: Snapshot | null;
   /** Decision 99: toolchain variables the relay forwarded at SubagentStart, for this agent's verify. */
   verifyEnv: Record<string, string> | null;
+  /** The subagent's own transcript (from SubagentStop), re-read when the request closes. */
+  transcriptPath: string | null;
   pairing: Pairing;
   startedAt: string;
   stoppedAt: string | null;
@@ -156,7 +161,9 @@ CREATE TABLE IF NOT EXISTS requests (
   start_snapshot TEXT,
   awaiting_since TEXT,
   awaiting_ms    INTEGER NOT NULL DEFAULT 0,
-  prompt_text    TEXT
+  prompt_text    TEXT,
+  lead_model     TEXT,
+  lead_class     TEXT
 );
 CREATE INDEX IF NOT EXISTS requests_by_session ON requests(session_id, created_at);
 
@@ -194,6 +201,7 @@ CREATE TABLE IF NOT EXISTS agents (
   cwd             TEXT,
   snapshot        TEXT,
   verify_env      TEXT,
+  transcript_path TEXT,
   pairing         TEXT NOT NULL,
   started_at      TEXT NOT NULL,
   stopped_at      TEXT,
@@ -280,6 +288,24 @@ CREATE TABLE IF NOT EXISTS request_records (
 );
 CREATE INDEX IF NOT EXISTS request_records_closed ON request_records (closed_at);
 
+-- spec 3.5: the step of each role slot of a request after misses (absent: the preset's start step)
+CREATE TABLE IF NOT EXISTS slots (
+  request_id TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  slot       INTEGER NOT NULL,
+  step       TEXT NOT NULL,
+  up_count   INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (request_id, role, slot)
+);
+
+-- decision 117: the lead's model as last seen for each session
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id TEXT PRIMARY KEY,
+  lead_model TEXT,
+  seen_at    TEXT NOT NULL
+);
+
 -- decision 97: what each session's hooks see (from SessionStart routerClient), for doctor
 CREATE TABLE IF NOT EXISTS clients (
   session_id   TEXT PRIMARY KEY,
@@ -309,6 +335,7 @@ function toRequest(r: Row): RequestRow {
     overriddenTriage: r.override_from === null || r.override_from === undefined ? null : json<TriageResult>(r.override_from),
     outcome: sn(r.outcome) as RequestOutcome | null,
     presetSource: sn(r.preset_source), forcedFrom: sn(r.forced_from) as Level | null,
+    leadModel: sn(r.lead_model), leadClass: sn(r.lead_class),
     replannedFrom: r.replanned_from === null || r.replanned_from === undefined ? null : json<TriageResult>(r.replanned_from),
   };
 }
@@ -330,6 +357,7 @@ function toAgent(r: Row): AgentRow {
     agentType: sn(r.agent_type), role: sn(r.role) as Role | null, slot: nn(r.slot), step: sn(r.step) as Step | null,
     cwd: sn(r.cwd), snapshot: r.snapshot === null || r.snapshot === undefined ? null : json<Snapshot>(r.snapshot),
     verifyEnv: r.verify_env === null || r.verify_env === undefined ? null : json<Record<string, string>>(r.verify_env),
+    transcriptPath: sn(r.transcript_path),
     pairing: s(r.pairing) as Pairing, startedAt: s(r.started_at), stoppedAt: sn(r.stopped_at),
     stopCount: n(r.stop_count), failCount: n(r.fail_count), resolvedModel: sn(r.resolved_model),
     worktreeBranch: sn(r.worktree_branch), worktreePath: sn(r.worktree_path),
@@ -347,6 +375,8 @@ export interface NewRequest {
   closedAt?: string;
   presetSource?: string;
   forcedFrom?: Level;
+  leadModel?: string | null;
+  leadClass?: string;
 }
 
 export interface DispatchInput {
@@ -364,13 +394,13 @@ export interface DispatchInput {
 
 export type AgentPatch = Partial<Pick<AgentRow,
   'requestId' | 'subtaskId' | 'role' | 'slot' | 'step' | 'pairing' | 'stoppedAt' | 'stopCount' | 'failCount' |
-  'resolvedModel' | 'worktreeBranch' | 'worktreePath' | 'cwd' | 'agentType' | 'snapshot' | 'verifyEnv'>>;
+  'resolvedModel' | 'worktreeBranch' | 'worktreePath' | 'cwd' | 'agentType' | 'snapshot' | 'verifyEnv' | 'transcriptPath'>>;
 
 const AGENT_COLS: Record<keyof AgentPatch, string> = {
   requestId: 'request_id', subtaskId: 'subtask_id', role: 'role', slot: 'slot', step: 'step', pairing: 'pairing',
   stoppedAt: 'stopped_at', stopCount: 'stop_count', failCount: 'fail_count', resolvedModel: 'resolved_model',
   worktreeBranch: 'worktree_branch', worktreePath: 'worktree_path', cwd: 'cwd', agentType: 'agent_type', snapshot: 'snapshot',
-  verifyEnv: 'verify_env',
+  verifyEnv: 'verify_env', transcriptPath: 'transcript_path',
 };
 
 export interface ClientRow {
@@ -423,7 +453,7 @@ export class Ledger {
     const reqCols = (this.db.prepare('PRAGMA table_info(requests)').all() as Row[]).map(r => s(r.name));
     if (!reqCols.includes('outcome')) this.db.exec('ALTER TABLE requests ADD COLUMN outcome TEXT');
     // v1..v5 -> v6: preset source (teams.yaml), forced level (decision 107), T6 re-plan
-    for (const c of ['preset_source', 'forced_from', 'replanned_from', 'start_snapshot', 'awaiting_since', 'prompt_text']) {
+    for (const c of ['preset_source', 'forced_from', 'replanned_from', 'start_snapshot', 'awaiting_since', 'prompt_text', 'lead_model', 'lead_class']) {
       if (!reqCols.includes(c)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${c} TEXT`);
     }
     if (!reqCols.includes('awaiting_ms')) this.db.exec('ALTER TABLE requests ADD COLUMN awaiting_ms INTEGER NOT NULL DEFAULT 0');
@@ -431,6 +461,8 @@ export class Ledger {
     // v1..v5 -> v6: agents.verify_env (decision 99)
     const agentCols = (this.db.prepare('PRAGMA table_info(agents)').all() as Row[]).map(r => s(r.name));
     if (!agentCols.includes('verify_env')) this.db.exec('ALTER TABLE agents ADD COLUMN verify_env TEXT');
+    // v6 -> v7: agents.transcript_path (cost re-read when the request closes); sessions is created by SCHEMA
+    if (!agentCols.includes('transcript_path')) this.db.exec('ALTER TABLE agents ADD COLUMN transcript_path TEXT');
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -473,10 +505,10 @@ export class Ledger {
 
   createRequest(r: NewRequest): RequestRow {
     this.db.prepare(`INSERT INTO requests (id, session_id, created_at, prompt_id, level, preset, budget_usd, triage, team, status, closed_at,
-        preset_source, forced_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        preset_source, forced_from, lead_model, lead_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(r.id, r.sessionId, r.createdAt, r.promptId, r.triage.level, r.triage.preset, r.triage.budgetUsd,
         JSON.stringify(r.triage), JSON.stringify(r.team), r.closedAt ? 'closed' : 'open', r.closedAt ?? null,
-        r.presetSource ?? null, r.forcedFrom ?? null);
+        r.presetSource ?? null, r.forcedFrom ?? null, r.leadModel ?? null, r.leadClass ?? null);
     return this.getRequest(r.id)!;
   }
 
@@ -611,6 +643,31 @@ export class Ledger {
   }
 
   /** One pending level per session; a new `/router level` replaces it. */
+  // ------------------------------------------------------------------ slots (spec 3.5)
+
+  getSlots(requestId: string): Array<{ role: Role; slot: number; step: Step; upCount: number }> {
+    return (this.db.prepare('SELECT role, slot, step, up_count FROM slots WHERE request_id = ? ORDER BY role, slot').all(requestId) as Row[])
+      .map(r => ({ role: s(r.role) as Role, slot: n(r.slot), step: s(r.step) as Step, upCount: n(r.up_count) }));
+  }
+
+  setSlot(requestId: string, role: Role, slot: number, step: Step, upCount: number, at: string): void {
+    this.db.prepare(`INSERT INTO slots (request_id, role, slot, step, up_count, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (request_id, role, slot) DO UPDATE SET step = excluded.step, up_count = excluded.up_count, updated_at = excluded.updated_at`)
+      .run(requestId, role, slot, step, upCount, at);
+  }
+
+  // ------------------------------------------------------------------ sessions (decision 117)
+
+  setSessionLeadModel(sessionId: string, model: string, at: string): void {
+    this.db.prepare(`INSERT INTO sessions (session_id, lead_model, seen_at) VALUES (?, ?, ?)
+      ON CONFLICT (session_id) DO UPDATE SET lead_model = excluded.lead_model, seen_at = excluded.seen_at`).run(sessionId, model, at);
+  }
+
+  sessionLeadModel(sessionId: string): string | undefined {
+    const r = this.db.prepare('SELECT lead_model FROM sessions WHERE session_id = ?').get(sessionId) as Row | undefined;
+    return r && r.lead_model !== null && r.lead_model !== undefined ? s(r.lead_model) : undefined;
+  }
+
   // ------------------------------------------------------------------ clients (decision 97)
 
   setClient(c: ClientRow): void {
@@ -737,7 +794,7 @@ export class Ledger {
 
   // ------------------------------------------------------------------ agents
 
-  insertAgent(a: Omit<AgentRow, 'stoppedAt' | 'stopCount' | 'failCount' | 'resolvedModel' | 'worktreeBranch' | 'worktreePath' | 'verifyEnv'>): void {
+  insertAgent(a: Omit<AgentRow, 'stoppedAt' | 'stopCount' | 'failCount' | 'resolvedModel' | 'worktreeBranch' | 'worktreePath' | 'verifyEnv' | 'transcriptPath'>): void {
     this.db.prepare(`INSERT INTO agents (agent_id, session_id, request_id, subtask_id, agent_type, role, slot, step, cwd,
         snapshot, pairing, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (agent_id) DO NOTHING`)

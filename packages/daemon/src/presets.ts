@@ -1,11 +1,13 @@
-// Team presets in effect for a request (gap in decision 88): the defaults (or the
-// presets the daemon was started with), then the user's <routerHome>/teams.yaml, then the project's
+// Team presets in effect for a request (gap in decision 88): the defaults with lead_direct set for the
+// lead's model (decisions 117-118: an Opus-class lead delegates from L1, others from L2; config
+// delegateFrom may change that), or the presets the daemon was started with as they are; then the
+// user's <routerHome>/teams.yaml, then the project's
 // .agentic-router/teams.yaml (a protected path; read from the work tree when the request starts), then
 // the per-level budgets of config.json. Each file may set any field of a level; what it leaves out
 // comes from the layer below (core loadPresets with a base). An invalid file is logged and ignored.
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS, loadPresets, type Level, type TeamPreset } from '@agentic-router/core';
+import { DEFAULT_PRESETS, loadPresets, withLeadModel, type Level, type LeadModelClass, type TeamPreset } from '@agentic-router/core';
 import { applyBudgets } from './config.ts';
 import { errorText, type Logger } from './log.ts';
 
@@ -31,23 +33,28 @@ export function workTreeRoot(dir: string): string | undefined {
 }
 
 export class PresetResolver {
-  readonly #base: Record<Level, TeamPreset>;
+  readonly #base: Record<Level, TeamPreset> | undefined;
+  readonly #delegateFrom: Partial<Record<LeadModelClass, Level>> | undefined;
   readonly #userFile: string;
   readonly #budgets: Partial<Record<Level, number>> | undefined;
   readonly #log: Logger;
   readonly #warned = new Map<string, string>();
 
-  constructor(o: { base?: Record<Level, TeamPreset>; homeRoot: string; budgets?: Partial<Record<Level, number>>; log: Logger }) {
-    this.#base = o.base ?? DEFAULT_PRESETS;
+  constructor(o: {
+    base?: Record<Level, TeamPreset>; homeRoot: string; budgets?: Partial<Record<Level, number>>;
+    delegateFrom?: Partial<Record<LeadModelClass, Level>>; log: Logger;
+  }) {
+    this.#base = o.base;
+    this.#delegateFrom = o.delegateFrom;
     this.#userFile = path.join(o.homeRoot, TEAMS_FILE);
     this.#budgets = o.budgets;
     this.#log = o.log;
   }
 
-  /** The presets for a request whose session works in `cwd` (undefined: the user's file only). */
-  resolve(cwd: string | undefined): ResolvedPresets {
+  /** The presets for a request whose session works in `cwd` (undefined: the user's file only) with this lead model. */
+  resolve(cwd: string | undefined, leadModel?: string): ResolvedPresets {
     const used: string[] = [];
-    let presets = this.#base;
+    let presets = this.#base ?? withLeadModel(DEFAULT_PRESETS, leadModel, this.#delegateFrom ?? {});
     const user = this.#load(this.#userFile, presets);
     if (user) { presets = user; used.push('user'); }
     const root = cwd ? workTreeRoot(cwd) : undefined;

@@ -103,7 +103,7 @@ test('s1: brief injected, B denied (wrong step), A paired by order, verified, us
     assert.equal(st.request?.level, 'L1');
     assert.equal(st.costUsd, usd);
     assert.deepEqual(st.roles.map(r => [r.role, r.slot, r.step, r.model, r.effort, r.status]), [
-      ['coder', 0, 's1', 'haiku', 'low', 'passed'], ['reviewer', 0, 's1', 'haiku', 'low', 'idle'],
+      ['coder', 0, 's1', 'haiku', 'low', 'passed'],   // decision 118: the L1 team is a single coder
     ]);
   } finally { rmrf(repo); }
 }, { ...checkScript, presets: TEAM_L1_PRESETS }));   // a delegating L1 team (lead-direct L1 would be re-planned at L2, T6)

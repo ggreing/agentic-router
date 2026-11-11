@@ -62,7 +62,7 @@ function readIfExists(file: string): string | undefined {
 
 // ------------------------------------------------------------------ entries (project file and role file)
 
-type Item = string | { kind?: SignalKind; command: string; timeoutMs?: number; ifExists?: string; ifMissing?: string };
+type Item = string | { kind?: SignalKind; command: string; timeoutMs?: number; ifExists?: string; ifMissing?: string; ifAnyExists?: string[] };
 const KINDS: readonly SignalKind[] = ['build', 'typecheck', 'lint', 'test', 'scope', 'review', 'error_repeat', 'max_turns', 'tool_error'];
 
 /** `{ "<role>": Item[], "*": Item[] }`; the role's own list wins over "*". Undefined when neither is present. */
@@ -78,21 +78,26 @@ export function projectCommands(doc: unknown, role: Role): VerifyCommand[] | und
 function parseItem(x: unknown): Item {
   if (typeof x === 'string' && x.trim()) return x.trim();
   if (x && typeof x === 'object' && typeof (x as { command?: unknown }).command === 'string') {
-    const o = x as { kind?: unknown; command: string; timeoutMs?: unknown; ifExists?: unknown; ifMissing?: unknown };
+    const o = x as { kind?: unknown; command: string; timeoutMs?: unknown; ifExists?: unknown; ifMissing?: unknown; ifAnyExists?: unknown };
     if (o.kind !== undefined && !KINDS.includes(o.kind as SignalKind)) throw new Error(`unknown kind "${String(o.kind)}"`);
     for (const k of ['ifExists', 'ifMissing'] as const) {
       const v = o[k];
       if (v !== undefined && (typeof v !== 'string' || !validTreePath(v))) throw new Error(`${k} must be a repo-relative path inside the repository: ${String(v)}`);
     }
+    if (o.ifAnyExists !== undefined && (!Array.isArray(o.ifAnyExists) || !o.ifAnyExists.length
+      || o.ifAnyExists.some(p => typeof p !== 'string' || !validTreePath(p)))) {
+      throw new Error(`ifAnyExists must be a non-empty list of repo-relative paths inside the repository: ${JSON.stringify(o.ifAnyExists)}`);
+    }
     return {
       command: o.command,
+      ...(Array.isArray(o.ifAnyExists) ? { ifAnyExists: o.ifAnyExists as string[] } : {}),
       ...(o.kind ? { kind: o.kind as SignalKind } : {}),
       ...(typeof o.timeoutMs === 'number' && o.timeoutMs > 0 ? { timeoutMs: o.timeoutMs } : {}),
       ...(typeof o.ifExists === 'string' ? { ifExists: o.ifExists } : {}),
       ...(typeof o.ifMissing === 'string' ? { ifMissing: o.ifMissing } : {}),
     };
   }
-  throw new Error('each command must be a string or { command, kind?, timeoutMs?, ifExists?, ifMissing? }');
+  throw new Error('each command must be a string or { command, kind?, timeoutMs?, ifExists?, ifMissing?, ifAnyExists? }');
 }
 
 function toCommand(x: Item): VerifyCommand {
@@ -100,7 +105,7 @@ function toCommand(x: Item): VerifyCommand {
   return {
     kind: x.kind ?? inferKind(x.command), command: x.command,
     ...(x.timeoutMs ? { timeoutMs: x.timeoutMs } : {}), ...(x.ifExists ? { ifExists: x.ifExists } : {}),
-    ...(x.ifMissing ? { ifMissing: x.ifMissing } : {}),
+    ...(x.ifMissing ? { ifMissing: x.ifMissing } : {}), ...(x.ifAnyExists ? { ifAnyExists: x.ifAnyExists } : {}),
   };
 }
 

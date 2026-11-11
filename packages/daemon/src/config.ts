@@ -49,7 +49,21 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
   if (typeof o.pluginDir === 'string' && o.pluginDir) out.pluginDir = o.pluginDir;
   const budgets = parseBudgets(o.budgetsUsd, warnings);
   if (budgets) out.budgetsUsd = budgets;
-  if (o.recordPrompts === true) out.recordPrompts = true;   // T7, opt-in: keep the redacted prompt in the request record
+  if (o.recordPrompts === true) out.recordPrompts = true;
+  // Decisions 117-118: the first delegated level per lead model class
+  if (o.delegateFrom !== undefined) {
+    const v = o.delegateFrom;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) warnings.push('config.delegateFrom ignored: not an object');
+    else {
+      const from: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (!['opus', 'sonnet', 'haiku', 'other'].includes(k)) { warnings.push(`config.delegateFrom.${k} ignored: not opus, sonnet, haiku or other`); continue; }
+        if (!(LEVELS as readonly unknown[]).includes(x)) { warnings.push(`config.delegateFrom.${k} ignored: ${JSON.stringify(x)} is not L0, L1, L2 or L3`); continue; }
+        from[k as keyof typeof from] = x as Level;
+      }
+      if (Object.keys(from).length) out.delegateFrom = from;
+    }
+  }   // T7, opt-in: keep the redacted prompt in the request record
   // Decision 107: benchmarks / debugging only
   if (o.forceLevel !== undefined) {
     if ((LEVELS as readonly unknown[]).includes(o.forceLevel)) out.forceLevel = o.forceLevel as Level;

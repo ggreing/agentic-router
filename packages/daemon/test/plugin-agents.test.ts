@@ -7,9 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FORBIDDEN_ROLE_TOOLS, ladderStep, readRoleFile, type Role } from '@agentic-router/core';
 import { defaultStartStep, ROLES } from '../src/policy.ts';
+import { takeSnapshot } from '../src/git.ts';
 import { resolveVerifyCommands } from '../src/verify-source.ts';
-import { runVerify } from '../src/verify.ts';
-import { git, makeRepo, rmrf } from './helpers.ts';
+import { isEnvFailure, runVerify } from '../src/verify.ts';
+import { git, makeRepo, rmrf, write } from './helpers.ts';
 
 const PLUGIN = fileURLToPath(new URL('../../../plugin/', import.meta.url));
 const AGENTS = path.join(PLUGIN, 'agents');
@@ -50,17 +51,21 @@ test('default model/effort match the role table', () => {
   assert.deepEqual(got, { architect: 'sonnet/medium', 'ui-designer': 'sonnet/medium', coder: 'haiku/low', reviewer: 'sonnet/medium', tester: 'haiku/low' });
 });
 
-test('x-router.verify: install if locked, then coder build/typecheck/lint/test, tester test; npm steps only with package.json', async () => {
+test('x-router.verify: install if locked, then coder build/typecheck/lint/test with package.json, and pytest on the related tests', async () => {
   const cmds = async (role: Role) => (await resolveVerifyCommands({ role, pluginDir: PLUGIN })).commands;
   const install = { kind: 'build', command: 'npm ci', ifExists: 'package-lock.json', ifMissing: 'node_modules' };
+  // npm steps need only package.json: a dependency-free `node --test` project has no node_modules; a helper
+  // package.json whose tools are not installed fails as "environment" (decision 122), not as the subagent's failure
+  const pytest = { kind: 'test', command: 'python -m pytest -q -x {relatedTests}', ifAnyExists: ['pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'conftest.py'] };
   assert.deepEqual(await cmds('coder'), [
     install,
     { kind: 'build', command: 'npm run build --if-present', ifExists: 'package.json' },
     { kind: 'typecheck', command: 'npm run typecheck --if-present', ifExists: 'package.json' },
     { kind: 'lint', command: 'npm run lint --if-present', ifExists: 'package.json' },
     { kind: 'test', command: 'npm test --if-present', ifExists: 'package.json' },
+    pytest,
   ]);
-  assert.deepEqual(await cmds('tester'), [install, { kind: 'test', command: 'npm test --if-present', ifExists: 'package.json' }]);
+  assert.deepEqual(await cmds('tester'), [install, { kind: 'test', command: 'npm test --if-present', ifExists: 'package.json' }, pytest]);
   for (const r of ['architect', 'ui-designer', 'reviewer'] as const) {
     const res = await resolveVerifyCommands({ role: r, pluginDir: PLUGIN });
     assert.deepEqual(res, { commands: [], source: 'role' }, r);
@@ -72,10 +77,36 @@ test('in a repository without package.json the coder\'s npm steps are skipped, n
   try {
     const { commands } = await resolveVerifyCommands({ role: 'coder', pluginDir: PLUGIN });
     const signals = await runVerify({ cwd: repo, root: repo, commands });
-    assert.equal(signals.length, 5);
+    assert.equal(signals.length, 6);
     assert.ok(signals.every(s => s.ok), JSON.stringify(signals));
     assert.equal(signals[0]!.detail, 'npm ci: skipped (no package-lock.json)');
     assert.equal(signals[4]!.detail, 'npm test --if-present: skipped (no package.json)');
+    assert.equal(signals[5]!.detail, 'python -m pytest -q -x {relatedTests}: skipped (none of pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py)');
+  } finally { rmrf(repo); }
+});
+
+test('decision 122: a Python repo whose helper package.json needs an uninstalled tool: npm is an environment failure; pytest runs on the related tests only', async () => {
+  const repo = makeRepo({
+    'package.json': '{"scripts":{"test":"no-such-linter-xyz ."}}', 'setup.cfg': '[tool:pytest]\n',
+    'pkg/parse.py': 'def parse(s):\n    return s\n', 'pkg/other.py': 'x = 1\n',
+    'tests/test_parse.py': 'def test_parse():\n    pass\n', 'tests/test_other.py': 'def test_other():\n    pass\n',
+  });
+  try {
+    const snapshot = await takeSnapshot(repo);
+    write(repo, 'pkg/parse.py', 'def parse(s):\n    return s or ""\n');
+    const { commands } = await resolveVerifyCommands({ role: 'coder', pluginDir: PLUGIN });
+    // the runner is a stand-in for python that prints the arguments it got and exits 0
+    const shim = commands.map(c => (c.command.includes('{relatedTests}') ? { ...c, command: 'node -e "console.log(process.argv.slice(1).join(\' \'))" {relatedTests}' } : c));
+    const signals = await runVerify({ cwd: repo, root: repo, commands: shim, scope: { allowed: ['**'], protected: [], unscoped: true, snapshot } });
+    const npmTest = signals.find(s => s.detail?.startsWith('npm test'))!;
+    assert.equal(isEnvFailure(npmTest), true, npmTest.detail);
+    assert.match(npmTest.detail!, /environment: (no-such-linter-xyz|a command was) not found/);
+    const py = signals.find(s => s.detail?.includes('tests/test_parse.py'));
+    assert.ok(py?.ok, JSON.stringify(signals));
+    assert.doesNotMatch(py!.detail!, /test_other/);
+    // nothing related changed: recorded, not run
+    const none = await runVerify({ cwd: repo, root: repo, commands: shim.slice(-1), scope: { allowed: ['**'], protected: [], unscoped: true, snapshot: await takeSnapshot(repo) } });
+    assert.deepEqual(none.map(s => [s.ok, s.detail]).slice(0, 1), [[true, 'node -e "console.log(process.argv.slice(1).join(\' \'))" {relatedTests}: no related tests (not run; neither a pass nor a miss)']]);
   } finally { rmrf(repo); }
 });
 
@@ -100,4 +131,18 @@ test('decision 86: the install step is skipped in the user\'s tree (node_modules
     try { git(repo, 'worktree', 'remove', '--force', wt); } catch { /* best effort */ }
     rmrf(repo);
   }
+});
+
+test('a dependency-free node --test project (no node_modules) still runs npm test', async () => {
+  const repo = makeRepo({
+    'package.json': '{"name":"tiny","scripts":{"test":"node --test"}}',
+    'math.test.mjs': "import test from 'node:test';\nimport assert from 'node:assert';\ntest('adds', () => assert.equal(1 + 1, 2));\n",
+  });
+  try {
+    const { commands } = await resolveVerifyCommands({ role: 'tester', pluginDir: PLUGIN });
+    const signals = await runVerify({ cwd: repo, root: repo, commands });
+    const npmTest = signals.find(s => s.detail?.startsWith('npm test'))!;
+    assert.equal(npmTest.ok, true, npmTest.detail);
+    assert.equal(npmTest.detail, 'npm test --if-present: exit 0');
+  } finally { rmrf(repo); }
 });

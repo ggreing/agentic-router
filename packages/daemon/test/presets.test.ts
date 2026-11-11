@@ -40,7 +40,7 @@ test('teams.yaml: the user\'s file, then the project\'s, then config budgets; th
     await ask(d, 's2', path.join(repo), L1_PROMPT);
     st = await status(d, 's2');
     assert.deepEqual([st.leadDirect, st.presetSource, st.budgetUsd], [true, 'user+project', 1.5]);
-    assert.deepEqual(JSON.parse(String(rows(d, "SELECT team FROM requests WHERE session_id = 's2'")[0]!.team)).roles.map((r: { role: string }) => r.role), ['coder', 'reviewer']);
+    assert.deepEqual(JSON.parse(String(rows(d, "SELECT team FROM requests WHERE session_id = 's2'")[0]!.team)).roles.map((r: { role: string }) => r.role), ['coder']);   // the L1 team (decision 118)
     // an invalid project file is ignored (logged once), the user's still applies
     fs.writeFileSync(path.join(repo, '.agentic-router', 'teams.yaml'), 'L1:\n  roles: nope\n');
     await ask(d, 's3', repo, L1_PROMPT);
