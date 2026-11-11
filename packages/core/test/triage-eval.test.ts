@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, formatTriageContext, triage } from '@agentic-router/core';
+import { DEFAULT_PRESETS, formatTriageContext, triage, withLeadModel } from '@agentic-router/core';
 import {
   arrangementOf, bestArrangement, calibration, cascade, effectiveCost, judgeAnswers, loadPromptSet, regretTable, scoreBy, scoreSet, summariseRuns,
   type Classifier, type LabelledPrompt, type MeasuredRun,
 } from '../src/triage-eval.ts';
 import {
-  JUDGE_BANDS, JUDGE_EFFORT, JUDGE_MAX_PROMPT_CHARS, JUDGE_MODEL, JUDGE_SCHEMA, JUDGE_SOURCE, applyJudge, buildJudgeRequest, judgeDecision, judgeTeamScore, parseJudgeOutput,
+  JUDGE_BANDS, JUDGE_EFFORT, JUDGE_MAX_PROMPT_CHARS, JUDGE_MODEL, JUDGE_SCHEMA, JUDGE_SOURCE, applyJudge, buildJudgeRequest, judgeCanChangeArrangement, judgeDecision, judgeTeamScore, parseJudgeOutput,
 } from '../src/triage-judge.ts';
 
 const SET = loadPromptSet(fs.readFileSync(fileURLToPath(new URL('./fixtures/triage/prompts.yaml', import.meta.url)), 'utf8'));
@@ -105,15 +105,17 @@ test('the judge answer is used by its score in three bands (decision 115)', () =
   // the score: a "team" answer's confidence, or what a "direct" answer leaves over
   assert.deepEqual([judgeTeamScore(v('team', 0.8)), judgeTeamScore(v('direct', 0.9)), judgeTeamScore(v('direct', 0.7))], [0.8, 0.1, 0.3]);
   // at or above 0.5: team; below 0.3: direct; in between: still uncertain
-  assert.deepEqual(judgeDecision(v('team', 0.8)), { kind: 'team', level: 'L3', teamScore: 0.8 });
-  assert.deepEqual(judgeDecision(v('team', 0.5)), { kind: 'team', level: 'L3', teamScore: 0.5 });
-  assert.deepEqual(judgeDecision(v('team', 0.45)), { kind: 'uncertain', level: 'L1', teamScore: 0.45 });
-  assert.deepEqual(judgeDecision(v('direct', 0.7)), { kind: 'uncertain', level: 'L1', teamScore: 0.3 });
-  assert.deepEqual(judgeDecision(v('direct', 0.71)), { kind: 'direct', level: 'L0', teamScore: 0.29 });
-  assert.deepEqual(judgeDecision(v('direct', 0.95, 'L1')), { kind: 'direct', level: 'L1', teamScore: 0.05 });
+  // (decision 119: a team answer plans L2 even when the judge said L3, and keeps that as l3Signs)
+  assert.deepEqual(judgeDecision(v('team', 0.8)), { kind: 'team', level: 'L2', teamScore: 0.8, l3Signs: true });
+  assert.deepEqual(judgeDecision(v('team', 0.5)), { kind: 'team', level: 'L2', teamScore: 0.5, l3Signs: true });
+  assert.deepEqual(judgeDecision(v('team', 0.8, 'L2')), { kind: 'team', level: 'L2', teamScore: 0.8, l3Signs: false });
+  assert.deepEqual(judgeDecision(v('team', 0.45)), { kind: 'uncertain', level: 'L1', teamScore: 0.45, l3Signs: false });
+  assert.deepEqual(judgeDecision(v('direct', 0.7)), { kind: 'uncertain', level: 'L1', teamScore: 0.3, l3Signs: false });
+  assert.deepEqual(judgeDecision(v('direct', 0.71)), { kind: 'direct', level: 'L0', teamScore: 0.29, l3Signs: false });
+  assert.deepEqual(judgeDecision(v('direct', 0.95, 'L1')), { kind: 'direct', level: 'L1', teamScore: 0.05, l3Signs: false });
   // a word the score overrules takes the band's default level
-  assert.deepEqual(judgeDecision(v('direct', 0.5)), { kind: 'team', level: 'L2', teamScore: 0.5 });
-  assert.deepEqual(judgeDecision(v('team', 0.2)), { kind: 'direct', level: 'L1', teamScore: 0.2 });
+  assert.deepEqual(judgeDecision(v('direct', 0.5)), { kind: 'team', level: 'L2', teamScore: 0.5, l3Signs: false });
+  assert.deepEqual(judgeDecision(v('team', 0.2)), { kind: 'direct', level: 'L1', teamScore: 0.2, l3Signs: false });
   assert.deepEqual(judgeDecision(v('direct', 0.7), { team: 0.6, direct: 0.4 }).kind, 'direct');
 
   // applied to a stage-1 result: only an uncertain one changes, and only when there is a verdict
@@ -129,7 +131,13 @@ test('the judge answer is used by its score in three bands (decision 115)', () =
     ['team', 'L2', JUDGE_SOURCE, 'judge-team', 'L2', DEFAULT_PRESETS.L2.budgetUsd, 0.8, 0.8]);
   assert.match(formatTriageContext(team, DEFAULT_PRESETS[team.level]), /Do not edit or write files yourself/);
   assert.deepEqual(team.features, open.features);
-  assert.equal(applyJudge(open, v('team', 0.9, 'L3')).level, 'L3');
+  assert.equal(team.l3Signs, false);
+  // the judge said L3: planned at L2 with the L2 budget, marked, and the brief shows the lead the way up
+  const big = applyJudge(open, v('team', 0.9, 'L3'));
+  assert.deepEqual([big.level, big.preset, big.budgetUsd, big.rule, big.l3Signs], ['L2', 'L2', DEFAULT_PRESETS.L2.budgetUsd, 'judge-team', true]);
+  assert.match(big.rationale, /^L3 signs, planned as L2: stage-2 judge said team/);
+  assert.match(formatTriageContext(big, DEFAULT_PRESETS[big.level]), /use the L3 team instead: make your first Agent call the L3 team's architect/);
+  assert.doesNotMatch(formatTriageContext(team, DEFAULT_PRESETS[team.level]), /L3/);
 
   const direct = applyJudge(open, v('direct', 0.9));
   assert.deepEqual([direct.kind, direct.level, direct.source, direct.rule, direct.preset, direct.teamScore], ['direct', 'L0', JUDGE_SOURCE, 'judge-direct', 'L0', 0.1]);
@@ -153,6 +161,22 @@ test('the judge answer is used by its score in three bands (decision 115)', () =
   // a customised teams.yaml sets the preset and the budget
   const presets = { ...DEFAULT_PRESETS, L2: { ...DEFAULT_PRESETS.L2, budgetUsd: 9 } };
   assert.equal(applyJudge(open, v('team', 0.8, 'L2'), presets).budgetUsd, 9);
+
+  // decision 120: the call is skipped when L1 and L2 are staffed the same way, so its answer could not change the staffing
+  assert.equal(judgeCanChangeArrangement(DEFAULT_PRESETS), true);
+  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5')), true);
+  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5')), false);
+  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5', { opus: 'L2' })), true);
+  assert.equal(judgeCanChangeArrangement({ ...DEFAULT_PRESETS, L2: { ...DEFAULT_PRESETS.L2, leadDirect: true } }), false);
+
+  // decision 121: where L1 is delegated, an in-between score keeps the L2 team stage 1 planned; a "direct" answer is the one-coder L1 team
+  const opus = withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5');
+  const openOpus = triage({ prompt: '태스크에 댓글 기능 넣어줘' }, opus);
+  const betweenOpus = applyJudge(openOpus, v('direct', 0.65), opus);
+  assert.deepEqual([betweenOpus.kind, betweenOpus.level, betweenOpus.preset, betweenOpus.rule], ['uncertain', 'L2', 'L2', 'judge-open']);
+  assert.match(betweenOpus.rationale, /-> L2 team, the lead picks the roles$/);
+  assert.match(formatTriageContext(betweenOpus, opus[betweenOpus.level], opus), /the staffing is yours/);
+  assert.deepEqual([applyJudge(openOpus, v('direct', 0.9, 'L1'), opus).level, applyJudge(openOpus, v('direct', 0.9, 'L1'), opus).preset], ['L1', 'L1']);
 
   // the evaluation reads a judge run through the same bands; null takes the judge's own word
   const lines = [{ id: 'a', output: v('direct', 0.6) }, { id: 'b', output: v('direct', 0.9) }, { id: 'c', output: v('team', 0.7) }];

@@ -18,7 +18,17 @@ const verifyEntry = z.union([z.string().min(1), z.object({
   timeoutMs: z.number().int().positive().optional(),
   ifExists: repoRelative('ifExists').optional(),
   ifMissing: repoRelative('ifMissing').optional(),
+  // decision 122: run when ANY of these paths exists (e.g. pytest config files)
+  ifAnyExists: z.array(repoRelative('ifAnyExists')).min(1).optional(),
 })]);
+
+/**
+ * Placeholder a verify command may contain (decision 122). The daemon replaces it with the test files
+ * related to this subtask's changes (changed/added test files, and test_<module> for changed modules),
+ * space-separated and shell-quoted. When there are none, the step is skipped and recorded as
+ * "no related tests" (neither pass nor miss); when it selects tests but 0 run, that is a miss (decision 98).
+ */
+export const RELATED_TESTS_PLACEHOLDER = '{relatedTests}';
 
 const frontMatter = z.object({
   name: z.string().min(1),

@@ -3,7 +3,9 @@
 // API-key mode: one model call scores the request. The model is Sonnet 5.5 at effort medium (user
 // decision); the subscription mode has no such call, there the lead judges (see triage.ts).
 // The answer is used by its score in three bands (decision 115, JUDGE_BANDS): team, direct, or still
-// uncertain, in which case the lead gets the same rubric as in subscription mode.
+// uncertain, in which case the lead gets the same rubric as in subscription mode. A team answer plans
+// L2 (decision 119), and the call is skipped when it could not change the staffing (decision 120,
+// judgeCanChangeArrangement).
 // This file builds the request, reads the answer and applies it to a stage-1 result. It makes no
 // network call, so the same text serves the daemon (Phase 3, through the API proxy) and the offline
 // evaluation (decision 111).
@@ -13,7 +15,7 @@
 // this model), and treat stop_reason "refusal" or unparseable text as "no answer" (parseJudgeOutput
 // returns undefined, and the request stays lead-direct).
 import { DEFAULT_PRESETS } from './presets.ts';
-import { L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, type PromptFeatures, type Stage1Result, type TriageKind } from './triage.ts';
+import { L3_PLANNED_AS_L2, L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, type PromptFeatures, type Stage1Result, type TriageKind } from './triage.ts';
 import type { Level, TeamPreset, TriageSource } from './types.ts';
 
 export const JUDGE_MODEL = 'claude-sonnet-5-5';
@@ -141,17 +143,29 @@ export function judgeTeamScore(v: JudgeVerdict): number {
   return Math.round((v.kind === 'team' ? v.confidence : 1 - v.confidence) * 1e4) / 1e4;
 }
 
-export interface JudgeDecision { kind: TriageKind; level: Level; teamScore: number }
+export interface JudgeDecision { kind: TriageKind; level: Level; teamScore: number; l3Signs: boolean }
 
 /**
  * The three-way answer for a verdict. The level is the judge's when its word agrees with the band,
- * otherwise the band's default (team: L2, direct and uncertain: L1).
+ * otherwise the band's default (team: L2, direct and uncertain: L1). A team answer is planned at L2 even
+ * when the judge said L3 (decision 119); that answer is kept as `l3Signs`.
  */
 export function judgeDecision(v: JudgeVerdict, bands: JudgeBands = JUDGE_BANDS): JudgeDecision {
   const teamScore = judgeTeamScore(v);
-  if (teamScore >= bands.team) return { kind: 'team', level: v.kind === 'team' ? v.level : 'L2', teamScore };
-  if (teamScore < bands.direct) return { kind: 'direct', level: v.kind === 'direct' ? v.level : 'L1', teamScore };
-  return { kind: 'uncertain', level: 'L1', teamScore };
+  if (teamScore >= bands.team) return { kind: 'team', level: 'L2', teamScore, l3Signs: v.kind === 'team' && v.level === 'L3' };
+  if (teamScore < bands.direct) return { kind: 'direct', level: v.kind === 'direct' ? v.level : 'L1', teamScore, l3Signs: false };
+  return { kind: 'uncertain', level: 'L1', teamScore, l3Signs: false };
+}
+
+/**
+ * Whether a judge answer could change how a request is staffed under these presets (decision 120). Pass
+ * the presets in effect for the request, with the lead model applied (withLeadModel) and teams.yaml on
+ * top. The judge moves a request between L1 and L2 (never to L3, decision 119), so when both are handled
+ * the same way - both delegated, as with an Opus-class lead (decision 117), or both lead-direct - its
+ * answer changes nothing the lead does not already decide, and the call (about $0.004 and 4.5 s) is skipped.
+ */
+export function judgeCanChangeArrangement(presets: Record<Level, TeamPreset>): boolean {
+  return (presets.L1.leadDirect === true) !== (presets.L2.leadDirect === true);
 }
 
 /**
@@ -170,13 +184,14 @@ export function applyJudge(stage1: Stage1Result, verdict: JudgeVerdict | undefin
     return {
       ...stage1, teamScore: d.teamScore, rule: 'judge-open',
       confidence: Math.min(RULE_CONFIDENCE_THRESHOLD - 0.01, 1 - d.teamScore),
-      rationale: `${said}: between ${bands.direct} and ${bands.team} -> start as ${stage1.level}, the lead decides`,
+      // the level stays the one stage 1 planned for an uncertain request (uncertainLevel, decision 121)
+      rationale: `${said}: between ${bands.direct} and ${bands.team} -> ${presets[stage1.level].leadDirect ? `start as ${stage1.level}, the lead decides` : `${stage1.level} team, the lead picks the roles`}`,
     };
   }
   return {
-    ...stage1, kind: d.kind, level: d.level, source: JUDGE_SOURCE, rule: `judge-${d.kind}`, teamScore: d.teamScore,
+    ...stage1, kind: d.kind, level: d.level, source: JUDGE_SOURCE, rule: `judge-${d.kind}`, teamScore: d.teamScore, l3Signs: d.l3Signs,
     confidence: d.kind === 'team' ? d.teamScore : 1 - d.teamScore,
     preset: preset.id, budgetUsd: preset.budgetUsd,
-    rationale: `${said} -> ${d.kind === 'team' ? `team at ${d.level}` : `direct at ${d.level}`}`,
+    rationale: `${d.l3Signs ? `${L3_PLANNED_AS_L2}: ` : ''}${said} -> ${d.kind === 'team' ? `team at ${d.level}` : `direct at ${d.level}`}`,
   };
 }

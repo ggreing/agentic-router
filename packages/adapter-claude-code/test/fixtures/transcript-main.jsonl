@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","sessionId":"00000000-0000-0000-0000-000000000000","cwd":"C:\\Users\\dev\\proj","message":{"role":"user","content":[{"type":"text","text":"fix the typo in the readme"}]}}
+{"type":"assistant","uuid":"a1","requestId":"req_1","sessionId":"00000000-0000-0000-0000-000000000000","message":{"model":"claude-sonnet-5-5","id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}}
+{"type":"user","uuid":"u2","sessionId":"00000000-0000-0000-0000-000000000000","message":{"role":"user","content":[{"type":"text","text":"now design a new billing subsystem"}]}}
+{"type":"assistant","uuid":"a2","requestId":"req_2","requestedModel":"opus","sessionId":"00000000-0000-0000-0000-000000000000","message":{"model":"claude-opus-4-8","id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"Here is the plan."}],"stop_reason":"end_turn","usage":{"input_tokens":20,"output_tokens":5}}}
+{"type":"assistant","uuid":"a3-partial","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"tru

@@ -52,3 +52,10 @@ test('ifMissing makes a step run only while a path is absent; escaping paths are
   for (const bad of ['../node_modules', '/abs', 'D:/x'])
     assert.throws(() => parseRoleFile(sample.replace('- npm run build', `- { command: "x", ifMissing: "${bad}" }`)));
 });
+
+test('ifAnyExists lists repo-relative paths; escaping paths are rejected (decision 122)', () => {
+  const ok = parseRoleFile(sample.replace('- npm run build', '- { command: "python -m pytest -q -x {relatedTests}", kind: test, ifAnyExists: [pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py] }'));
+  assert.deepEqual(ok.verify[0], { command: 'python -m pytest -q -x {relatedTests}', kind: 'test', ifAnyExists: ['pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'conftest.py'] });
+  assert.throws(() => parseRoleFile(sample.replace('- npm run build', '- { command: "x", ifAnyExists: ["../a"] }')));
+  assert.throws(() => parseRoleFile(sample.replace('- npm run build', '- { command: "x", ifAnyExists: [] }')));
+});

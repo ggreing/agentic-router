@@ -81,6 +81,7 @@ export interface RouterEvent {
   toolInput?: Record<string, unknown>;
   toolResponse?: unknown;
   prompt?: string;           // prompt_submit
+  leadModel?: string;        // main-session model id when the hook input or transcript shows it (decision 117)
   // prompt_submit: 'notification' when the "prompt" is Claude Code's <task-notification> for a finished
   // background subagent (Agent calls run async by default). Such prompts are never a new request.
   promptOrigin?: 'user' | 'notification';

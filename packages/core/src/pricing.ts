@@ -2,16 +2,21 @@
 // Same values as bench/config/estimates.json. Cost here is an API list-price equivalent;
 // for subscription users it is an estimate, not a bill.
 
-export interface ModelPrice { input: number; output: number; longPromptInput?: number; longPromptOutput?: number; longPromptOver?: number }
+export interface ModelPrice {
+  input: number; output: number; longPromptInput?: number; longPromptOutput?: number; longPromptOver?: number;
+  cacheRead?: number;   // multiplier on input for cache reads; default CACHE_MULTIPLIER.read
+}
 
 export const PRICING_PER_MTOK: Record<string, ModelPrice> = {
   'claude-haiku-5-5': { input: 0.10, output: 0.50, longPromptInput: 0.50, longPromptOutput: 2.50, longPromptOver: 100_000 },
-  'claude-sonnet-5-5': { input: 2, output: 10 },
-  'claude-opus-5-5': { input: 4, output: 20 },
-  'claude-fable-5-1': { input: 10, output: 50 },
+  // cache reads at 0.05x for Sonnet/Opus 5.5: solved per token type from Claude Code's own cost figures
+  // over the decision-107 runs (45 Opus, 5 Sonnet, 15 Haiku runs; exact fit, zero residual)
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.05 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.05 },
+  'claude-fable-5-1': { input: 10, output: 50 },   // cache read multiplier not measured: default 0.1x (overestimates)
 };
 
-/** Cache write is billed above input (1h cache = 2x, 5m cache = 1.25x); cache reads at 0.1x. */
+/** Cache write is billed above input (1h cache = 2x, not yet observed; 5m cache = 1.25x, measured); cache reads at 0.1x unless the model sets cacheRead. */
 export const CACHE_MULTIPLIER = { write1h: 2.0, write5m: 1.25, read: 0.1 } as const;
 
 export interface Usage {
@@ -35,6 +40,6 @@ export function costUsd(modelId: string, u: Usage): number | null {
   const write = w1h !== undefined || w5m !== undefined
     ? (w1h ?? 0) * CACHE_MULTIPLIER.write1h + (w5m ?? 0) * CACHE_MULTIPLIER.write5m
     : (u.cache_creation_input_tokens ?? 0) * CACHE_MULTIPLIER.write5m;
-  const usd = ((u.input_tokens ?? 0) * inP + write * inP + (u.cache_read_input_tokens ?? 0) * CACHE_MULTIPLIER.read * inP + (u.output_tokens ?? 0) * outP) / 1e6;
+  const usd = ((u.input_tokens ?? 0) * inP + write * inP + (u.cache_read_input_tokens ?? 0) * (p.cacheRead ?? CACHE_MULTIPLIER.read) * inP + (u.output_tokens ?? 0) * outP) / 1e6;
   return Math.round(usd * 1e6) / 1e6;
 }

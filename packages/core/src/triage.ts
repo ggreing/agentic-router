@@ -2,13 +2,21 @@
 //
 // The daemon calls triage() on every new user request and injects formatTriageContext() into the
 // lead's context. Stage 1 is free and only settles the clear cases; it answers one of
-//   direct    - the lead handles it itself (level L0 or L1, the lead-direct presets)
-//   team      - a team is worth it (level L2, or L3 when the workers should start high)
-//   uncertain - the wording does not show the size of the change (level L1, source 'default')
+//   direct    - a small change (level L0 or L1)
+//   team      - a team is worth it (level L2)
+//   uncertain - the wording does not show the size of the change (source 'default'; level L1, or L2 when
+//               the presets delegate L1: see uncertainLevel, decision 121)
+// Automatic triage plans at most L2 (decision 119: in the cost measurement of decision 107 the L3 team
+// cost 67% more than the lead alone and won on one task of fifteen). Wording that points to L3 is kept as
+// `l3Signs`; the L3 team is reached by `/router level L3` or by the lead, who is shown its call values and
+// raises the request by calling it first (decision 113).
 // An uncertain request starts as lead-direct with a short rubric; the lead switches to the L2 team (or,
 // for a clearly larger change, the L3 team) by calling a router agent: the daemon re-plans the request
 // at the first call and reads the level from that call's values (decisions 109, 113). In API-key mode the
 // stage-2 judge (triage-judge.ts) decides uncertain requests instead.
+// With presets that delegate L1 (an Opus-class lead, decision 117) there is no lead-direct start to
+// switch from: an uncertain request is planned as the L2 team and the lead calls only the roles the
+// change needs (decision 121). That is the arrangement the measurement of decision 107 ran.
 //
 // Why so few cases are settled here: on 500 SWE-bench Verified issues neither prompt features nor
 // repository signals predicted the size of the fix (AUC 0.45-0.64), so stage 1 does not guess.
@@ -33,6 +41,8 @@ export interface Stage1Result extends TriageResult {
   kind: TriageKind;
   rule: string;                // id of the rule that decided, or 'none' when uncertain
   teamScore: number;           // 0..1, higher = more team-like. An ordering, not a calibrated probability.
+  /** The wording (or the judge) points to L3. The plan is still L2 (decision 119); the brief then shows the lead how to raise it. */
+  l3Signs: boolean;
   features: PromptFeatures;
 }
 
@@ -48,11 +58,14 @@ export const TEAM_SIZE_RULE = { files: 4, dirs: 2 } as const;
 /**
  * Size at which a team-sized change counts as L3 rather than L2 (decision 113). The file count is the
  * one stage 1 already uses for "many files named"; the other signs are in L3_SIGNS. Provisional like
- * TEAM_SIZE_RULE.
+ * TEAM_SIZE_RULE. Since decision 119 these mark a request (`l3Signs`) and word the lead's rubric; they
+ * no longer plan a request at L3.
  */
 export const L3_SIZE_RULE = { files: 10 } as const;
 /** What makes a change L3, as the lead's rubric words it (the lead-orchestrator skill repeats this). */
 export const L3_SIGNS = 'a new service or subsystem, an architecture change, a redesign that cuts across layers';
+/** Starts the rationale of a request that showed L3 signs (`l3Signs`), whether stage 1 or the judge saw them. */
+export const L3_PLANNED_AS_L2 = 'L3 signs, planned as L2';
 
 interface Rule { level: Level; weight: number; why: string; re: RegExp }
 
@@ -209,21 +222,22 @@ export function triage(input: TriageInput, presets: Record<Level, TeamPreset> = 
   const small = num(f, 'proseChars') < SMALL_PROSE && items <= SMALL_ITEMS && num(f, 'headings') === 0 && files < SOME_FILES;
   const everywhere = QUANTIFIER.test(p.prose);
 
-  const done = (kind: TriageKind, level: Level, ruleId: string, confidence: number, teamScore: number, note?: string): Stage1Result => {
+  const done = (kind: TriageKind, level: Level, ruleId: string, confidence: number, teamScore: number, note?: string, l3Signs = false): Stage1Result => {
     const preset = presets[level];
     const reasons = [...(note ? [note] : []), ...why];
     return {
       level, confidence: round2(confidence), source: kind === 'uncertain' ? 'default' : 'rule', taskType, preset: preset.id, budgetUsd: preset.budgetUsd,
       rationale: kind === 'uncertain'
-        ? `size not clear from the wording${reasons.length ? ` (${reasons.join(', ')})` : ''} -> start as L1, the lead decides`
+        ? `size not clear from the wording${reasons.length ? ` (${reasons.join(', ')})` : ''} -> ${preset.leadDirect ? `start as ${level}, the lead decides` : `${level} team, the lead picks the roles`}`
         : reasons.join(', ') || 'default rules',
-      kind, rule: ruleId, teamScore: round2(teamScore), features: f,
+      kind, rule: ruleId, teamScore: round2(teamScore), l3Signs, features: f,
     };
   };
 
   // ---- team: the request states or shows that the change is wide
-  if (l3 && !attached && taskType !== 'question') return done('team', 'L3', 'l3-keyword', 0.85, 0.95);
-  if (files >= HUGE_FILES) return done('team', 'L3', 'many-files', 0.8, 0.95);
+  // Decision 119: L3 wording plans L2 and is kept as a mark; only the lead or the user raises a request to L3.
+  if (l3 && !attached && taskType !== 'question') return done('team', 'L2', 'l3-keyword', 0.85, 0.95, L3_PLANNED_AS_L2, true);
+  if (files >= HUGE_FILES) return done('team', 'L2', 'many-files', 0.8, 0.95, L3_PLANNED_AS_L2, true);
   if (files >= MANY_FILES) return done('team', 'L2', 'many-files', 0.75, 0.85);
   if (breadth && taskType !== 'question') return done('team', 'L2', 'stated-breadth', 0.8, 0.85, 'the request says it spans several files or modules');
   if (spec) return done('team', 'L2', 'written-spec', 0.75, 0.8, 'a written specification with sections and many requirements');
@@ -246,7 +260,18 @@ export function triage(input: TriageInput, presets: Record<Level, TeamPreset> = 
   if (attached) score -= 0.1;
   const teamScore = Math.min(0.7, Math.max(0.3, score));
   // The confidence that "L1, direct" is right falls as the request looks more team-like.
-  return done('uncertain', 'L1', 'none', Math.min(RULE_CONFIDENCE_THRESHOLD - 0.01, 0.95 - teamScore), teamScore);
+  return done('uncertain', uncertainLevel(presets), 'none', Math.min(RULE_CONFIDENCE_THRESHOLD - 0.01, 0.95 - teamScore), teamScore);
+}
+
+/**
+ * The level an uncertain request is planned at (decision 121). L1 while L1 is lead-direct: the lead
+ * starts the change and may switch to a team. When the presets delegate L1 (an Opus-class lead after
+ * withLeadModel, or `lead_direct: false` in teams.yaml), the one-coder L1 team would leave a team-sized
+ * request without a reviewer or tester and with no way to add them, so the request gets the L2 team and
+ * the lead calls only the roles it needs. The one-coder team is for requests settled as small.
+ */
+export function uncertainLevel(presets: Record<Level, TeamPreset>): Level {
+  return presets.L1.leadDirect || presets.L2.leadDirect ? 'L1' : 'L2';
 }
 
 const agentCalls = (preset: TeamPreset): string[] => preset.roles.map(r => {
@@ -279,6 +304,9 @@ const PROMPT_SHAPE ='   The prompt\'s first line is "[subtask:<ID>]", the second
  * `escalation` names the teams an uncertain lead-direct request can switch to (decisions 109, 113):
  * pass the session's presets (teams.yaml applied) so the call values are the ones the router checks.
  * A single preset is taken as the L2 team, and the brief then offers no L3 path.
+ * The L3 team appears only as something the lead may choose (decision 119): in the uncertain brief, and
+ * in a team brief whose triage has `l3Signs`. In both the lead raises the request by making its first
+ * call a role of l3SignalRoles(<the request's team>, L3) at that role's L3 start step.
  */
 export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalation: TeamPreset | EscalationTeams = DEFAULT_PRESETS): string {
   const l2 = 'roles' in escalation ? escalation : escalation.L2;
@@ -324,10 +352,22 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
       'The router only records this request. (If the user asks for a team, follow the lead-orchestrator skill.)',
     ].join('\n');
   }
+  // Decision 119: a request with L3 signs is planned at L2; the L3 team is shown only as the lead's own way up.
+  const raiseBy = (t as Partial<Stage1Result>).l3Signs && l3 && !l3.leadDirect && preset.level !== l3.level ? l3SignalRoles(preset, l3) : [];
+  const raise = l3 && raiseBy.length ? [
+    `Larger team: the router plans up to ${preset.level} on its own, and this request shows signs of a larger change. If it is clearly beyond this team (${L3_SIGNS}, or edits in ${L3_SIZE_RULE.files} or more files), use the ${l3.level} team instead: make your first Agent call the ${l3.level} team's ${raiseBy[0]} with the ${l3.level} values below, and the router re-plans this request as ${l3.level}. When unsure, stay with this team.`,
+    `${l3.level} team (team preset ${l3.id}):`,
+    ...agentCalls(l3),
+  ] : [];
+  // Decision 121: an uncertain request on a delegating team. The lead staffs it; a small change is one coder.
+  const staffing = (t as Partial<Stage1Result>).kind === 'uncertain' && preset.roles.filter(r => r.count > 0).length > 1
+    ? [`The router could not tell the size of this request from its wording, so the staffing is yours: call only the roles the change needs. One coder subtask alone is right for a small change (fewer than ${TEAM_SIZE_RULE.files} files, one module). Use the rest of the team only when the change needs edits in ${TEAM_SIZE_RULE.files} or more files, or in ${TEAM_SIZE_RULE.dirs} or more modules or layers, or a design decision first (a new public API, schema or data model).`]
+    : [];
   return [
     head,
     `team preset ${preset.id}: ${team}. budget $${t.budgetUsd}.`,
     'Routing is ON for this request. You are the lead: delegate, and keep your own work small (every call you make re-reads your whole context at the lead model\'s price).',
+    ...staffing,
     'Do not edit or write files yourself (unless the user explicitly asks you to); the team below does the changes.',
     'Do not open or read source files to plan: hand the user\'s request, with the files and symbols it names, to the worker as the spec; the worker reads and investigates the code. Use at most one quick search only if you cannot tell which files are involved.',
     '1. Split the request into subtasks A, B, ... (a single subtask A is fine for a small change).',
@@ -338,5 +378,6 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
       ? '   Only when two or more writers run at the same time, also pass isolation "worktree" to each of them (then merge their branches, see the skill). A writer that runs alone gets no isolation and edits the working tree directly.'
       : '   Do not pass isolation: the subagent edits the working tree directly.',
     '3. Agent calls finish in the background: wait for every subtask\'s <task-notification>. The router has already run build, typecheck, lint and tests for each subtask and adds the result to that notification; do not re-run them. Check with git diff --stat that the changes are in the working tree, then answer the user. For verify blocks, step changes and HITL, follow the lead-orchestrator skill.',
+    ...raise,
   ].join('\n');
 }

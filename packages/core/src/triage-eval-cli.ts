@@ -9,7 +9,7 @@
 //   node packages/core/src/triage-eval-cli.ts judge-score --items <judge-items.jsonl> --judge <out.jsonl>
 //       scores a judge run made from those inputs
 //   node packages/core/src/triage-eval-cli.ts regret <runs.jsonl> --tasks <tasks.jsonl> [--judge <out.jsonl>]
-//       regret of each policy on measured runs (decision 107); tasks.jsonl has { taskId, prompt } per line
+//       regret of each policy on measured runs (decision 107); tasks.jsonl has { taskId, prompt, level? } per line
 //
 // A judge run is one JSON line per prompt: { "id": ..., "model": ..., "output": <the reply, text or object>, "costUsd"?, "ms"? }.
 // A measured run is one JSON line per run: { "taskId", "arrangement": "direct"|"team-L2"|"team-L3", "passed", "costUsd", "wallSeconds", ... }.
@@ -176,24 +176,43 @@ if (cmd === 'set') {
   console.log(`\njudge run: ${lines.length} replies, ${lines.length - judge.size} unreadable, total $${cost.toFixed(4)}${ms.length ? `, latency p50 ${ms[Math.floor(ms.length / 2)]} ms, p90 ${ms[Math.floor(ms.length * 0.9)]} ms` : ''}`);
 } else if (cmd === 'regret' && pos[0] && opt.tasks) {
   const stats = summariseRuns(readJsonl<MeasuredRun>(pos[0]));
-  const prompts = new Map(readJsonl<{ taskId: string; prompt: string }>(opt.tasks).map(t => [t.taskId, t.prompt]));
-  const answer = (c: Classifier) => (taskId: string): Arrangement => {
+  const taskRows = readJsonl<{ taskId: string; prompt: string; level?: Level }>(opt.tasks);
+  const prompts = new Map(taskRows.map(t => [t.taskId, t.prompt]));
+  const levels = new Map(taskRows.flatMap(t => (t.level ? [[t.taskId, t.level] as [string, Level]] : [])));
+  const answer = (c: Classifier, uncertainAs: Arrangement = 'direct') => (taskId: string): Arrangement => {
     const prompt = prompts.get(taskId);
-    return arrangementOf(prompt === undefined ? undefined : c({ id: taskId, task: taskId, lang: '', style: 'task', split: 'measured', label: { kind: 'direct', level: 'L1' }, prompt }));
+    return arrangementOf(prompt === undefined ? undefined : c({ id: taskId, task: taskId, lang: '', style: 'task', split: 'measured', label: { kind: 'direct', level: 'L1' }, prompt }), uncertainAs);
+  };
+  // The level the task was authored at, mapped the way the presets map it: what a triage that always got the size right would choose.
+  const byLevel = (l3: Arrangement) => (taskId: string): Arrangement => {
+    const level = levels.get(taskId);
+    return level === 'L3' ? l3 : level === 'L2' ? 'team-L2' : 'direct';
   };
   const policies: Record<string, (taskId: string) => Arrangement> = {
     'always direct': () => 'direct', 'always team-L2': () => 'team-L2', 'always team-L3': () => 'team-L3',
+    ...(levels.size ? { 'authored level (L0, L1 direct)': byLevel('team-L3'), 'authored level, L3 as team-L2': byLevel('team-L2') } : {}),
     'stage 1, uncertain as direct': answer(stage1),
-    ...(judge ? { 'stage 1 + judge bands, open as direct': answer(cascade(stage1, fromMap(judge))), "stage 1 + judge's own word": answer(cascade(stage1, fromMap(judgeWord!))) } : {}),
+    ...(judge ? {
+      'stage 1 + judge bands, open as direct': answer(cascade(stage1, fromMap(judge))),
+      'stage 1 + judge bands, open as team-L2': answer(cascade(stage1, fromMap(judge)), 'team-L2'),
+      "stage 1 + judge's own word": answer(cascade(stage1, fromMap(judgeWord!))),
+    } : {}),
   };
+  // A task no arrangement passed has no working answer to compare with (its failures compare by their own cost), so it also gets a table without it.
+  const unsolved = Object.entries(stats).filter(([, s]) => !ARRANGEMENTS.some(a => (s[a]?.passRate ?? 0) > 0)).map(([t]) => t);
+  const solved = Object.fromEntries(Object.entries(stats).filter(([t]) => !unsolved.includes(t)));
+  const sets: Array<[string, typeof stats]> = unsolved.length ? [['all tasks', stats], ['tasks at least one arrangement passed', solved]] : [['all tasks', stats]];
   for (const usdPerMinute of [0, 0.1]) {
-    console.log(`\n== regret per request, time valued at $${usdPerMinute.toFixed(2)} per minute (decision 108)`);
-    console.log('policy'.padEnd(32) + 'tasks  mean cost  mean regret  worst regret  picks the best');
-    for (const r of regretTable(stats, { ...policies, 'measured best (lower bound)': t => bestArrangement(stats[t]!, usdPerMinute) ?? 'direct' }, usdPerMinute)) {
-      console.log(`${r.policy.padEnd(32)}${String(r.tasks).padStart(5)}  ${r.meanCost.toFixed(3).padStart(9)}  ${r.meanRegret.toFixed(3).padStart(11)}  ${r.worstRegret.toFixed(3).padStart(12)}  ${r.matchesBest}/${r.tasks}`);
+    for (const [title, set] of sets) {
+      console.log(`\n== regret per request, time valued at $${usdPerMinute.toFixed(2)} per minute (decision 108), ${title}`);
+      console.log('policy'.padEnd(40) + 'tasks  mean cost  mean regret  worst regret  picks the best');
+      for (const r of regretTable(set, { ...policies, 'measured best (lower bound)': t => bestArrangement(set[t]!, usdPerMinute) ?? 'direct' }, usdPerMinute)) {
+        console.log(`${r.policy.padEnd(40)}${String(r.tasks).padStart(5)}  ${r.meanCost.toFixed(3).padStart(9)}  ${r.meanRegret.toFixed(3).padStart(11)}  ${r.worstRegret.toFixed(3).padStart(12)}  ${r.matchesBest}/${r.tasks}`);
+      }
     }
     console.log('  best arrangement per task: ' + Object.entries(stats).map(([t, s]) => `${t}=${bestArrangement(s, usdPerMinute)}`).join(', '));
   }
+  if (unsolved.length) console.log(`\nno arrangement passed: ${unsolved.join(', ')}`);
   console.log('\nper task (cost USD / seconds / pass rate):');
   for (const [t, s] of Object.entries(stats)) console.log(`  ${t.padEnd(34)} ` + ARRANGEMENTS.map(a => (s[a] ? `${a} ${s[a].costUsd.toFixed(3)}/${Math.round(s[a].wallSeconds)}/${s[a].passRate.toFixed(2)}` : `${a} -`)).join('   '));
 } else {

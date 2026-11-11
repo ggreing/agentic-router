@@ -1,5 +1,7 @@
 // Claude Code hook input -> client-neutral RouterEvent.
-// Field names follow the Claude Code 2.1.319 payloads recorded in test/fixtures/spike-*.jsonl.
+// Field names follow the Claude Code 2.1.319-2.1.322 hook payloads recorded in test/fixtures/*.jsonl.
+// The main-session model field and its transcript fallback (decision 117) are fixed by
+// test/fixtures/spike-leadmodel.jsonl and test/fixtures/transcript-main.jsonl.
 import type { RouterEvent, RouterEventType } from '@agentic-router/core';
 
 /** Claude Code hook event names this adapter understands. */
@@ -83,6 +85,12 @@ export function toRouterEvent(hookInput: unknown, opts: ToRouterEventOptions = {
   if (cwd) ev.cwd = cwd;
   const transcriptPath = str(hookInput.transcript_path);
   if (transcriptPath) ev.transcriptPath = transcriptPath;
+  // Main-session model (decision 117). Per Claude Code 2.1.322 only SessionStart carries a top-level
+  // `model`, and not on every start; UserPromptSubmit and the other events omit it, and a subagent
+  // event has none. Read it generically where present; for a per-request value that follows a mid-session
+  // /model switch, the daemon falls back to leadModelFromTranscript() below.
+  const leadModel = str(hookInput.model);
+  if (leadModel) ev.leadModel = leadModel;
 
   switch (type) {
     case 'prompt_submit': {
@@ -321,4 +329,32 @@ export function subtaskTagFromTranscript(agentTranscriptPath: string | undefined
   } catch {
     return null;   // transcript not written yet / unreadable
   }
+}
+
+// ---------------------------------------------------------------- lead model (decision 117)
+/**
+ * The main session's current model id, read from the LAST `assistant` line of the MAIN transcript
+ * (`RouterEvent.transcriptPath`) as `message.model`. Only the model id is taken; message content is
+ * never inspected. This is the per-request fallback for RouterEvent.leadModel: UserPromptSubmit carries
+ * no model and SessionStart's `model` is optional and goes stale after a /model switch, so the daemon
+ * resolves the lead model at each request from here (core's leadModelClass maps the id to a tier).
+ * Scans from the end so a mid-session switch is reflected. Returns null when the path is missing,
+ * unreadable, or has no assistant line with a model yet (e.g. before the first reply).
+ */
+export function leadModelFromTranscript(transcriptPath: string | undefined, readFileSync: (p: string) => string): string | null {
+  if (!transcriptPath) return null;
+  let text: string;
+  try { text = readFileSync(transcriptPath); } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line || !line.includes('"assistant"')) continue;   // cheap prefilter before JSON.parse
+    try {
+      const o = JSON.parse(line) as { type?: unknown; message?: unknown };
+      if (o.type !== 'assistant' || !isRecord(o.message)) continue;
+      const model = str(o.message.model);
+      if (model) return model;
+    } catch { /* skip a malformed / partially written line */ }
+  }
+  return null;
 }

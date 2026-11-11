@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRESETS as PRESETS0, L3_SIGNS, L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, formatTriageContext, l3SignalRoles, promptFeatures, triage } from '@agentic-router/core';
+import { DEFAULT_PRESETS as PRESETS0, L3_PLANNED_AS_L2, L3_SIGNS, L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, formatTriageContext, l3SignalRoles, promptFeatures, triage, uncertainLevel, withLeadModel } from '@agentic-router/core';
 
 // Briefs for delegated teams: L1 is lead-direct by default (decision 88), so tests of the team brief turn it off.
 const DEFAULT_PRESETS = PRESETS0;
@@ -12,9 +12,37 @@ test('typo fix is L0', () => {
   assert.equal(r.source, 'rule');
 });
 
-test('new service request is L3', () => {
+test('a new service request is planned at L2 and keeps its L3 signs (decision 119)', () => {
   const r = triage({ prompt: '결제 처리를 위한 신규 서비스를 처음부터 설계하고 구현해줘. 아키텍처 문서도 함께.' });
-  assert.equal(r.level, 'L3');
+  assert.deepEqual([r.kind, r.level, r.preset, r.budgetUsd, r.l3Signs], ['team', 'L2', 'L2', DEFAULT_PRESETS.L2.budgetUsd, true]);
+  assert.ok(r.rationale.startsWith(L3_PLANNED_AS_L2));
+  // ten or more files named: the same
+  const many = triage({ prompt: 'update these: ' + Array.from({ length: L3_SIZE_RULE.files }, (_, i) => `src/m${i}/file${i}.ts`).join(', ') });
+  assert.deepEqual([many.level, many.rule, many.l3Signs], ['L2', 'many-files', true]);
+  assert.ok(many.rationale.startsWith(L3_PLANNED_AS_L2));
+  // no rule plans L3, and only these two mark it
+  for (const prompt of ['fix the typo in README.md', '태스크에 댓글 기능 넣어줘', 'Refactor the validation module across multiple files and add an audit log']) {
+    assert.equal(triage({ prompt }).l3Signs, false, prompt);
+  }
+
+  // The team brief of a marked request shows the L3 team as the lead's own way up, with the first call that raises it.
+  const brief = formatTriageContext(r, DEFAULT_PRESETS.L2);
+  assert.match(brief, /^\[agentic-router\] level L2 /);
+  assert.match(brief, /team preset L2: architect x1 @s3/);
+  assert.ok(brief.includes(`If it is clearly beyond this team (${L3_SIGNS}, or edits in ${L3_SIZE_RULE.files} or more files), use the L3 team instead: make your first Agent call the L3 team's architect with the L3 values below, and the router re-plans this request as L3. When unsure, stay with this team.`));
+  const l3Part = brief.split('L3 team (team preset L3):')[1]!;
+  assert.match(l3Part, /^\n   - architect: subagent_type "agentic-router:architect", model "opus", effort "high"/);
+  assert.equal(brief.match(/\[subtask:<ID>\]/g)!.length, 1);
+  // an unmarked L2 request, a stored row without the mark, a lead-direct L3 and an L3 no first call could tell apart: no L3 text
+  const plain = triage({ prompt: 'Refactor the validation module across multiple files and add an audit log' });
+  assert.doesNotMatch(formatTriageContext(plain, DEFAULT_PRESETS.L2), /L3/);
+  const { l3Signs: _m, ...unmarked } = r;
+  assert.doesNotMatch(formatTriageContext(unmarked, DEFAULT_PRESETS.L2), /L3 team/);
+  assert.doesNotMatch(formatTriageContext(r, DEFAULT_PRESETS.L2, { ...DEFAULT_PRESETS, L3: { ...DEFAULT_PRESETS.L3, leadDirect: true } }), /L3 team/);
+  assert.doesNotMatch(formatTriageContext(r, DEFAULT_PRESETS.L2, { ...DEFAULT_PRESETS, L3: { ...DEFAULT_PRESETS.L3, roles: DEFAULT_PRESETS.L2.roles } }), /L3 team/);
+  assert.doesNotMatch(formatTriageContext(r, DEFAULT_PRESETS.L2, DEFAULT_PRESETS.L2), /L3 team/);
+  // a request the user put at L3 by hand gets the L3 team brief itself, not the way up
+  assert.doesNotMatch(formatTriageContext({ ...r, level: 'L3', preset: 'L3', source: 'manual' }, DEFAULT_PRESETS.L3), /Larger team/);
 });
 
 test('questions stay cheap', () => {
@@ -112,7 +140,7 @@ test('stage 1 answers direct, team or uncertain, and the level follows the answe
     ['이 함수는 왜 null을 반환해?', 'direct', 'L0', 'question'],
     ['Refactor the validation module across multiple files and add an audit log', 'team', 'L2', 'stated-breadth'],
     ['Add a pagination module and refactor the API layer across multiple files', 'team', 'L2', 'stated-breadth'],
-    ['결제 처리를 위한 신규 서비스를 처음부터 설계하고 구현해줘. 아키텍처 문서도 함께.', 'team', 'L3', 'l3-keyword'],
+    ['결제 처리를 위한 신규 서비스를 처음부터 설계하고 구현해줘. 아키텍처 문서도 함께.', 'team', 'L2', 'l3-keyword'],
     ['태스크에 댓글 기능 넣어줘', 'uncertain', 'L1', 'none'],
     ['convert the data access layer from callbacks to async/await', 'uncertain', 'L1', 'none'],
     ['src/parse.ts', 'uncertain', 'L1', 'none'],
@@ -124,6 +152,7 @@ test('stage 1 answers direct, team or uncertain, and the level follows the answe
     assert.equal(r.source, kind === 'uncertain' ? 'default' : 'rule', prompt);
     assert.equal(r.confidence < RULE_CONFIDENCE_THRESHOLD, kind === 'uncertain', prompt);
     assert.ok(r.teamScore >= 0 && r.teamScore <= 1);
+    assert.notEqual(r.level, 'L3', prompt);
   }
 });
 
@@ -142,6 +171,46 @@ test('the size of the request is not the size of the change', () => {
   // "all of them" is never settled as a small direct change, even with an L0 word in it
   assert.equal(triage({ prompt: '에러 메시지를 전부 메시지 키로 바꾸고 한국어/영어 카탈로그 붙여줘' }).kind, 'uncertain');
   assert.equal(triage({ prompt: 'fix the typo in every error message' }).kind, 'uncertain');
+});
+
+test('with a lead that delegates L1, an uncertain request gets the L2 team and staffs it itself (decision 121)', () => {
+  const prompt = '태스크에 댓글 기능 넣어줘';
+  const opus = withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5');
+  const sonnet = withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5');
+  assert.deepEqual([uncertainLevel(DEFAULT_PRESETS), uncertainLevel(sonnet), uncertainLevel(opus)], ['L1', 'L1', 'L2']);
+  // L2 lead-direct as well (teams.yaml): nothing to delegate to, so the request stays L1
+  assert.equal(uncertainLevel({ ...opus, L2: { ...opus.L2, leadDirect: true } }), 'L1');
+
+  // a lead that handles L1 itself: as before, lead-direct with the rubric
+  const s = triage({ prompt }, sonnet);
+  assert.deepEqual([s.kind, s.level, s.preset, s.source], ['uncertain', 'L1', 'L1', 'default']);
+  assert.match(s.rationale, /-> start as L1, the lead decides$/);
+  assert.match(formatTriageContext(s, sonnet[s.level], sonnet), /handled by you directly/);
+
+  // a lead that delegates L1: the L2 team, still uncertain (source 'default', low confidence), the lead picks the roles
+  const o = triage({ prompt }, opus);
+  assert.deepEqual([o.kind, o.level, o.preset, o.budgetUsd, o.source, o.rule], ['uncertain', 'L2', 'L2', DEFAULT_PRESETS.L2.budgetUsd, 'default', 'none']);
+  assert.ok(o.confidence < RULE_CONFIDENCE_THRESHOLD);
+  assert.match(o.rationale, /-> L2 team, the lead picks the roles$/);
+  const brief = formatTriageContext(o, opus[o.level], opus);
+  assert.match(brief, /^\[agentic-router\] level L2 \(source=default/);
+  assert.match(brief, /Do not edit or write files yourself/);
+  assert.match(brief, new RegExp(`the staffing is yours: call only the roles the change needs\\. One coder subtask alone is right for a small change \\(fewer than ${TEAM_SIZE_RULE.files} files, one module\\)`));
+  assert.match(brief, new RegExp(`${TEAM_SIZE_RULE.dirs} or more modules or layers`));
+  for (const r of DEFAULT_PRESETS.L2.roles) assert.match(brief, new RegExp(`subagent_type "agentic-router:${r.role}"`));
+  assert.doesNotMatch(brief, /handled by you directly|L3/);
+
+  // requests settled as small use the one-coder L1 team; settled team requests get no staffing line
+  const small = triage({ prompt: 'Fix the bug where parse() fails on empty input in src/parse.ts' }, opus);
+  assert.deepEqual([small.kind, small.level, small.preset], ['direct', 'L1', 'L1']);
+  const smallBrief = formatTriageContext(small, opus[small.level], opus);
+  assert.match(smallBrief, /team preset L1: coder x1 @s1/);
+  assert.doesNotMatch(smallBrief, /the staffing is yours/);
+  const wide = triage({ prompt: 'Refactor the validation module across multiple files and add an audit log' }, opus);
+  assert.doesNotMatch(formatTriageContext(wide, opus[wide.level], opus), /the staffing is yours/);
+  // trivial requests stay with the lead whatever the lead model
+  const typo = triage({ prompt: 'fix the typo in README.md' }, opus);
+  assert.match(formatTriageContext(typo, opus[typo.level], opus), /handled by you directly/);
 });
 
 test('a written specification with sections, declared types and many requirements is a team request', () => {

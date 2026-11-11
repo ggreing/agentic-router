@@ -18,6 +18,7 @@ export {
   taskNotification,
   promptOrigin,
   subtaskTagFromTranscript,
+  leadModelFromTranscript,
 } from './events.ts';
 export { renderHookOutput, renderPreCompactStdout } from './render.ts';
 
