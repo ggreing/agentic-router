@@ -83,7 +83,12 @@ function runClaude(repo: string, configDir: string, prompt: string, a: Arrangeme
     '--allowedTools', 'Agent', 'Bash(npm *)', 'Bash(node *)', 'Bash(npx tsc *)', 'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)',
     'Bash(git show*)', 'Bash(git add*)', 'Bash(git commit*)', 'Bash(git merge*)', 'Bash(git worktree*)', 'Bash(git branch*)',
     'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(grep *)', 'Bash(cd *)', 'Bash(python *)', 'Bash(pytest *)'];
-  if (a !== 'direct') args.splice(1, 0, '--plugin-dir', path.join(ROOT, 'plugin'));
+  if (a !== 'direct') {
+    args.splice(1, 0, '--plugin-dir', path.join(ROOT, 'plugin'));
+    // -p ends the session when the lead's turn ends; in the first measurement one lead ended 2 s after
+    // launching a background worker, which was then cut off. Interactive sessions do not have this problem.
+    args.push('--append-system-prompt', 'This is a non-interactive run: before you give your final answer, wait until every subagent you started has finished and you have read its result.');
+  }
   const env = { ...childEnv(configDir, { kind: 'api-key-helper' } as never), ...(home ? { AGENTIC_ROUTER_HOME: home } : {}) };
   return new Promise(resolve => {
     const t0 = Date.now();

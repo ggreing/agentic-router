@@ -4,11 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const RUNS = path.join(ROOT, 'bench', 'results', 'measure107', 'runs.jsonl');
+const dirArg = process.argv.indexOf('--dir');
+const RUNS = path.join(dirArg > 0 ? path.resolve(process.argv[dirArg + 1]) : path.join(ROOT, 'bench', 'results', 'measure107'), 'runs.jsonl');
 // optional: the file measure107's stdout is redirected to, to show the run in progress
 const logArg = process.argv.indexOf('--log');
 const LOG = logArg > 0 ? process.argv[logArg + 1] : process.env.M107_LOG ?? '';
-const TOTAL = 45, BUDGET = 50;
+const TOTAL = Number(process.env.M107_TOTAL ?? (dirArg > 0 ? 30 : 45)), BUDGET = Number(process.env.M107_BUDGET ?? (dirArg > 0 ? 10 : 50));
 
 function show() {
   const runs = fs.existsSync(RUNS) ? fs.readFileSync(RUNS, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
