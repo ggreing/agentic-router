@@ -1,0 +1,50 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:900px;height:540px"></div>
+<script src="fig.js"></script>
+<script>
+ const c0 = 95, c1 = 310, c2 = 560, c3 = 765, W = 160;
+ const A = 38, Bv = 158, Cv = 258, Dv = 365, E = 452;
+ // containers
+ C('pc', 3, 10, 893, 398, '사용자 PC (로컬)', '#9ca3af', 690);
+ C('cc', 5, 88, 400, 210, 'Claude Code (클라이언트)', '#4b5563', 150);
+ C('pl', 216, 112, 180, 178, 'Agentic Router 플러그인', '#0f8f84', 12);
+ C('dm', 465, 88, 390, 210, '라우터 데몬 (Node.js · 127.0.0.1)', '#1f4e79', 112);
+ // nodes
+ B('user', c0, A, W, 'c-white pill', '<div class="t">사용자 (터미널)</div>');
+ B('dash', c2, A, W, 'c-white pill', '<div class="t">대시보드</div><div class="s">로컬 웹 → Tauri 앱</div>');
+ B('lead', c0, Bv, W, 'c-white', '<div class="t">메인 세션 = 총괄</div><div class="s">사용자가 고른 모델</div>');
+ B('team', c0, Cv, W, 'c-white', '<div class="t">서브에이전트 팀</div><div class="s">역할별 세션</div>');
+ B('plug', c1, Bv, W, 'c-teal', '<div class="t">훅 · MCP 도구</div><div class="s">이벤트 송신 · 계획 조회</div>');
+ B('roles', c1, Cv, W, 'c-teal', '<div class="t">역할 .md · 지침 스킬</div><div class="s">역할별 1파일 · 팀 프리셋</div>');
+ B('api', c2, Bv, W, 'c-blue', '<div class="t">이벤트 · 판정 API</div><div class="s mono">/router/v1/*</div>');
+ B('tri', c3, Bv, W, 'c-blue', '<div class="t">판정 엔진</div><div class="s">규칙 → 유사 사례 → 상위</div>');
+ B('graph', c2, Cv, W, 'c-blue', '<div class="t">상태 그래프</div><div class="s">LangGraph.js · 작업 원장</div>');
+ B('store', c3, Cv, W, 'c-amber', '<div class="t">학습 저장소</div><div class="s">SQLite + sqlite-vec</div>');
+ B('proxy', 140, Dv, 150, 'c-orange', '<div class="t">API 프록시</div><div class="s">별도 프로세스 · 무수정<br>usage 집계 · 예산 차단</div>');
+ B('vault', 330, Dv, 150, 'c-amber', '<div class="t">OS 키체인</div><div class="s">API 키 보관</div>');
+ B('anth', 447, E, 864, 'c-black', '<div class="t">Anthropic API</div><div class="s">Haiku 5.5 · Sonnet 5.5 · Opus 5.5 · (Fable 5.1)</div>');
+ // legend
+ const lg = document.createElement('div'); lg.className = 'legend'; lg.style.left = '15px'; lg.style.top = '505px';
+ lg.innerHTML = '<span><span class="ln" style="border-color:#0f8f84"></span>구독 모드 경로</span><span><span class="ln" style="border-color:#c2570c"></span>API 키 모드 경로</span><span><span class="ln" style="border-color:#6b7280"></span>로컬 제어 흐름</span><span><span class="ln" style="border-color:#6b7280;border-top-style:dashed"></span>선택적 경로</span>';
+ FIG.appendChild(lg);
+ initSvg();
+ const G = '#6b7280', TEAL = '#0f8f84', OR = '#c2570c';
+ link('user', 'b', 'lead', 't', { both: true, label: '요청 · 보고', lt: 0.78 });
+ link('lead', 'b', 'team', 't', { label: '위임' });
+ link('lead', 'r', 'plug', 'l', {});
+ link('plug', 'r', 'api', 'l', { both: true, label: '이벤트 · 주입' });
+ link('roles', 'l', 'team', 'r', { dash: true, label: '역할 정의' });
+ link('api', 'r', 'tri', 'l', { both: true, label: '판정' });
+ link('api', 'b', 'graph', 't', { label: '상태 갱신' });
+ link('tri', 'b', 'store', 't', { both: true, label: '유사 사례' });
+ link('graph', 'r', 'store', 'l', { label: '기록' });
+ link('api', 't', 'dash', 'b', { label: '지표', lt: 0.22 });
+ const tb = P('team', 'b'), anthTop = P('anth', 't')[1];
+ link([40, tb[1]], null, [40, anthTop], null, { color: TEAL, w: 2.4, label: '구독: 직접', lt: 0.2 });
+ link([140, tb[1]], null, 'proxy', 't', { color: OR, w: 2.4, label: 'API 키 모드', lt: 0.35 });
+ link('vault', 'l', 'proxy', 'r', { color: OR, dash: true, label: '키 읽기' });
+ link('proxy', 'b', [140, anthTop], null, { color: OR, w: 2.4, label: 'API 키로 전송' });
+ const tr = P('tri', 'r');
+ link('tri', 'r', [868, anthTop], null, { via: [[868, null]], dash: true, label: '3차 판정', lside: 'left', lt: 0.55 });
+ done();
+</script></body></html>

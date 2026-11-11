@@ -1,0 +1,11 @@
+{
+  "name": "taskboard",
+  "version": "0.2.0",
+  "description": "In-memory task management service (models, repositories, service, request handlers)",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  }
+}

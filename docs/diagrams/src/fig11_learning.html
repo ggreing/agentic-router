@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="height:410px"></div>
+<script src="fig.js"></script>
+<script>
+ B('tri', 150, 70, 180, 'c-navy', '<div class="t">① 판정</div><div class="s">규칙 → 유사 사례 투표</div>');
+ B('run', 650, 70, 180, 'c-white', '<div class="t">② 팀 실행</div><div class="s">세션별 즉시 평가 (↑ · = · ↓)</div>');
+ B('rec', 650, 230, 180, 'c-white', '<div class="t">③ 결과 기록 (Stop 훅)</div><div class="s">단계 이력 · 팀 조정 · 성공</div>');
+ B('emb', 400, 230, 150, 'c-gray', '<div class="t">④ 로컬 임베딩</div><div class="s">ONNX · 외부 전송 없음</div>');
+ B('store', 150, 230, 180, 'c-amber', '<div class="t">⑤ 사례 저장소</div><div class="s">SQLite + sqlite-vec<br>시드 사례(Phase 0) 기본 제공</div>');
+ B('man', 650, 355, 180, 'c-gray', '<div class="t">사용자 수동 보정</div><div class="s">/router level</div>');
+ B('sug', 150, 360, 180, 'c-amber', '<div class="t">보정 제안</div><div class="s">난이도 규칙 · 시작 단계<br>자동 적용 안 함</div>');
+ T(280, 135, '별도 모델 학습 없이,<br>쌓인 사례가 곧 라우터의 경험이 됩니다', 'note', 240).style.textAlign = 'center';
+ initSvg();
+ const N = '#1f4e79';
+ link('tri', 'r', 'run', 'l', { color: N, label: '팀 규모 · 시작 단계' });
+ link('run', 'b', 'rec', 't', { color: N, label: '요청 종료' });
+ link('rec', 'l', 'emb', 'r', { color: N, label: '요청 특징' });
+ link('emb', 'l', 'store', 'r', { color: N, label: '벡터' });
+ link('store', 't', 'tri', 'b', { color: N, label: 'k-NN 유사 사례' });
+ link('man', 't', 'rec', 'b', { dash: true, label: '보정 신호' });
+ link('store', 'b', 'sug', 't', { dash: true, label: '반복 증원 · 상승 패턴' });
+ done();
+</script></body></html>

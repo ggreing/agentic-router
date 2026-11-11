@@ -1,0 +1,12 @@
+{
+  "id": "c-l0-02",
+  "level": "L0",
+  "source": "custom",
+  "fixture": "textkit",
+  "title": "wordCount barrel export 누락 수정",
+  "prompt": "README에는 `wordCount`가 패키지 함수로 나와 있는데, `src/index.ts`(barrel)에서 export가 빠져 있어서 `import { wordCount } from './src/index.ts'` 가 안 돼요. `src/count.ts`에 있는 `wordCount`를 `src/index.ts`에서도 export 해 주세요. 기존 export(`charCount` 등)는 그대로 유지해야 합니다.",
+  "hidden_tests": ["hidden/wordcount-export.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 15, "timeoutSec": 300 }
+}

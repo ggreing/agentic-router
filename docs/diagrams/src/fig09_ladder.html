@@ -1,0 +1,37 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:820px;height:860px"></div>
+<script src="fig.js"></script>
+<script>
+ C('b4', 20, 18, 785, 94, '옵트인 · Fable 5.1', '#b8860b', 640);
+ C('b3', 20, 126, 785, 192, 'T3 · Opus 5.5', '#6a3cd6', 660);
+ C('b2', 20, 332, 785, 192, 'T2 · Sonnet 5.5', '#1f5fa8', 660);
+ C('b1', 20, 538, 785, 192, 'T1 · Haiku 5.5', '#2e7d32', 660);
+ const X = 380, W = 250;
+ const S = [
+  ['s1', 684, 'c-t1', 's1 · Haiku 5.5 · low', '$0.10 / $0.50', '1.0'],
+  ['s2', 588, 'c-t1', 's2 · Haiku 5.5 · high', '$0.10 / $0.50', '3.1'],
+  ['s3', 478, 'c-t2', 's3 · Sonnet 5.5 · medium', '$2 / $10', '9.1'],
+  ['s4', 382, 'c-t2', 's4 · Sonnet 5.5 · high', '$2 / $10', '15.3'],
+  ['s5', 272, 'c-t3', 's5 · Opus 5.5 · high', '$4 / $20', '44.9'],
+  ['s6', 176, 'c-t3', 's6 · Opus 5.5 · xhigh', '$4 / $20', '96.2'],
+  ['s7', 64, 'c-t4', 's7 · Fable 5.1 · high', '$10 / $50', '미측정'],
+ ];
+ for (const s of S) B(s[0], X, s[1], W, s[2], `<div class="t">${s[3]}</div><div class="s">토큰 단가 ${s[4]} · 실효 계수 ${s[5]}</div>`);
+ B('hitl', 660, 176, 170, 'c-red', '<div class="t">사람 개입 (HITL)</div><div class="s">상승 3회 초과 ·<br>최상단에서 미달 시</div>');
+ T(30, 748, '※ 충족이면 단계 유지. 여유는 2회 연속일 때만 한 단계 하락하고, 상승한 단계 아래로는 다음 2개 작업 동안 내려가지 않습니다(하한 잠금).<br>' +
+   '※ 상승은 하위 작업당 3회까지이며, 넘으면 사람 개입. 하위 작업이 바뀌어도 단계는 이어집니다(리셋 없음).<br>' +
+   '※ 품질 하한: 검토자(채점자)는 검토 대상 세션보다 낮은 단계로 내려가지 않습니다. 단계는 호출 시 model · effort로 지정합니다.<br>' +
+   '※ 실효 계수 = 완료 작업당 비용의 s1 대비 배수 (Phase 0, 과제 20개 × 1회). 실측 비용 순서가 가설 순서와 같았습니다. L3는 s5에서 시작합니다.', 'note', 780);
+ initSvg();
+ const RD = '#c62828', GR = '#2e7d32', VI = '#6a3cd6', AM = '#8a6400';
+ const pair = (lo, hi, cross) => {
+  link(lo, 't', hi, 'b', { ao: -60, bo: -60, color: cross ? VI : RD, w: cross ? 2.2 : 1.8, label: cross ? '미달 ↑ · 다음 모델로 시작' : '미달 ↑ effort (토큰↑)', lt: cross ? 0.25 : 0.5, lside: 'left', lcolor: cross ? VI : RD });
+  link(hi, 'b', lo, 't', { ao: 60, bo: 60, color: GR, w: cross ? 2.2 : 1.8, label: cross ? '여유 2회 ↓ · 하위 모델로 시작' : '여유 2회 ↓ effort (토큰↓)', lt: cross ? 0.75 : 0.5, lcolor: GR });
+ };
+ pair('s1', 's2'); pair('s2', 's3', 1); pair('s3', 's4'); pair('s4', 's5', 1); pair('s5', 's6');
+ link('s6', 't', 's7', 'b', { ao: -60, bo: -60, dash: true, color: AM, label: '옵트인 시 미달 ↑', lt: 0.25, lside: 'left', lcolor: AM });
+ link('s7', 'b', 's6', 't', { ao: 60, bo: 60, dash: true, color: GR, label: '여유 2회 ↓', lt: 0.75, lcolor: GR });
+ link('s6', 'r', 'hitl', 'l', { color: RD, label: '미달', lcolor: RD });
+ link('s7', 'r', 'hitl', 't', { route: 'hv', color: RD, label: '미달', lcolor: RD, lseg: 0 });
+ done();
+</script></body></html>

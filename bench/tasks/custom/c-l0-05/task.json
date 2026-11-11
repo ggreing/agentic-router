@@ -1,0 +1,12 @@
+{
+  "id": "c-l0-05",
+  "level": "L0",
+  "source": "custom",
+  "fixture": "confkit",
+  "title": "parseDuration 시간(h) 단위 상수 오류 수정",
+  "prompt": "confkit의 `parseDuration('1h')`가 `360000`을 반환합니다. 1시간은 `3600000`ms 여야 해요. 이것 때문에 `'1h30m'` 같은 복합 값도 틀리게 계산되고 있습니다 (`5400000`이 나와야 함). 고쳐 주세요. 다른 단위(ms, s, m, d)는 지금 맞게 동작합니다.",
+  "hidden_tests": ["hidden/duration-hours.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 15, "timeoutSec": 300 }
+}

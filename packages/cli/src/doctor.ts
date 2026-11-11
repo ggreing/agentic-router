@@ -1,0 +1,135 @@
+// `doctor`: environment checks that decide whether routing can work (spec 5.4, decision 30-35).
+import { execFileSync, execSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { paths, routerHome } from '@agentic-router/core';
+import { readConfig } from './setup.ts';
+import { health, localRequest } from './daemonctl.ts';
+
+export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
+
+export const MIN_CLAUDE = [2, 1, 295] as const;   // per-call effort (2.1.292), hook onFailure (2.1.295)
+
+export function versionAtLeast(v: string, min: readonly number[]): boolean {
+  const m = v.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return false;
+  const n = [Number(m[1]), Number(m[2]), Number(m[3])];
+  for (let i = 0; i < 3; i++) if (n[i] !== min[i]) return n[i]! > min[i]!;
+  return true;
+}
+
+/** Settings that silently disable the ladder or the plugin's hooks. Pure: takes env for testing. */
+export function ladderBreakers(env: NodeJS.ProcessEnv): Check[] {
+  const out: Check[] = [];
+  if (env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE) out.push({ name: 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE', ok: false, blocking: true,
+    detail: 'forces one model for every subagent: per-call model selection (the ladder) cannot work' });
+  if (env.CLAUDE_CODE_EFFORT_LEVEL) out.push({ name: 'CLAUDE_CODE_EFFORT_LEVEL', ok: false, blocking: true,
+    detail: 'overrides per-call effort for every subagent' });
+  if (env.ANTHROPIC_API_KEY) out.push({ name: 'ANTHROPIC_API_KEY in environment', ok: false, blocking: false,
+    detail: 'keys belong in the OS keychain only (decision 33); this variable is visible to every process you start' });
+  return out;
+}
+
+/** Windows: Git Bash is required (decision 102); Claude Code's Bash tool and the router's verify use it. */
+export function findGitBash(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.CLAUDE_CODE_GIT_BASH_PATH && fs.existsSync(env.CLAUDE_CODE_GIT_BASH_PATH)) return env.CLAUDE_CODE_GIT_BASH_PATH;
+  for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')])
+    if (base && fs.existsSync(path.join(base, 'Git', 'bin', 'bash.exe'))) return path.join(base, 'Git', 'bin', 'bash.exe');
+  try {
+    const found = execFileSync('where', ['bash'], { encoding: 'utf8', timeout: 5000, windowsHide: true }).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    return found.find(x => !/[\/]Windows[\/]System32[\/]bash\.exe$/i.test(x)) ?? null;   // System32\bash.exe is WSL, not Git Bash
+  } catch { return null; }
+}
+
+/** Environment problems that make hooks or the daemon misbehave (env audit #4, #7, #8, #13). Pure enough to test. */
+export function environmentChecks(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, execPath = process.execPath): Check[] {
+  const out: Check[] = [];
+  if (platform === 'win32') {
+    const bash = findGitBash(env);
+    out.push({ name: 'git bash (Windows)', ok: !!bash, blocking: true,
+      detail: bash ?? 'not found: install Git for Windows or set CLAUDE_CODE_GIT_BASH_PATH (Windows without Git Bash is not supported)' });
+  }
+  if (/[\\/](\.?nvm|nvm4w|fnm|\.volta|\.asdf|\.nodenv|n[\\/]versions)[\\/]/i.test(execPath)) out.push({ name: 'node from a version manager', ok: false, blocking: false,
+    detail: `${execPath}: hooks run \`node\` from the PATH Claude Code sees. A desktop app or IDE started outside your shell may not have it, and then every hook fails (the guard blocks tool calls). Make node available system-wide or start Claude Code from this shell.` });
+  const rh = env.AGENTIC_ROUTER_HOME;
+  if (rh && !path.isAbsolute(rh)) out.push({ name: 'AGENTIC_ROUTER_HOME', ok: false, blocking: false, detail: `relative value "${rh}" is ignored; using ${routerHome()}` });
+  if (env.CLAUDE_CONFIG_DIR) out.push({ name: 'CLAUDE_CONFIG_DIR', ok: path.isAbsolute(env.CLAUDE_CONFIG_DIR), blocking: false,
+    detail: path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? `status line goes to ${path.join(env.CLAUDE_CONFIG_DIR, 'settings.json')}; the guard protects this folder` : 'not an absolute path: ignored' });
+  return out;
+}
+
+/** Who besides the user can read the router home (prompts, token). Windows: icacls; POSIX: mode bits. */
+export function homeAccessCheck(home = routerHome(), platform: NodeJS.Platform = process.platform): Check | null {
+  if (!fs.existsSync(home)) return null;
+  try {
+    if (platform === 'win32') {
+      const user = os.userInfo().username.toLowerCase();
+      const out = execFileSync('icacls', [home], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      // icacls prints "<path> DOMAIN\Name:(OI)(CI)(F)" on the first line, then "<indent>NT AUTHORITY\SYSTEM:(F)" ...
+      const principals = out.split(/\r?\n/)
+        .map((line, n) => (n === 0 && line.toLowerCase().startsWith(home.toLowerCase()) ? line.slice(home.length) : line).trim())
+        .map(line => line.match(/^(.+?):\(/)?.[1]?.trim().toLowerCase())
+        .filter((x): x is string => !!x);
+      const others = principals.filter(p => !/(^|\\)(system|administrators|creator owner)$/.test(p) && !p.endsWith('\\' + user) && p !== user);
+      return { name: 'router home access', ok: others.length === 0, blocking: false,
+        detail: others.length ? `${home} is also accessible to: ${[...new Set(others)].join(', ')} (they could read prompts and the local token)` : 'only you (and SYSTEM/Administrators)' };
+    }
+    const mode = fs.statSync(home).mode & 0o777;
+    return { name: 'router home access', ok: (mode & 0o077) === 0, blocking: false,
+      detail: (mode & 0o077) === 0 ? 'mode 0700' : `mode 0${mode.toString(8)}: other users can read prompts; run agentic-router init to fix` };
+  } catch { return { name: 'router home access', ok: false, blocking: false, detail: 'could not read the permissions' }; }
+}
+
+export interface HookClient { sessionId?: string; node?: string; nodeVersion?: string; routerHome?: string; port?: number; seenAt?: string }
+
+/**
+ * Compares what the hooks inside Claude Code reported at SessionStart (decision 97) with this CLI's
+ * view: a different router home or port means hook events never reach this daemon (env audit #7).
+ */
+export function compareHookClient(c: HookClient, home: string, port: number): Check {
+  const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const problems: string[] = [];
+  if (c.routerHome && norm(c.routerHome) !== norm(home)) problems.push(`hooks use router home ${c.routerHome}, the CLI uses ${home} (set the same AGENTIC_ROUTER_HOME for both, or neither)`);
+  if (c.port && c.port !== port) problems.push(`hooks use port ${c.port}, the daemon listens on ${port}`);
+  if (c.nodeVersion && Number(c.nodeVersion.replace(/^v/, '').split('.')[0]) < 24) problems.push(`hooks run node ${c.nodeVersion} (${c.node ?? '?'}); need >= 24`);
+  return { name: 'hooks seen from Claude Code', ok: problems.length === 0, blocking: false,
+    detail: problems.join('; ') || `last session ${c.seenAt ?? '?'}: node ${c.nodeVersion ?? '?'}, same home and port` };
+}
+
+async function hookClientCheck(port: number): Promise<Check | null> {
+  try {
+    const token = fs.readFileSync(paths.token(), 'utf8').trim();
+    const r = await localRequest(port, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
+    if (!r || r.status !== 200) return null;
+    const clients = (JSON.parse(r.body) as { clients?: HookClient[] }).clients ?? [];
+    if (!clients.length) return { name: 'hooks seen from Claude Code', ok: true, blocking: false, detail: 'no Claude Code session has reported yet (start one with the plugin loaded)' };
+    return compareHookClient(clients[0]!, routerHome(), port);
+  } catch { return null; }
+}
+
+export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Check[]> {
+  const checks: Check[] = [];
+  const node = process.versions.node;
+  checks.push({ name: 'node', ok: Number(node.split('.')[0]) >= 24, blocking: true, detail: node });
+  let claude = '';
+  // On Windows an npm-installed claude is a .cmd shim, which execFile cannot start without a shell (review #8).
+  // The command line is fixed (no user input), so shell:true is safe here.
+  try {
+    const o = { encoding: 'utf8' as const, timeout: 20000, windowsHide: true };
+    claude = (process.platform === 'win32' ? execSync('claude --version', o) : execFileSync('claude', ['--version'], o)).trim();
+  } catch { /* not installed */ }
+  checks.push({ name: 'claude code', ok: versionAtLeast(claude, MIN_CLAUDE), blocking: true, detail: claude || 'not found' + ` (need >= ${MIN_CLAUDE.join('.')})` });
+  const cfg = readConfig();
+  checks.push({ name: 'init', ok: !!cfg && fs.existsSync(paths.token()), blocking: true, detail: cfg ? `port ${cfg.daemonPort}` : 'run agentic-router init' });
+  if (cfg) {
+    const h = await health(cfg.daemonPort);
+    checks.push({ name: 'daemon', ok: !!h, blocking: false, detail: h ? `running (${h.version ?? '?'})` : 'not running: Claude Code works, but without routing' });
+    if (h) { const c = await hookClientCheck(cfg.daemonPort); if (c) checks.push(c); }
+  }
+  checks.push(...environmentChecks(env));
+  const access = homeAccessCheck();
+  if (access) checks.push(access);
+  checks.push(...ladderBreakers(env));
+  return checks;
+}

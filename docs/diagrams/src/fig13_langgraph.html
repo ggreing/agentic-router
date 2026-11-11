@@ -1,0 +1,27 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:860px;height:420px"></div>
+<script src="fig.js"></script>
+<script>
+ B('st', 45, 70, 62, 'c-gray pill', '<div class="t mono" style="font-size:12px">START</div>');
+ B('tri', 185, 70, 130, 'c-navy', '<div class="t mono">triage</div><div class="s">난이도 판정</div>');
+ B('pln', 360, 70, 140, 'c-navy', '<div class="t mono">plan_team</div><div class="s">팀 · 하위 작업 계획</div>');
+ B('wt', 545, 70, 150, 'c-amber', '<div class="t mono">wait_events</div><div class="s">훅 이벤트로 재개</div>');
+ B('ev', 740, 70, 140, 'c-navy', '<div class="t mono">evaluate</div><div class="s">검증 실행 · 평가</div>');
+ B('adj', 740, 210, 200, 'c-violet', '<div class="t mono">adjust</div><div class="s mono" style="font-size:11px;white-space:nowrap">retry · hold · step_up<br>step_down (2회 연속)<br>respawn · hitl · budget_pause</div>');
+ B('itg', 740, 335, 150, 'c-navy', '<div class="t mono">integrate_check</div><div class="s">병합 · 최종 검증</div>');
+ B('lrn', 520, 335, 130, 'c-green', '<div class="t mono">learn</div><div class="s">사례 기록</div>');
+ B('end', 330, 335, 62, 'c-gray pill', '<div class="t mono" style="font-size:12px">END</div>');
+ T(20, 388, '※ 모든 노드의 상태는 SQLite 체크포인터에 저장됩니다 (세션 재개 · 컴팩션 후 복원). 실제 작업은 Claude Code 서브에이전트가 실행하고, 그래프는 훅 이벤트가 올 때마다 재개됩니다.', 'note', 820);
+ initSvg();
+ const N = '#1f4e79', VI = '#6a3cd6', GR = '#2e7d32';
+ link('st', 'r', 'tri', 'l', { color: N });
+ link('tri', 'r', 'pln', 'l', { color: N });
+ link('pln', 'r', 'wt', 'l', { color: N });
+ link('wt', 'r', 'ev', 'l', { color: N, label: '이벤트' });
+ link('ev', 'b', 'adj', 't', { color: VI, label: '세션 결과 도착' });
+ link('adj', 'l', 'wt', 'b', { route: 'hv', color: VI, label: '다음 이벤트 대기', lseg: 0 });
+ link('ev', 'r', 'itg', 'r', { via: [[838, null], [null, 335]], color: GR, label: '모든 하위 작업 완료', lseg: 1, lt: 0.86, lside: 'left', lcolor: GR });
+ link('itg', 'l', 'lrn', 'r', { color: GR });
+ link('lrn', 'l', 'end', 'r', { color: GR });
+ done();
+</script></body></html>

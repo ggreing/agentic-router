@@ -1,0 +1,12 @@
+{
+  "id": "c-l1-03",
+  "level": "L1",
+  "source": "custom",
+  "fixture": "textkit",
+  "title": "wordWrap 줄바꿈 유지 및 긴 단어 분할 옵션 추가",
+  "prompt": "textkit `wordWrap(text, width)` 개선 요청입니다. CLI 도움말 출력에 쓰려는데 두 가지가 문제예요.\n\n1) 입력에 이미 있는 줄바꿈(`\\n`)이 전부 사라지고 한 문단으로 합쳐집니다. 입력의 각 줄을 따로 wrap 하고 결과를 `\\n`으로 다시 이어 주세요. 빈 줄(문단 구분)이나 공백만 있는 줄은 빈 줄로 유지됩니다. 한 줄 안에서는 지금처럼 연속 공백/탭을 단어 구분으로 보고, 앞뒤 공백은 버립니다.\n   - `wordWrap('aaa bbb\\n\\nccc ddd', 3)` → `'aaa\\nbbb\\n\\nccc\\nddd'`\n   - `wordWrap('the quick brown\\nfox', 10)` → `'the quick\\nbrown\\nfox'`\n   - `wordWrap('a\\n   \\nb', 5)` → `'a\\n\\nb'`\n\n2) `width`보다 긴 단어를 자르는 옵션을 추가해 주세요. 시그니처: `wordWrap(text: string, width: number, options?: WordWrapOptions): string`, `interface WordWrapOptions { breakLongWords?: boolean }` (기본값 `false`, `WordWrapOptions` 타입도 `src/index.ts`에서 export).\n   - `false`(기본)면 지금처럼 긴 단어를 자르지 않고 한 줄에 통째로 둡니다.\n   - `true`면 긴 단어를 앞에서부터 `width` 글자씩 조각내고, 각 조각을 일반 단어처럼 greedy 규칙으로 배치합니다. 그래서 마지막(짧은) 조각 뒤에는 다음 단어가 들어갈 자리가 있으면 같은 줄에 붙습니다.\n   - `wordWrap('abcdefghij', 4, { breakLongWords: true })` → `'abcd\\nefgh\\nij'`\n   - `wordWrap('abcdefg hi', 5, { breakLongWords: true })` → `'abcde\\nfg hi'`\n\n빈 문자열 입력은 `''`, `width`가 양의 정수가 아니면 지금처럼 `TextkitError`를 던집니다.",
+  "hidden_tests": ["hidden/wordwrap-lines.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 30, "timeoutSec": 600 }
+}

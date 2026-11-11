@@ -1,0 +1,47 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css">
+<style>.self{font-size:11.5px;padding:3px 8px;min-height:24px;border-radius:6px;white-space:nowrap}</style></head><body>
+<div id="fig" style="width:830px;height:760px"></div>
+<script src="fig.js"></script>
+<script>
+ const X = { U: 72, L: 235, P: 405, D: 575, S: 748 };
+ const names = { U: '사용자', L: '총괄 (메인 세션)', P: '플러그인 (훅·MCP)', D: '라우터 데몬', S: '서브에이전트 팀' };
+ const cls = { U: 'c-white', L: 'c-white', P: 'c-teal', D: 'c-blue', S: 'c-t1' };
+ const Y0 = 96, DY = 36;
+ const msgs = [
+  ['U', 'L', '요청 입력'],
+  ['L', 'P', 'UserPromptSubmit'],
+  ['P', 'D', 'prompt_submit 이벤트'],
+  ['D', 'D', '1·2차 판정 (필요 시 3차)'],
+  ['D', 'P', '판정 · 프리셋 · 예산', 1],
+  ['P', 'L', '컨텍스트 주입', 1],
+  ['L', 'D', '계획 조회 (MCP)'],
+  ['D', 'L', '하위 작업 계획 · 시작 단계', 1],
+  ['L', 'S', '하위 작업 위임 (model · effort · 인계 요약 · 허용 경로)'],
+  ['S', 'S', '세션 작업 (worktree)'],
+  ['S', 'L', '결과물 보고', 1],
+  ['P', 'D', '결과 이벤트 (SubagentStop)'],
+  ['D', 'D', 'worktree 검증 → 단계 결정'],
+  ['D', 'L', '미달 ↑ 재작업 · 충족 = · 여유 2회 ↓', 1],
+  ['L', 'L', '병합 · 최종 검증'],
+  ['L', 'U', '결과 보고', 1],
+  ['P', 'D', 'Stop → 학습 기록'],
+ ];
+ const Y = i => Y0 + i * DY + (i >= 8 ? 24 : 0) + (i >= 14 ? 14 : 0);
+ const yEnd = Y(msgs.length - 1) + 26;
+ // loop frame for rows 8..13
+ const f0 = Y(8) - 38, f1 = Y(13) + 18;
+ C('loop', 150, f0, 670, f1 - f0, '하위 작업(세션)마다 반복 — 결과물마다 즉시 평가 · 조정', '#6a3cd6', 24);
+ for (const k of Object.keys(X)) B('h' + k, X[k], 26, 150, cls[k], `<div class="t" style="white-space:nowrap">${names[k]}</div>`);
+ msgs.forEach((m, i) => { if (m[0] === m[1]) B('s' + i, Math.min(X[m[0]], 735), Y(i), 172, 'c-gray self', m[2]); });
+ initSvg();
+ for (const k of Object.keys(X)) link([X[k], 44], null, [X[k], yEnd], null, { noArrow: true, dash: '4 4', color: '#c0c4cc', w: 1.3 });
+ msgs.forEach((m, i) => {
+  if (m[0] === m[1]) return;
+  const y = Y(i), x1 = X[m[0]], x2 = X[m[1]];
+  const dir = Math.sign(x2 - x1);
+  link([x1, y], null, [x2 - dir * 2, y], null, { dash: m[3] ? '5 4' : false, color: m[3] ? '#6b7280' : '#374151', label: m[2] });
+ });
+ // re-raise self boxes above the lifelines
+ document.querySelectorAll('.self').forEach(e => e.style.zIndex = 4);
+ done();
+</script></body></html>

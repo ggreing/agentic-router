@@ -1,0 +1,18 @@
+{
+  "name": "@agentic-router/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local router daemon: hook event API, local auth, ledger (node:sqlite), session verification",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agentic-router/core": "0.0.0",
+    "@agentic-router/adapter-claude-code": "0.0.0"
+  }
+}

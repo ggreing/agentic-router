@@ -1,0 +1,12 @@
+{
+  "id": "c-l0-01",
+  "level": "L0",
+  "source": "custom",
+  "fixture": "textkit",
+  "title": "interpolate 에러 메시지 오타 수정",
+  "prompt": "textkit의 `interpolate`에서 값이 없는 placeholder를 만나면 던지는 에러 메시지에 오타가 있어요 (`vlaue`). 사용자 화면에 그대로 노출되는 메시지라 고쳐야 합니다.\n\n예를 들어 `interpolate('Hi {{name}}', {})` 를 호출하면 `TextkitError` 가 던져지고, 그 `message` 가 정확히 `Missing value for placeholder \"name\"` 이어야 해요 (따옴표 안은 placeholder 이름).\n\n메시지 말고 다른 동작(strict: false 일 때 placeholder 유지 등)은 바꾸지 말아 주세요.",
+  "hidden_tests": ["hidden/template-message.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 15, "timeoutSec": 300 }
+}

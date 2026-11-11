@@ -1,0 +1,11 @@
+{
+  "name": "confkit",
+  "version": "0.5.2",
+  "description": "Layered configuration loading: INI files, environment variables, deep merge",
+  "type": "module",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  }
+}

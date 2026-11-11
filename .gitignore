@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+bench/results/
+bench/.cache/
+.claude/worktrees/
+.env
+.env.*
+
+# Word lock files
+~$*.docx

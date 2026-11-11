@@ -1,0 +1,47 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "UserPromptSubmit"], "timeout": 10 }
+      ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Agent", "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "PreToolUse"], "timeout": 10 }
+      ] },
+      { "matcher": "Edit|Write|NotebookEdit|MultiEdit|Read|Grep|Glob|Bash|PowerShell", "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 10, "onFailure": "block" }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Agent", "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "PostToolUse"], "timeout": 10 }
+      ] }
+    ],
+    "SubagentStart": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "SubagentStart"], "timeout": 10 }
+      ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "SubagentStop"], "timeout": 300 }
+      ] }
+    ],
+    "PreCompact": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "PreCompact"], "timeout": 10 }
+      ] }
+    ],
+    "SessionStart": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "SessionStart"], "timeout": 10 }
+      ] }
+    ],
+    "Stop": [
+      { "hooks": [
+        { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "Stop"], "timeout": 10 }
+      ] }
+    ]
+  }
+}

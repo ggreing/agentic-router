@@ -1,0 +1,15 @@
+{
+  "baseline": "s5",
+  "note": "Ladder steps s1-s6 are the spec's default hypothesis (3.5). s5 (Opus 5.5 high) doubles as the router-OFF baseline. The single-model group is the comparison ladder (effort only). s7 (Fable 5.1) is opt-in and not measured by default.",
+  "configs": [
+    { "id": "s1", "label": "s1 · Haiku 5.5 · low", "model": "claude-haiku-5-5", "effort": "low", "group": "ladder" },
+    { "id": "s2", "label": "s2 · Haiku 5.5 · high", "model": "claude-haiku-5-5", "effort": "high", "group": "ladder" },
+    { "id": "s3", "label": "s3 · Sonnet 5.5 · medium", "model": "claude-sonnet-5-5", "effort": "medium", "group": "ladder" },
+    { "id": "s4", "label": "s4 · Sonnet 5.5 · high", "model": "claude-sonnet-5-5", "effort": "high", "group": "ladder" },
+    { "id": "s5", "label": "s5 · Opus 5.5 · high (baseline)", "model": "claude-opus-5-5", "effort": "high", "group": "ladder" },
+    { "id": "s6", "label": "s6 · Opus 5.5 · xhigh", "model": "claude-opus-5-5", "effort": "xhigh", "group": "ladder" },
+    { "id": "opus-low", "label": "Opus 5.5 · low", "model": "claude-opus-5-5", "effort": "low", "group": "single-model" },
+    { "id": "opus-medium", "label": "Opus 5.5 · medium", "model": "claude-opus-5-5", "effort": "medium", "group": "single-model" },
+    { "id": "opus-max", "label": "Opus 5.5 · max", "model": "claude-opus-5-5", "effort": "max", "group": "single-model" }
+  ]
+}

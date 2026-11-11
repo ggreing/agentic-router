@@ -1,0 +1,30 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:860px;height:420px"></div>
+<script src="fig.js"></script>
+<script>
+ B('split', 95, 165, 150, 'c-white', '<div class="t">총괄: 하위 작업 분할</div><div class="s">명세에 수정 허용 경로 지정</div>');
+ D('git', 255, 165, 110, 72, 'git<br>저장소?');
+ C('ln1', 372, 40, 300, 104, 'worktree 1 · 허용 경로 src/auth/**', '#2e7d32');
+ C('ln2', 372, 196, 300, 104, 'worktree 2 · 허용 경로 src/ui/**', '#2e7d32');
+ B('w1', 450, 94, 120, 'c-t1', '<div class="t">작업자 1</div><div class="s">구현</div>');
+ B('v1', 600, 94, 120, 'c-amber', '<div class="t">즉시 검증</div><div class="s">verify · 범위 검사<br>↑ · = · ↓ 결정</div>');
+ B('w2', 450, 250, 120, 'c-t1', '<div class="t">작업자 2</div><div class="s">구현</div>');
+ B('v2', 600, 250, 120, 'c-amber', '<div class="t">즉시 검증</div><div class="s">verify · 범위 검사<br>↑ · = · ↓ 결정</div>');
+ B('mg', 778, 165, 150, 'c-navy', '<div class="t">총괄: 순서대로 병합</div><div class="s">충돌 시 해당 작업자 재호출</div>');
+ B('fin', 778, 285, 130, 'c-green', '<div class="t">최종 검증</div>');
+ B('seq', 255, 340, 130, 'c-gray', '<div class="t">순차 실행</div><div class="s">병렬 비활성</div>');
+ T(14, 10, '※ 허용 경로 밖 Edit·Write는 PreToolUse 훅이 차단하고,<br>&nbsp;&nbsp;&nbsp;&nbsp;세션이 끝나면 git diff로 다시 검사 (Bash 우회 방지)<br>※ 범위 확대: 작업자 보고 → 총괄 승인 (router_request_scope)', 'note', 350);
+ T(350, 374, '※ worktree는 현재 HEAD에서 분기 (worktree.baseRef: "head")<br>※ 작업자는 자기 브랜치에 커밋 → 총괄이 완료 순서대로 병합', 'note', 500);
+ initSvg(); diamonds();
+ link('split', 'r', 'git', 'l');
+ link('git', 'r', 'w1', 'l', { via: [[338, null], [null, 94]], label: '예', lseg: 1 });
+ link('git', 'r', 'w2', 'l', { via: [[338, null], [null, 250]], noArrow: false });
+ link('w1', 'r', 'v1', 'l');
+ link('w2', 'r', 'v2', 'l');
+ link('v1', 'r', 'mg', 'l', { route: 'hvh', mx: 690, bo: -8 });
+ link('v2', 'r', 'mg', 'l', { route: 'hvh', mx: 690, bo: 8 });
+ link('mg', 'b', 'fin', 't', { label: '통과' });
+ link('git', 'b', 'seq', 't', { label: '아니오' });
+ link('seq', 'r', 'fin', 'b', { route: 'hv' });
+ done();
+</script></body></html>

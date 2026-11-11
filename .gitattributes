@@ -1,0 +1,11 @@
+# Decision 101 (env audit #15): LF everywhere, CRLF only for Windows-native scripts.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.docx binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.db binary

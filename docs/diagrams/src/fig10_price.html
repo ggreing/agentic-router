@@ -1,0 +1,38 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="height:340px"></div>
+<script src="fig.js"></script>
+<script>
+ // Single x-axis (USD per 1M tokens). Series: input (slot 1 blue), output (slot 2 orange) — validated palette.
+ const data = [
+  ['Claude Haiku 5.5', 'T1', 0.10, 0.50],
+  ['Claude Sonnet 5.5', 'T2', 2, 10],
+  ['Claude Opus 5.5', 'T3', 4, 20],
+  ['Claude Fable 5.1', '옵트인', 10, 50],
+ ];
+ const C1 = '#2a78d6', C2 = '#eb6834';
+ const x0 = 178, x1 = 760, max = 50, sx = v => x0 + (x1 - x0) * v / max;
+ const TP = 64, pitch = 62, bh = 16;
+ initSvg();
+ const g = SVG;
+ for (let v = 0; v <= 50; v += 10) {
+  el('line', { x1: sx(v), x2: sx(v), y1: TP - 10, y2: TP + pitch * 4 - 6, stroke: v === 0 ? '#9ca3af' : '#e5e7eb', 'stroke-width': 1 }, g);
+  T(sx(v) - 14, TP + pitch * 4, '$' + v, 'note').style.width = '28px';
+ }
+ const bar = (y, v, c) => {
+  const w = Math.max(sx(v) - x0, 1.5), r = Math.min(4, w / 2);
+  el('path', { d: `M${x0},${y} h${w - r} q${r},0 ${r},${r} v${bh - 2 * r} q0,${r} ${-r},${r} h${-(w - r)} z`, fill: c }, g);
+ };
+ data.forEach((d, i) => {
+  const y = TP + i * pitch;
+  T(18, y + 2, `<b style="color:#1f2937;font-size:13px">${d[0]}</b><br>${d[1]}`, 'note', 150).style.textAlign = 'right';
+  bar(y, d[2], C1); bar(y + bh + 2, d[3], C2);
+  T(sx(d[2]) + 6, y, '$' + d[2].toFixed(d[2] < 1 ? 2 : 0), 'note').style.color = '#1f2937';
+  T(sx(d[3]) + 6, y + bh + 2, '$' + d[3].toFixed(d[3] < 1 ? 2 : 0), 'note').style.color = '#1f2937';
+ });
+ T(250, TP + 6, '← 출력 단가가 Opus 5.5의 1/40', 'note');
+ T(18, 8, '100만 토큰당 USD · 2026-11 Anthropic 공식 단가 (Haiku 5.5는 프롬프트 10만 토큰 이하 기준)<br>※ effort에 따른 토큰 소모량 차이는 반영되지 않은 단가입니다 — 실효 비용은 Phase 0에서 실측', 'note');
+ const lg = document.createElement('div'); lg.className = 'legend'; lg.style.left = '600px'; lg.style.top = '12px';
+ lg.innerHTML = `<span><span class="sw" style="background:${C1};border-color:${C1}"></span>입력</span><span><span class="sw" style="background:${C2};border-color:${C2}"></span>출력</span>`;
+ FIG.appendChild(lg);
+ done();
+</script></body></html>

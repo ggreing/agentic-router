@@ -1,0 +1,41 @@
+{
+  "_comment": "Shared scope-glob table (audit #15, decision 94). The guard (plugin/hooks/guard.mjs) and the daemon scope check must both pass every case. Paths are repo-relative (git root). 'case' says which platforms treat the case as matching: scope matching follows the file system (win32 and darwin case-insensitive, linux case-sensitive); credential and protected paths are always case-insensitive (deny more, never less).",
+  "scope": [
+    { "pattern": "src/**", "path": "src/a.ts", "expect": true },
+    { "pattern": "src/**", "path": "src/x/y.ts", "expect": true },
+    { "pattern": "src/**", "path": "srcx/a.ts", "expect": false },
+    { "pattern": "src/**", "path": "lib/src/a.ts", "expect": false },
+    { "pattern": "src/pagination", "path": "src/pagination/page.ts", "expect": true },
+    { "pattern": "src/pagination", "path": "src/pagination", "expect": true },
+    { "pattern": "src/pagination", "path": "src/paginationx/a.ts", "expect": false },
+    { "pattern": "src/pagination/", "path": "src/pagination/deep/x.ts", "expect": true },
+    { "pattern": "src/pagination/**", "path": "src/pagination/x.ts", "expect": true },
+    { "pattern": "src/*.ts", "path": "src/a.ts", "expect": true },
+    { "pattern": "src/*.ts", "path": "src/x/a.ts", "expect": false },
+    { "pattern": "**/*.test.ts", "path": "a.test.ts", "expect": true },
+    { "pattern": "**/*.test.ts", "path": "x/y/a.test.ts", "expect": true },
+    { "pattern": "README.md", "path": "README.md", "expect": true },
+    { "pattern": "README.md", "path": "docs/README.md", "expect": false },
+    { "pattern": "./src/**", "path": "src/a.ts", "expect": true },
+    { "pattern": "src/**", "path": "src\\win\\a.ts", "expect": true },
+    { "pattern": "src/**", "path": "../src/a.ts", "expect": false },
+    { "pattern": "src/API/**", "path": "src/api/x.ts", "expect": { "win32": true, "darwin": true, "linux": false } },
+    { "pattern": "src/a.ts", "path": "SRC/A.TS", "expect": { "win32": true, "darwin": true, "linux": false } }
+  ],
+  "protected": [
+    { "path": ".env", "expect": true },
+    { "path": "app/.env.local", "expect": true },
+    { "path": ".claude/settings.json", "expect": true },
+    { "path": "app/.claude/settings.json", "expect": true },
+    { "path": ".github/workflows/ci.yml", "expect": true },
+    { "path": "app/.github/workflows/ci.yml", "expect": true },
+    { "path": ".GitHub/Workflows/CI.yml", "expect": true },
+    { "path": ".git/hooks/post-checkout", "expect": true },
+    { "path": "sub/.git/config", "expect": true },
+    { "path": ".agentic-router/verify.json", "expect": true },
+    { "path": "pkg/.npmrc", "expect": true },
+    { "path": "src/env.ts", "expect": false },
+    { "path": "docs/claude.md", "expect": false },
+    { "path": ".github/ISSUE_TEMPLATE/bug.md", "expect": false }
+  ]
+}

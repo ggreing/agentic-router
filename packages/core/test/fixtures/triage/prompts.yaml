@@ -1,0 +1,722 @@
+# Triage evaluation prompts (decision 111): 30 tasks x 2 wordings = 60 prompts.
+#
+# Every task is written twice: `short` is how a hurried user would type it, `spec` spells the same
+# task out. The label belongs to the task, not to the wording, so a classifier that only reads the
+# length or the layout of a request gets one wording of each task wrong.
+#
+# label.kind   direct = one engineer, a few edits; team = 4+ files, or 2+ modules/layers, or a design decision first
+# label.level  L0 trivial, L1 small (1-3 files), L2 module-level, L3 new service / architecture / 10+ files
+# label.files, label.dirs   the change the author had in mind (a proxy label; nothing here was executed)
+# split        dev = may be used to tune stage-1 rules; test = report only
+#
+# Limits: one author wrote the prompts, the labels and the rules, and the projects are imaginary.
+# Measured outcomes (decision 107) and real requests outrank this set.
+
+- task: t01
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    interpolate 에러 메시지에 vlaue 오타 있어. 고쳐줘
+  spec: |
+    textkit의 `interpolate`에서 값이 없는 placeholder를 만나면 던지는 에러 메시지에 오타가 있습니다.
+
+    ## 재현
+    1. `interpolate('Hi {{name}}', {})` 호출
+    2. `TextkitError`가 던져짐
+    3. `message`를 출력
+
+    ## 실제
+    `Missing vlaue for placeholder "name"`
+
+    ## 기대
+    `Missing value for placeholder "name"`
+
+    사용자 화면에 그대로 노출되는 문구라 릴리스 전에 고쳐야 합니다. 메시지 문자열만 바꾸면 되고, `strict: false`일 때 placeholder를 그대로 두는 동작이나 에러 클래스, 에러 코드는 건드리지 말아 주세요. 같은 오타가 다른 파일에는 없는 것을 이미 확인했습니다.
+
+- task: t02
+  lang: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    bump the default request timeout from 30s to 60s
+  spec: |
+    Our default HTTP request timeout is too low for the reporting endpoints. Customers on slow links keep hitting it.
+
+    What I want:
+    - `DEFAULT_TIMEOUT_MS` in `src/http/defaults.ts` goes from `30_000` to `60_000`.
+    - Nothing else about the client changes: per-call overrides still win, retries stay as they are.
+    - The constant is only defined in that one place; callers import it.
+
+    Background, in case it helps: the p99 of `/reports/export` is around 41 seconds this month, and the support team has logged eleven tickets about "request timed out" on that page since the last release. We discussed making it configurable per endpoint and decided not to for now. Please do not add configuration, just change the default value.
+
+- task: t03
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 0, dirs: 0 }
+  short: |
+    이 정규식이 뭘 매칭하는 거야? `^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$`
+  spec: |
+    코드 리뷰를 하다가 아래 정규식을 봤는데 정확히 무엇을 매칭하는지 설명해 주실 수 있나요?
+
+    ```ts
+    const FILE_REF = /^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$/;
+    ```
+
+    제가 이해한 것은 이렇습니다.
+    - 슬래시로 구분된 경로 조각이 하나 이상 있고
+    - 마지막 조각에 확장자가 붙어 있어야 한다
+
+    궁금한 점:
+    1. `src/a.ts`는 되는데 `a.ts`는 왜 안 되나요?
+    2. 확장자가 `{1,5}`로 제한된 이유가 있을까요? `.jsonl`은 되나요?
+    3. Windows 경로(`src\a.ts`)는 매칭되나요?
+    4. `[\w.-]`에서 `.`을 이스케이프하지 않아도 되는 이유는 무엇인가요?
+
+    코드를 바꿀 필요는 없고 설명만 부탁드립니다.
+
+- task: t04
+  lang: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    clean up the unused imports in src/server/app.ts, lint is complaining
+  spec: |
+    `npm run lint` fails on main with three warnings-as-errors, all in `src/server/app.ts`:
+
+    ```
+    src/server/app.ts
+      3:10  error  'readFileSync' is defined but never used   no-unused-vars
+      4:8   error  'path' is defined but never used            no-unused-vars
+      9:15  error  'RequestContext' is defined but never used  no-unused-vars
+    ```
+
+    They are leftovers from the static-file handler we deleted last week. Please remove those three imports and nothing else. I checked that `path` is not used further down in the file under another name. Do not touch the lint configuration and do not reformat the file; the diff should be three deleted lines (or fewer if two of them share a line).
+
+- task: t05
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    README 설치 명령이 npm i confkitt 로 잘못 적혀 있음. confkit 으로 수정
+  spec: |
+    README의 설치 안내에 패키지 이름이 잘못 적혀 있습니다.
+
+    - 위치: `README.md`의 "설치" 절 첫 번째 코드 블록
+    - 현재: `npm i confkitt`
+    - 올바른 값: `npm i confkit`
+
+    신규 사용자가 그대로 복사해 붙였다가 404가 난다는 문의가 두 번 들어왔습니다. 같은 절 아래쪽의 `pnpm add confkit`, `yarn add confkit` 줄은 맞게 적혀 있으니 그대로 두시면 됩니다. 영문 README(`README.en.md`)에는 이 오타가 없습니다. 문서만 고치는 변경이라 테스트나 버전 변경은 필요 없습니다.
+
+- task: t06
+  lang: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    the upload log line says "MB" but the number is in KB, fix the message
+  spec: |
+    Small thing I noticed while reading production logs. The upload handler logs the size of every accepted file like this:
+
+    ```
+    upload accepted: report-2026-10.pdf (48213 MB)
+    ```
+
+    The number is `file.size / 1024`, so it is kilobytes, not megabytes. A 48 GB PDF would be impressive.
+
+    Please change the unit in the message to "KB". Keep the arithmetic as it is: the dashboard that parses these lines reads the number and ignores the unit, so changing the number would break the dashboard, while changing the unit text is safe. The line is in `src/upload/handler.ts`, in the function that handles the "accepted" case. There is exactly one such log call.
+
+- task: t07
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    parseDate가 2024-02-29를 잘못된 날짜라고 거부하는 버그 고쳐줘
+  spec: |
+    `parseDate`가 윤년의 2월 29일을 거부하는 버그입니다.
+
+    ## 재현
+    ```ts
+    parseDate('2024-02-29') // ValidationError: invalid day for month
+    parseDate('2023-02-29') // ValidationError (이건 맞는 동작)
+    parseDate('2000-02-29') // ValidationError (틀림, 2000년은 윤년)
+    parseDate('1900-02-29') // ValidationError (맞음, 1900년은 윤년이 아님)
+    ```
+
+    ## 원인으로 보이는 곳
+    `src/date/parse.ts`의 `daysInMonth`가 2월을 항상 28로 돌려줍니다.
+
+    ## 기대 동작
+    - 4로 나누어떨어지면 윤년, 단 100으로 나누어떨어지면 평년, 단 400으로 나누어떨어지면 윤년
+    - 그 밖의 달과 형식 검증은 지금 그대로
+
+    `test/date/parse.test.ts`에 위 네 가지 경우를 추가해 주세요. 다른 함수(`formatDate`, `addDays`)는 건드리지 않아도 됩니다.
+
+- task: t08
+  lang: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    add a --dry-run flag to the `sync` command that prints what it would upload without uploading
+  spec: |
+    Feature request for the CLI: `mytool sync --dry-run`.
+
+    Today `sync` walks the local folder, compares each file with the remote listing and uploads the ones that changed. I want a way to see what it would do first.
+
+    Behaviour:
+    - `--dry-run` (boolean, default false) is accepted by the `sync` command only.
+    - With the flag, the command does everything up to the upload call, then prints one line per file it would upload, in the form `would upload <relative path> (<size> bytes)`, and a final line `N file(s) would be uploaded`.
+    - No network write happens. Reading the remote listing is fine.
+    - Exit code is 0 when the listing succeeded, as today.
+    - `--help` lists the flag with a one-line description.
+
+    The command lives in `src/commands/sync.ts`; the upload itself is the single call to `uploader.put()` near the end. Please add a test next to the existing ones in `test/commands/sync.test.ts` that checks nothing is uploaded when the flag is set.
+
+- task: t09
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    목록 API의 pageSize 상한을 100으로 막아줘. 넘으면 400
+  spec: |
+    목록 조회 API에 `pageSize` 상한이 없어서 `?pageSize=100000` 같은 요청이 그대로 들어옵니다. 어제 이 요청 하나로 응답이 9초 걸렸습니다.
+
+    요청 사항:
+    1. `pageSize`가 100을 넘으면 400으로 응답하고, 본문은 기존 검증 에러와 같은 형식(`{ error: 'validation', details: ['pageSize must be <= 100'] }`)으로 해 주세요.
+    2. `pageSize`가 1 미만이거나 정수가 아니면 지금처럼 400입니다(이미 구현돼 있음).
+    3. 생략하면 기본값 20은 그대로입니다.
+
+    검증은 `src/handlers/listTasks.ts`의 쿼리 파싱 부분에 있습니다. 서비스나 저장소 계층은 바꾸지 않아도 됩니다. `test/handlers/listTasks.test.ts`에 101과 100 두 경우를 추가해 주세요.
+
+- task: t10
+  lang: en
+  split: test
+  label: { kind: direct, level: L1, files: 1, dirs: 1 }
+  short: |
+    renderInvoice crashes with "Cannot read properties of undefined (reading 'lines')" when the order has no shipment, please fix
+  spec: |
+    Production crash, started after Tuesday's deploy. Rendering an invoice for an order that has not shipped yet throws.
+
+    ```
+    TypeError: Cannot read properties of undefined (reading 'lines')
+        at shipmentTotal (/app/src/billing/totals.ts:48:27)
+        at renderInvoice (/app/src/billing/invoice.ts:112:19)
+        at InvoiceController.show (/app/src/http/controllers/invoice.ts:31:22)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at next (/app/node_modules/express/lib/router/route.js:144:13)
+        at Route.dispatch (/app/node_modules/express/lib/router/route.js:114:3)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at /app/node_modules/express/lib/router/index.js:284:15
+        at Function.process_params (/app/node_modules/express/lib/router/index.js:346:12)
+        at next (/app/node_modules/express/lib/router/index.js:280:10)
+    ```
+
+    Environment: Node 24.3, app version 5.18.2, Postgres 16. It happens for every order whose `shipment` is null, which is about 4% of invoices viewed.
+
+    Expected: an order without a shipment renders with a shipping total of 0 and no shipment lines. I believe `shipmentTotal` should treat a missing shipment as empty. Please add a regression test for an order without a shipment.
+
+- task: t11
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    CSV 내보내기에서 값에 큰따옴표가 있으면 파일이 깨져. 이스케이프 처리해줘
+  spec: |
+    CSV 내보내기 버그 제보입니다. 제목에 큰따옴표가 들어간 태스크가 있으면 엑셀에서 열이 밀립니다.
+
+    예: 제목이 `"긴급" 배포 점검`인 태스크를 내보내면 현재 이렇게 나옵니다.
+
+    ```
+    id,title,status
+    t-12,""긴급" 배포 점검",todo
+    ```
+
+    기대하는 출력(RFC 4180):
+
+    ```
+    id,title,status
+    t-12,"""긴급"" 배포 점검",todo
+    ```
+
+    규칙을 정리하면:
+    - 값에 큰따옴표, 쉼표, 줄바꿈 중 하나라도 있으면 값 전체를 큰따옴표로 감쌉니다.
+    - 값 안의 큰따옴표는 두 개로 씁니다.
+    - 그 밖의 값은 지금처럼 그대로 씁니다.
+
+    `src/export/csv.ts`의 `escapeCell`만 고치면 될 것 같습니다. `test/export/csv.test.ts`에 큰따옴표, 쉼표, 줄바꿈이 든 값 세 가지를 추가해 주세요.
+
+- task: t12
+  lang: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    make fetchJson retry up to 3 times with exponential backoff on 5xx and network errors
+  spec: |
+    `fetchJson` in `src/net/fetchJson.ts` gives up on the first failure. I would like it to retry.
+
+    Rules:
+    1. Retry on network errors and on HTTP 500 to 599. Never retry 4xx.
+    2. At most 3 attempts in total (so 2 retries).
+    3. Wait 200 ms before the second attempt and 400 ms before the third.
+    4. If every attempt fails, throw the last error, unchanged.
+    5. An `AbortSignal` passed by the caller stops the waiting immediately and rejects with the abort reason.
+    6. Callers can turn it off with `{ retries: 0 }`; the default is 2.
+
+    Signature after the change:
+
+    ```ts
+    export interface FetchJsonOptions { retries?: number; signal?: AbortSignal }
+    export function fetchJson<T>(url: string, options?: FetchJsonOptions): Promise<T>;
+    ```
+
+    Existing callers pass no options and must keep working. Tests go in `test/net/fetchJson.test.ts`; the file already has a fake server helper you can use, and please use fake timers so the tests do not actually wait.
+
+- task: t13
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 3, dirs: 2 }
+  short: |
+    캐시에 TTL 옵션 추가해줘. 설정에서 초 단위로 받고 기본은 무제한
+  spec: |
+    메모리 캐시에 만료 시간을 넣고 싶습니다.
+
+    - 설정: `cache.ttlSeconds` (숫자, 선택). 생략하거나 0이면 지금처럼 만료 없음.
+    - `Cache.set(key, value)`로 넣은 항목은 넣은 시각부터 `ttlSeconds`가 지나면 `get`에서 `undefined`를 돌려주고 내부에서도 지웁니다.
+    - `Cache.has(key)`도 같은 기준입니다.
+    - 음수나 숫자가 아닌 값은 설정을 읽을 때 기존 검증 에러와 같은 방식으로 거부합니다.
+
+    손댈 곳은 `src/cache/cache.ts`, 설정 스키마가 있는 `src/config/schema.ts`, 그리고 `test/cache/cache.test.ts` 정도입니다. 시간은 `Date.now()` 대신 생성자에 주입하는 `now()` 함수를 써서 테스트에서 시계를 돌릴 수 있게 해 주세요(이미 `Clock` 타입이 `src/util/clock.ts`에 있습니다).
+
+- task: t14
+  lang: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 1 }
+  short: |
+    test/report/weekly.test.ts fails on CI but passes locally, I think it's a timezone thing. can you fix the test
+  spec: |
+    We have a flaky test. `weekly report groups tasks by ISO week` in `test/report/weekly.test.ts` passes on every laptop in Seoul and fails on CI, which runs in UTC.
+
+    ```
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+
+    + '2026-W45'
+    - '2026-W46'
+        at TestContext.<anonymous> (test/report/weekly.test.ts:41:10)
+    ```
+
+    What I found so far:
+    - The fixture builds its dates with `new Date(2026, 10, 9, 0, 30)`, which is local time.
+    - In UTC that moment is still Sunday the 8th, which belongs to week 45.
+    - The production code (`src/report/weekly.ts`) takes a `timeZone` argument and is, as far as I can tell, correct.
+
+    So I think the test is wrong, not the code. Please make the fixture independent of the machine's time zone (build the dates from ISO strings with an explicit offset and pass `timeZone: 'Asia/Seoul'` to the function), and if the shared helper in `test/report/helpers.ts` builds dates the same way, fix it there too. Do not change `src/report/weekly.ts` unless you find it is actually wrong; if you do, tell me before changing it.
+
+- task: t15
+  lang: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    deepMerge에 배열을 이어 붙이는 옵션(arrays: 'concat') 넣어줘. 기본은 지금처럼 교체
+  spec: |
+    confkit `deepMerge`에 배열 병합 방식을 고르는 옵션을 추가해 주세요. 함수 하나와 그 테스트만 바뀌는 작업입니다.
+
+    ```ts
+    interface MergeOptions { arrays?: 'replace' | 'concat' | 'unique' }
+    function deepMerge(layers: ConfigObject[], options?: MergeOptions): ConfigObject;
+    ```
+
+    규칙:
+    1. `arrays`를 생략하면 `'replace'`이고 지금 동작과 같습니다(나중 레이어의 배열이 통째로 교체).
+    2. `'concat'`이면 같은 키의 배열을 레이어 순서대로 이어 붙입니다.
+    3. `'unique'`는 `'concat'`과 같되 원시값 중복을 제거하고 처음 나온 순서를 유지합니다.
+    4. 객체가 든 배열에서 `'unique'`는 참조가 아니라 `JSON.stringify` 결과로 비교합니다.
+    5. 한쪽이 배열이고 다른 쪽이 배열이 아니면 옵션과 무관하게 나중 값이 이깁니다.
+    6. 중첩 객체 안의 배열에도 같은 규칙이 적용됩니다.
+    7. 입력 레이어는 어떤 경우에도 변경하지 않습니다.
+    8. 결과는 입력과 배열 참조를 공유하지 않습니다.
+    9. 알 수 없는 `arrays` 값은 `ConfigError`를 던집니다.
+
+    기존 호출부는 `deepMerge(a, b, c)`처럼 가변 인자를 쓰고 있는데, 이번에 시그니처를 위처럼 바꾸지 말고 기존 형태를 유지한 채 마지막 인자가 `MergeOptions` 모양이면 옵션으로 해석해 주세요. 구현은 `src/merge.ts`, 테스트는 `test/merge.test.ts`입니다.
+
+- task: t16
+  lang: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    태스크에 댓글 기능 넣어줘
+  spec: |
+    taskboard에 태스크 댓글 기능을 추가해 주세요. 저장소, 서비스, 핸들러 계층에 각각 맞게 나눠서 구현합니다.
+
+    ## 모델
+    ```ts
+    interface Comment {
+      id: string;
+      taskId: string;
+      authorId: string;
+      body: string;        // 1~2000자, 앞뒤 공백 제거 후 기준
+      createdAt: string;   // ISO 8601
+      editedAt: string | null;
+    }
+    ```
+
+    ## 저장소 (`CommentRepo`)
+    - `add(comment)`, `listByTask(taskId)`, `get(id)`, `update(id, patch)`, `remove(id)`
+    - `listByTask`는 `createdAt` 오름차순
+
+    ## 서비스 (`CommentService`)
+    - 존재하지 않는 태스크에 댓글을 달면 `NotFoundError`
+    - `body` 검증 실패는 `ValidationError`(details에 `'body'`)
+    - 작성자만 수정·삭제할 수 있고, 아니면 `ForbiddenError`
+    - 수정하면 `editedAt`을 채웁니다
+    - 태스크가 삭제되면 그 태스크의 댓글도 함께 지웁니다(`TaskService.deleteTask`에서 호출)
+
+    ## 핸들러
+    - `POST /tasks/:id/comments`, `GET /tasks/:id/comments`, `PATCH /comments/:id`, `DELETE /comments/:id`
+    - 에러 매핑은 기존 핸들러와 같게: Validation 400, Forbidden 403, NotFound 404
+
+    ## 테스트
+    - 서비스와 핸들러 각각 정상·실패 경우, 태스크 삭제 시 연쇄 삭제
+
+- task: t17
+  lang: en
+  split: dev
+  label: { kind: team, level: L2, files: 6, dirs: 4 }
+  short: |
+    the task list endpoint needs filtering, sorting and pagination
+  spec: |
+    Add filtering, sorting and pagination to the task list. Today `GET /tasks` returns every task as `{ items }`. Split the work by layer: the filtering itself belongs in the repository, validation and defaults in the service, query-string parsing in the handler.
+
+    ## Service
+    Add `TaskService.queryTasks(query?: TaskQuery): TaskPage` and keep `listTasks()` returning the full array.
+
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];        // any of these
+      assigneeId?: string | null;   // null = unassigned only
+      text?: string;                // case-insensitive match in title
+      sort?: 'createdAt' | 'priority' | 'dueDate';
+      order?: 'asc' | 'desc';
+      page?: number;                // 1-based, default 1
+      pageSize?: number;            // default 20, max 100
+    }
+    interface TaskPage { items: Task[]; total: number; page: number; pageSize: number }
+    ```
+
+    ## Repository
+    - `TaskRepo.find(filter, sort, range)` returns the page and the total count before paging.
+    - Sorting by `priority` uses the order low < medium < high; ties fall back to `createdAt` ascending.
+
+    ## Handler
+    - `GET /tasks?status=todo,in_progress&assignee=u1&sort=priority&order=desc&page=2&pageSize=50`
+    - `assignee=none` means unassigned.
+    - Unknown status values, a non-numeric page, or `pageSize` above 100 give 400 with the usual validation body.
+
+    ## Tests
+    - Repository: each filter alone, combined filters, each sort key in both orders, paging past the end.
+    - Service: defaults and validation.
+    - Handler: query parsing and error mapping.
+
+- task: t18
+  lang: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 4 }
+  short: |
+    인증 미들웨어를 만들고 모든 핸들러에 권한 검사를 붙여줘
+  spec: |
+    API에 인증과 권한 검사를 넣어야 합니다. 지금은 모든 엔드포인트가 열려 있습니다.
+
+    미들웨어 하나를 만들어 요청의 `Authorization: Bearer <token>`을 검증하고 `ctx.user`(id, role)를 채웁니다. 토큰이 없거나 잘못되면 401입니다. 그다음 모든 핸들러에 역할 검사를 붙입니다. 태스크 조회는 로그인한 사용자 누구나, 생성과 수정은 `member` 이상, 삭제와 사용자 관리는 `admin`만 할 수 있습니다. 권한이 모자라면 403입니다.
+
+    핸들러가 여덟 개쯤 있고(`src/handlers/` 아래), 각 핸들러의 테스트도 인증 헤더를 넣도록 고쳐야 합니다. 토큰 검증은 `src/auth/` 아래에 새 모듈로 두고, 서명 키는 설정에서 읽습니다. 역할과 허용 동작의 대응표는 한 곳(`src/auth/policy.ts`)에 두어 핸들러마다 조건문을 흩어 놓지 않게 해 주세요. 기존 서비스 계층은 사용자 정보를 인자로 받지 않는데, 작성자 기록이 필요한 `createTask`와 `addComment`만 `actorId`를 받도록 바꿉니다.
+
+- task: t19
+  lang: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 3 }
+  short: |
+    refactor config loading: defaults, file and env should be separate sources merged in order, with schema validation at the end
+  spec: |
+    Our configuration loading has grown into one 400-line function (`loadConfig` in `src/config/load.ts`) that reads a JSON file, overlays environment variables with hand-written `if` blocks, and validates as it goes. Every new setting means touching four places. I would like it restructured.
+
+    Target shape:
+    - A `ConfigSource` interface with one method, `read(): Promise<ConfigObject>`.
+    - Three sources: `DefaultsSource`, `FileSource(path)` and `EnvSource(prefix)`. The env source maps `APP_DB__HOST` to `db.host` (double underscore = nesting) and converts nothing; values stay strings.
+    - `loadConfig(sources)` reads them in order and merges with the existing `deepMerge`.
+    - Validation and type coercion happen once, after merging, driven by a schema object in `src/config/schema.ts` (string, number, boolean, enum, required, default). `port: '8080'` from the environment becomes the number 8080 there; a missing required value or a wrong type is reported with every problem at once, not just the first.
+    - The public entry point `getConfig()` keeps its signature and return type so the rest of the app does not change.
+
+    Please keep the current behaviour for every existing setting (there are about thirty; the current tests in `test/config/` describe them) and add tests for each source, for the merge order, and for the validation messages. The old `loadConfig` body should be gone at the end, not left beside the new code.
+
+- task: t20
+  lang: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    누가 언제 태스크를 바꿨는지 볼 수 있게 변경 이력 남겨줘
+  spec: |
+    taskboard에 태스크 변경 이력을 추가해 주세요. 누가 언제 무엇을 바꿨는지 태스크별로 조회할 수 있어야 합니다.
+
+    ## 이벤트 모델
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed' | 'task.deleted';
+    interface AuditEvent {
+      id: string;
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;
+      at: string;                       // ISO 8601
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    }
+    ```
+
+    ## 기록 시점
+    1. `createTask`: `task.created`, `after`에 생성된 태스크
+    2. `assignTask`: `task.assigned`, `before`/`after`에 `assigneeId`만
+    3. `changeStatus`: 실제로 상태가 바뀐 경우에만 `task.status_changed`
+    4. `deleteTask`: `task.deleted`, `before`에 삭제 전 태스크
+    5. 실패한 요청(검증 실패, 409)은 기록하지 않습니다
+
+    ## 저장과 조회
+    - `AuditRepo.append(event)`, `AuditRepo.listByTask(taskId)`(시간순)
+    - `GET /tasks/:id/audit`는 `{ items }`로 응답, 없는 태스크는 404
+    - 삭제된 태스크의 이력은 남아 있어야 하고 조회도 됩니다
+
+    ## 그 밖에
+    - `actorId`는 핸들러가 요청 컨텍스트에서 꺼내 서비스에 넘깁니다
+    - 서비스 메서드 시그니처에 `actorId`를 마지막 선택 인자로 추가
+    - 서비스·핸들러 테스트 추가
+
+- task: t21
+  lang: en
+  split: dev
+  label: { kind: team, level: L2, files: 9, dirs: 3 }
+  short: |
+    convert the data access layer from callbacks to async/await
+  spec: |
+    The data access layer still uses Node-style callbacks while everything above it uses promises, so each service wraps repository calls in `new Promise(...)` by hand. I want the repositories to return promises directly.
+
+    There are five repository files under `src/repo/` (users, tasks, comments, tags, sessions) plus the shared `src/repo/db.ts` helper that every one of them calls. Each exported function currently takes `(args..., cb)`; after the change it takes `(args...)` and returns a promise that rejects with the same error objects the callback used to receive. The helper in `db.ts` should expose `query` and `transaction` as promise-returning functions, and `transaction` must roll back when the function it runs rejects.
+
+    Then the callers: the three services under `src/service/` should drop their hand-written wrappers and simply `await` the repository calls. Behaviour must not change, including the order of queries inside a transaction and which errors are surfaced.
+
+    The repository tests use a fake `db` with callbacks; that fake needs the same conversion. Please do it in a way that keeps the test suite green after each repository is converted, so the change can be reviewed file by file.
+
+- task: t22
+  lang: ko
+  split: test
+  label: { kind: team, level: L2, files: 12, dirs: 5 }
+  short: |
+    에러 메시지를 전부 메시지 키로 바꾸고 한국어/영어 카탈로그 붙여줘
+  spec: |
+    사용자에게 보이는 에러 메시지가 코드 곳곳에 한국어 문자열로 박혀 있습니다. 영어 사용자를 받아야 해서 메시지를 키로 바꾸고 언어별 카탈로그에서 꺼내 쓰도록 바꾸려 합니다.
+
+    방식은 이렇게 생각하고 있습니다. `src/i18n/` 아래에 `ko.json`, `en.json` 카탈로그와 `t(key, params, locale)` 함수를 둡니다. 키는 `task.not_found`, `validation.required` 같은 점 표기이고, 값에는 `{name}` 형태의 자리표시자를 쓸 수 있습니다. 에러 클래스는 메시지 문자열 대신 `code`와 `params`를 갖고, 응답을 만드는 마지막 단계(`src/handlers/http.ts`의 에러 매핑)에서 요청의 `Accept-Language`를 보고 문장으로 바꿉니다. 지원하지 않는 언어는 한국어로 돌려줍니다.
+
+    바꿔야 할 곳은 에러를 던지는 서비스 전부(태스크, 사용자, 댓글, 프로젝트)와 검증 유틸, 그리고 핸들러의 에러 매핑입니다. 메시지 문자열을 직접 비교하는 테스트가 꽤 있는데, 이것들은 `code`를 비교하도록 고치고 문장 자체는 카탈로그 테스트에서 한 번만 확인합니다. 카탈로그에 없는 키를 쓰면 테스트에서 걸리도록, 두 카탈로그의 키 집합이 같고 코드에서 쓰는 키가 모두 들어 있는지 확인하는 테스트도 넣어 주세요.
+
+- task: t23
+  lang: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 5 }
+  short: |
+    deleting a task should be a soft delete so we can restore it
+  spec: |
+    We delete tasks for real today, and support keeps asking us to bring one back. Make deletion soft.
+
+    ## Model
+    - `Task` gets `deletedAt: string | null` (ISO 8601). A task is deleted when it is not null.
+
+    ## Repository
+    - `remove(id)` sets `deletedAt` instead of dropping the row.
+    - `get`, `list` and `find` skip deleted tasks unless called with `{ includeDeleted: true }`.
+    - New `restore(id)` clears `deletedAt`.
+    - New `purge(olderThan: Date)` really removes tasks deleted before that date.
+
+    ## Service
+    - `deleteTask` keeps its behaviour from the caller's point of view: the task disappears, a second delete is a 404.
+    - `restoreTask(id)` fails with `NotFoundError` for a task that was never deleted or does not exist.
+    - Comments and audit events of a deleted task stay; they come back with it.
+    - Counts and the weekly report ignore deleted tasks.
+
+    ## HTTP
+    - `DELETE /tasks/:id` unchanged for clients.
+    - `POST /tasks/:id/restore` for admins.
+    - `GET /tasks?deleted=only` for admins lists the trash.
+
+    ## Migration and housekeeping
+    - A migration adds the column with null for every existing row.
+    - A daily job calls `purge` with now minus 30 days.
+
+    ## Tests
+    - Repository, service and handler level, plus the migration on a database that already has tasks.
+
+- task: t24
+  lang: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 5 }
+  short: |
+    사용자별 알림 설정 기능 추가 (이메일/슬랙 채널, 이벤트별 on/off)
+  spec: |
+    사용자마다 알림을 받을 채널과 이벤트를 고를 수 있게 해 주세요.
+
+    ## 설정 모델
+    ```ts
+    type Channel = 'email' | 'slack';
+    type NotifyEvent = 'task.assigned' | 'task.due_soon' | 'comment.added';
+    interface NotificationSettings {
+      userId: string;
+      channels: Record<Channel, { enabled: boolean; address: string | null }>;
+      events: Record<NotifyEvent, Channel[]>;
+    }
+    ```
+
+    ## 요구 사항
+    1. 설정이 없는 사용자는 기본값(이메일만 켜짐, 모든 이벤트를 이메일로)으로 취급합니다.
+    2. `GET /me/notifications`, `PUT /me/notifications`로 조회·저장합니다.
+    3. 켜진 채널에는 주소가 있어야 하고, 이메일 주소와 슬랙 웹훅 URL 형식을 검증합니다.
+    4. 이벤트에 지정한 채널이 꺼져 있으면 저장할 때 400입니다.
+    5. 알림을 보내는 쪽(`NotificationService.notify(event, userId, payload)`)은 설정을 읽어 해당 채널로만 보냅니다.
+    6. 채널별 전송기는 `EmailSender`, `SlackSender`로 나누고 같은 인터페이스를 구현합니다.
+    7. 한 채널 전송이 실패해도 다른 채널은 보내고, 실패는 로그로 남깁니다.
+    8. 기존에 `task.assigned`에서 이메일을 직접 보내던 코드는 `notify` 호출로 바꿉니다.
+    9. `task.due_soon`은 매시간 도는 작업이 마감 24시간 이내 태스크를 찾아 호출합니다.
+
+    ## 테스트
+    - 설정 검증, 기본값, 채널 선택, 한 채널 실패 시 동작
+
+- task: t25
+  lang: ko
+  split: dev
+  label: { kind: team, level: L3, files: 25, dirs: 8 }
+  short: |
+    결제 처리를 맡을 신규 서비스를 처음부터 설계하고 구현해줘
+  spec: |
+    지금은 주문 서비스 안에서 PG사 API를 직접 부르고 있는데, 결제 수단이 늘면서 감당이 안 됩니다. 결제를 별도 서비스로 떼어내려고 합니다. 설계부터 해 주세요.
+
+    ## 범위
+    - 새 서비스 `payments` (HTTP API + 워커)
+    - 결제 승인, 매입, 취소, 부분 환불
+    - PG사 어댑터 두 개(현재 쓰는 A사, 새로 붙일 B사)와 공통 인터페이스
+    - 웹훅 수신과 서명 검증, 재시도로 인한 중복 처리 방지(멱등 키)
+    - 결제 상태 기계와 상태 전이 이력
+    - 주문 서비스와의 연동: 주문 서비스는 PG사를 더 이상 직접 부르지 않고 `payments` API만 호출
+
+    ## 결정이 필요한 것 (제안해 주세요)
+    1. 주문 서비스와 동기 호출로 묶을지, 이벤트로 느슨하게 묶을지
+    2. 저장소 스키마와 금액 표현(정수 최소 단위)
+    3. 부분 실패 시 보상 처리
+    4. 기존 결제 데이터 이전 방법과 전환 기간의 이중 기록 여부
+
+    ## 산출물
+    - 아키텍처 문서와 API 명세
+    - 서비스 코드, 마이그레이션, 어댑터별 계약 테스트
+    - 주문 서비스 쪽 호출부 교체
+    - 로컬에서 두 서비스를 함께 띄우는 구성
+
+- task: t26
+  lang: en
+  split: test
+  label: { kind: team, level: L3, files: 30, dirs: 10 }
+  short: |
+    move the order pipeline from synchronous REST calls between services to an event-driven architecture on a message queue
+  spec: |
+    Placing an order today is a chain of synchronous REST calls: checkout calls inventory, inventory calls pricing, checkout then calls payments and finally notifications. When any one of them is slow the whole request times out, and a failure in the middle leaves stock reserved for an order that does not exist.
+
+    I want to move this pipeline to events on a message queue. We have not picked the broker; propose one and justify it.
+
+    What has to be designed before any code:
+    - The events (`order.placed`, `stock.reserved`, `stock.rejected`, `payment.captured`, `payment.failed`, `order.confirmed`, `order.cancelled`) with their payloads and versioning rule.
+    - Who owns which state, and the saga that replaces the call chain, including the compensation for each step.
+    - Delivery guarantees: at-least-once with idempotent consumers, an outbox table in each producer so a database commit and a publish cannot diverge, and a dead-letter path with a way to replay.
+    - Ordering requirements per order id.
+    - How the checkout API answers the browser now that the result arrives later.
+
+    Then the work itself, service by service: checkout, inventory, pricing, payments and notifications each get a publisher and consumers, the outbox and its relay, and contract tests for every event they produce or consume. The old REST endpoints between services stay until the new path has run in shadow mode; plan that migration and the cut-over, and tell me what we can roll back at each stage.
+
+    Observability is part of this: a correlation id on every event, and a way to see where a given order is stuck.
+
+- task: t27
+  lang: ko
+  split: dev
+  label: { kind: team, level: L3, files: 40, dirs: 12 }
+  short: |
+    서비스에 멀티테넌시 도입해줘. 고객사별로 데이터가 완전히 분리돼야 함
+  spec: |
+    지금 서비스는 고객사 하나를 전제로 만들어져 있습니다. 두 번째 고객사 계약이 잡혀서 한 배포에서 여러 고객사를 받도록 바꿔야 합니다. 고객사 간 데이터가 섞이는 일은 절대 없어야 합니다.
+
+    먼저 격리 방식을 정해야 합니다. 테이블마다 `tenant_id`를 두는 방식, 스키마를 나누는 방식, 데이터베이스를 나누는 방식 중에서 우리 규모(고객사 수십 곳, 테이블 40여 개)에 맞는 것을 비교해 제안해 주세요. 저는 `tenant_id` 열과 행 수준 보안 정책의 조합을 생각하고 있지만 확신은 없습니다.
+
+    방식이 정해지면 바뀌는 범위는 이렇습니다. 인증 토큰에 테넌트가 들어가고, 요청마다 테넌트 컨텍스트가 설정되어 저장소 계층의 모든 쿼리에 자동으로 적용되어야 합니다. 개별 쿼리에서 조건을 빠뜨려도 다른 고객사 데이터가 보이지 않도록 하는 것이 핵심입니다. 모든 테이블에 마이그레이션이 필요하고, 기존 데이터는 첫 번째 고객사 소유로 채웁니다. 고유 제약(이메일, 프로젝트 키 등)은 테넌트 범위로 바뀝니다. 캐시 키, 백그라운드 작업, 파일 저장 경로, 검색 색인, 감사 로그에도 테넌트가 들어가야 합니다. 관리자용으로 테넌트를 만들고 정지시키는 API도 필요합니다.
+
+    테스트는 계층마다 "다른 테넌트의 데이터에 접근하면 없는 것으로 보인다"를 확인하는 것을 기본으로 깔아 주세요.
+
+- task: t28
+  lang: en
+  split: test
+  label: { kind: team, level: L3, files: 22, dirs: 7 }
+  short: |
+    design and build a plugin system so third parties can add commands and exporters to the CLI
+  spec: |
+    People keep sending pull requests that add one more exporter or one more subcommand to the CLI, and we do not want to own all of them. I want a plugin system so they can ship those themselves.
+
+    ## What a plugin can do
+    - Register commands (name, options, handler).
+    - Register exporters for the `export` command (format name, file extension, a function from our data model to bytes).
+    - Hook into `beforeSync` and `afterSync`.
+
+    ## What needs designing
+    1. The extension API and its stability promise: a versioned `PluginApi` object, what is public, how we deprecate.
+    2. Discovery and loading: plugins are npm packages named `mytool-plugin-*`, listed in the config file; load order; what happens when two plugins register the same name.
+    3. Isolation: a plugin that throws during load or inside a hook must not take the CLI down; decide how far we go (try/catch, worker threads, permissions).
+    4. Configuration: each plugin gets its own validated section of the config file.
+    5. Developer experience: a template, typings, a `mytool plugin doctor` command.
+
+    ## Migration
+    - Move the three built-in exporters (csv, json, markdown) and the `stats` command onto the same API, so the core uses the mechanism it offers to others.
+    - No behaviour change for people who install no plugins.
+
+    ## Deliverables
+    - A design document first, for review.
+    - The loader, the API package with typings, the migrated built-ins, tests for loading, conflicts and failing plugins, and documentation with one worked example plugin.
+
+- task: t29
+  lang: ko
+  split: dev
+  label: { kind: team, level: L3, files: 60, dirs: 15 }
+  short: |
+    지금 모놀리식 구조를 모듈 경계가 분명하게 전면 재설계하고 싶어. 패키지 분리까지
+  spec: |
+    코드베이스가 `src/` 하나에 300개 넘는 파일로 뒤엉켜 있고, 서로를 아무 방향으로나 import합니다. 기능 하나를 고치면 관계없는 테스트가 깨지는 일이 잦습니다. 구조를 다시 잡으려 합니다.
+
+    ## 목표
+    - 도메인별 모듈(계정, 프로젝트, 태스크, 알림, 결제, 리포트)로 경계를 나누고, 모듈은 공개 진입점(`index.ts`)으로만 서로를 씁니다.
+    - 의존 방향을 한쪽으로 정합니다: 도메인 → 공용 유틸은 되지만 반대는 안 되고, 도메인끼리는 정해진 방향만 허용합니다.
+    - 순환 의존을 없앱니다(현재 40개 이상).
+    - 저장소 접근과 HTTP는 각 모듈 안의 바깥 계층으로 밀어내고, 도메인 로직은 그것들을 모릅니다.
+    - 워크스페이스 패키지로 나눌 수 있는 것은 나눕니다.
+
+    ## 먼저 필요한 것
+    1. 현재 의존 그래프 분석과 모듈 경계 제안
+    2. 단계별 이전 계획: 한 번에 다 옮기지 않고, 각 단계가 끝날 때마다 빌드와 테스트가 통과해야 합니다
+    3. 경계를 강제할 방법(lint 규칙이나 의존성 검사)과 CI 연결
+    4. 공용으로 남길 것과 모듈로 내려보낼 것의 기준
+
+    ## 제약
+    - 외부 API와 데이터베이스 스키마는 바꾸지 않습니다
+    - 이전 중에도 기능 개발은 계속되므로, 큰 브랜치 하나가 아니라 작은 변경 여러 개로 진행합니다
+
+- task: t30
+  lang: en
+  split: test
+  label: { kind: team, level: L3, files: 35, dirs: 9 }
+  short: |
+    the mobile client needs to work offline and sync when it's back online
+  spec: |
+    Field technicians use our mobile app in basements and on rooftops with no signal, and today the app is useless there: every screen loads from the API and every edit is a request. I want the app to work fully offline and synchronise when the connection returns.
+
+    This is a rewrite of the client's data layer and it needs a design first. The questions I can see: a local store on the device as the source of truth for the UI (which database, what schema, how it migrates between app versions); a queue of local changes with stable ids generated on the device; a sync protocol with the server that sends those changes and pulls what others changed, resumable after a dropped connection and cheap enough to run often; and conflict handling. For conflicts I do not want "last write wins" on whole records. Two technicians editing different fields of the same work order should both keep their change, and a real conflict on one field should be shown to the user. Photos and signatures are large and need their own upload path with retry.
+
+    The server needs matching work: change feeds per user, accepting batched changes idempotently, and tombstones for deletions so that a device that was offline for two weeks does not resurrect deleted records.
+
+    Every screen in the app has to move from "fetch then render" to reading the local store and observing it, and the UI needs to show sync state and pending changes. Please start with a design document covering the store, the protocol and the conflict rules, with the migration plan for existing installs, before writing code.

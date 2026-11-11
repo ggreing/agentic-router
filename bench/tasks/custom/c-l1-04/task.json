@@ -1,0 +1,12 @@
+{
+  "id": "c-l1-04",
+  "level": "L1",
+  "source": "custom",
+  "fixture": "taskboard",
+  "title": "태스크 마감일(dueDate) 및 지연 태스크 조회 추가",
+  "prompt": "taskboard에 마감일 기능을 넣어 주세요.\n\n1. 태스크 생성 입력(`NewTaskInput`)에 선택 필드 `dueDate?: string | null` 추가 (`'YYYY-MM-DD'` 형식의 날짜 문자열). `Task`에도 `dueDate: string | null` 필드를 추가하고, 지정하지 않았거나 `null`이면 `null`로 저장합니다.\n2. 검증: `dueDate`가 주어졌는데 문자열이 아니거나, `YYYY-MM-DD` 형식(연 4자리, 월/일 2자리)이 아니거나, 존재하지 않는 날짜(`'2023-02-29'`, `'2024-13-01'`, `'2024-04-31'` 등)면 기존 검증 에러와 같은 방식으로 `ValidationError`를 던지고 `details`에 정확히 `'dueDate must be a valid date in YYYY-MM-DD format'`을 넣어 주세요. 그러면 `handlers.createTask`는 기존처럼 400 `{ error: 'Validation failed', details: [...] }`을 반환하게 됩니다. (`'2024-02-29'`처럼 윤년 날짜는 유효)\n3. `TaskService.listOverdueTasks(today: string): Task[]` 추가. `today`도 `'YYYY-MM-DD'`. `dueDate`가 있고 `dueDate < today`이며 status가 `done`/`cancelled`가 아닌 태스크만 반환합니다 (마감일이 오늘인 건 지연 아님). 정렬은 `dueDate` 오름차순, 같으면 생성 순. `today`가 유효한 날짜가 아니면 `ValidationError`, details는 `['today must be a valid date in YYYY-MM-DD format']`.\n4. 핸들러 `handlers.listOverdueTasks(req)` 추가: `req.query.today`를 받아서 200 `{ items: Task[] }`를 반환, `today`가 없거나 잘못되면 400 (위 ValidationError가 기존 에러 매핑을 그대로 탐).",
+  "hidden_tests": ["hidden/due-dates.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 30, "timeoutSec": 600 }
+}

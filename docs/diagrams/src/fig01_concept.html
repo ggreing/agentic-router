@@ -1,0 +1,68 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css">
+<style>
+ .lane-name { position: absolute; z-index: 2; font-size: 13px; font-weight: 700; color: #1f2937; text-align: right; width: 118px; }
+ .lane-name small { display: block; font-size: 11px; font-weight: 400; color: #6b7280; }
+ .seg { position: absolute; z-index: 2; height: 26px; border-radius: 6px; border: 1.4px solid; display: flex; align-items: center; justify-content: center;
+        font-size: 11.5px; font-weight: 700; color: #1f2937; }
+ .s-t1 { background: #e6f5e8; border-color: #2e7d32; } .s-t2 { background: #e3f0fd; border-color: #1f5fa8; } .s-t3 { background: #efe8fd; border-color: #6a3cd6; }
+ .mk { position: absolute; z-index: 3; width: 13px; height: 13px; transform: translate(-50%, -50%) rotate(45deg); border: 1.6px solid; background: #fff; }
+ .mk-up { border-color: #c62828; } .mk-eq { border-color: #6b7280; } .mk-dn { border-color: #2e7d32; }
+ .mt { position: absolute; z-index: 3; transform: translate(-50%, 0); font-size: 11px; font-weight: 700; white-space: nowrap; line-height: 1.2; text-align: center; }
+ .track { position: absolute; z-index: 1; height: 0; border-top: 1px dashed #d1d5db; }
+ .chip { font-size: 11.5px; }
+</style></head><body>
+<div id="fig" style="width:860px;height:520px"></div>
+<script src="fig.js"></script>
+<script>
+ // --- top: request -> router -> team + start steps
+ B('rq', 70, 42, 110, 'c-white pill', '<div class="t">사용자 요청</div>');
+ B('rt', 255, 42, 190, 'c-navy', '<div class="t">라우터 판정: L2</div><div class="s">팀 구성 + 역할별 시작 단계</div>');
+ B('tm', 590, 42, 400, 'c-white', '<div style="line-height:1.9">' +
+   '<span class="chip c-t2">설계자 · 시작 s3</span><span class="chip c-t1">작업자 ×2 · 시작 s1</span><span class="chip c-t2">검토자 · 시작 s3</span></div>');
+ // --- timeline
+ const X0 = 160, X1 = 830, U = (X1 - X0) / 10, x = u => X0 + u * U;
+ const lanes = [['설계자', '명세 작성'], ['작업자 1', '하위 작업 A → C'], ['작업자 2', '하위 작업 B → D'], ['검토자', '결과물 채점']];
+ const LY = [145, 215, 285, 355];
+ C('tl', 8, 102, 844, 300, '팀 내부 — 세션 결과물이 나올 때마다 즉시 평가하고 다음 단계를 정함', '#1f4e79', 14);
+ lanes.forEach((l, i) => {
+  T(20, LY[i] - 16, `${l[0]}<small>${l[1]}</small>`, 'lane-name');
+  const t = document.createElement('div'); t.className = 'track'; Object.assign(t.style, { left: X0 + 'px', top: LY[i] + 'px', width: (X1 - X0) + 'px' }); FIG.appendChild(t);
+ });
+ const segs = [
+  [0, 0, 2.0, 's3', 2],
+  [1, 2.2, 4.0, 's1', 1], [1, 4.2, 6.0, 's2', 1], [1, 6.2, 8.0, 's2', 1], [1, 8.2, 10, 's1', 1],
+  [2, 2.2, 4.0, 's1', 1], [2, 4.2, 6.0, 's1', 1], [2, 6.2, 7.8, 's2', 1], [2, 8.0, 10, 's3 · Sonnet 재생성', 2],
+  [3, 4.2, 5.0, 's3', 2], [3, 5.2, 6.4, 's3', 2], [3, 6.6, 7.8, 's2', 2], [3, 8.0, 9.2, 's3', 2],
+ ];
+ for (const [ln, a, b, label, tier] of segs) {
+  const d = document.createElement('div'); d.className = 'seg s-t' + tier; d.textContent = label;
+  Object.assign(d.style, { left: x(a) + 'px', top: (LY[ln] - 13) + 'px', width: (x(b) - x(a)) + 'px' }); FIG.appendChild(d);
+ }
+ const marks = [
+  [0, 2.1, 'eq', '충족 =', '명세 확정'],
+  [1, 4.1, 'up', '미달 ↑', '연속 2회 실패'], [1, 6.1, 'eq', '여유 1회 =', '하한 잠금 중'], [1, 8.1, 'dn', '여유 2회 ↓', '연속 여유'],
+  [2, 4.1, 'eq', '충족 =', ''], [2, 6.1, 'up', '미달 ↑', ''], [2, 7.9, 'up', '미달 ↑', '티어 경계'],
+  [3, 5.1, 'eq', '여유 1회 =', ''], [3, 6.5, 'dn', '여유 2회 ↓', ''], [3, 7.9, 'up', '하한 ↑', '검토 대상 s3'],
+ ];
+ const col = { up: '#c62828', eq: '#4b5563', dn: '#2e7d32' };
+ for (const [ln, u, k, t1, t2] of marks) {
+  const m = document.createElement('div'); m.className = 'mk mk-' + k; Object.assign(m.style, { left: x(u) + 'px', top: LY[ln] + 'px' }); FIG.appendChild(m);
+  const t = document.createElement('div'); t.className = 'mt'; t.style.color = col[k];
+  t.innerHTML = t1 + (t2 ? `<br><span style="font-weight:400;color:#6b7280">${t2}</span>` : '');
+  Object.assign(t.style, { left: x(u) + 'px', top: (LY[ln] + 17) + 'px' }); FIG.appendChild(t);
+ }
+ // --- end: integration
+ B('end', 430, 440, 330, 'c-green', '<div class="t" style="color:#1b5e20">모든 하위 작업 통과 → 병합 · 최종 검증 · 보고</div>');
+ const lg = document.createElement('div'); lg.className = 'legend'; lg.style.left = '20px'; lg.style.top = '482px';
+ lg.innerHTML = '<span><span class="sw" style="background:#e6f5e8;border-color:#2e7d32"></span>T1 Haiku 5.5 (s1·s2)</span>' +
+  '<span><span class="sw" style="background:#e3f0fd;border-color:#1f5fa8"></span>T2 Sonnet 5.5 (s3·s4)</span>' +
+  '<span><span class="sw" style="background:#efe8fd;border-color:#6a3cd6"></span>T3 Opus 5.5 (s5·s6)</span>' +
+  '<span style="color:#c62828;font-weight:700">미달 ↑ 한 단계 상승</span><span style="color:#4b5563;font-weight:700">충족 = 유지</span><span style="color:#2e7d32;font-weight:700">여유 2회 연속 ↓ 하락</span>';
+ FIG.appendChild(lg);
+ initSvg();
+ link('rq', 'r', 'rt', 'l', { color: '#1f4e79' });
+ link('rt', 'r', 'tm', 'l', { color: '#1f4e79' });
+ link('tm', 'b', [P('tm', 'b')[0], 102], null, { color: '#1f4e79' });
+ link([430, 402], null, 'end', 't', { color: '#2e7d32' });
+ done();
+</script></body></html>

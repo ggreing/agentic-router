@@ -1,0 +1,12 @@
+{
+  "id": "c-l1-01",
+  "level": "L1",
+  "source": "custom",
+  "fixture": "textkit",
+  "title": "slugify 유니코드 처리 및 separator 옵션 추가",
+  "prompt": "textkit `slugify`가 ASCII만 제대로 처리해서 문제가 있어요. `slugify('Crème Brûlée')`가 `'cr-me-br-l-e'`가 되고, 한글 제목은 아예 빈 문자열이 됩니다. 아래처럼 바꿔 주세요.\n\n시그니처: `slugify(input: string, options?: SlugifyOptions): string`, `interface SlugifyOptions { separator?: string }` (`SlugifyOptions` 타입도 `src/index.ts`에서 export).\n\n규칙:\n1. 결과는 소문자.\n2. 라틴 문자의 발음 구별 기호(악센트)는 제거: `slugify('Crème Brûlée')` → `'creme-brulee'`, `slugify('ÉCOLE Française')` → `'ecole-francaise'`.\n3. 한글 등 다른 문자 체계의 글자와 숫자는 그대로 유지: `slugify('안녕 세상')` → `'안녕-세상'`, `slugify('React 훅 정리 2편')` → `'react-훅-정리-2편'`. (결과의 한글은 일반적인 완성형(NFC) 문자열이어야 합니다.)\n4. 글자/숫자가 아닌 문자가 연속되면 구분자 하나로 바꾸고, 앞뒤 구분자는 제거.\n5. `options.separator`로 구분자를 지정 가능, 기본값은 `'-'`: `slugify('  --Hello,   World!--  ', { separator: '_' })` → `'hello_world'`.\n6. 빈 문자열, 공백만, 기호만 있는 입력은 `''`.\n\n기존 동작(`slugify('Hello, World!')` → `'hello-world'`, `'Version 2.0 Release'` → `'version-2-0-release'`)은 유지되어야 합니다.",
+  "hidden_tests": ["hidden/slugify-unicode.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 30, "timeoutSec": 600 }
+}

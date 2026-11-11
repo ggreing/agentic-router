@@ -1,0 +1,43 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:860px;height:1000px"></div>
+<script src="fig.js"></script>
+<script>
+ const MX = 400, LX = 140, RX = 660;
+ B('start', MX, 38, 170, 'c-white pill', '<div class="t">사용자 요청</div>');
+ B('tri', MX, 122, 250, 'c-navy', '<div class="t">라우터 판정</div><div class="s">난이도 → 팀 구성 · 역할별 시작 단계</div>');
+ B('plan', MX, 210, 250, 'c-white', '<div class="t">하위 작업 분할</div><div class="s">명세에 수정 허용 경로 지정 · L0는 세션 1개</div>');
+ C('loop', 15, 262, 830, 555, '하위 작업(세션)마다 반복 — 결과물이 나올 때마다 즉시 평가', '#1f4e79', 420);
+ B('work', MX, 318, 230, 'c-white', '<div class="t">세션 작업</div><div class="s">git worktree · 범위 밖 수정은 훅이 차단</div>');
+ B('eval', MX, 408, 270, 'c-amber', '<div class="t">세션 종료 즉시 검증 · 평가</div><div class="s">데몬이 worktree에서 verify · 범위 검사</div>');
+ D('dec', MX, 505, 150, 84, '평가<br>결과');
+ B('down', LX, 620, 200, 'c-green', '<div class="t">여유 2회 연속 ↓ 하락</div><div class="s">다음 작업을 한 단계 낮게<br>(상승 후 2작업은 잠금)</div>');
+ B('keep', MX, 620, 170, 'c-gray', '<div class="t">충족 = 단계 유지</div><div class="s">여유 1회도 유지</div>');
+ B('up', RX, 620, 200, 'c-violet', '<div class="t">미달 ↑ 한 단계 상승</div><div class="s">경계 넘으면 다음 모델로 재생성</div>');
+ B('hitl', RX, 735, 200, 'c-red', '<div class="t">사람 개입 (HITL)</div><div class="s">호출 중지 → 사용자 선택</div>');
+ D('more', MX, 755, 170, 84, '남은 하위<br>작업?');
+ B('merge', MX, 870, 230, 'c-white', '<div class="t">병합 · 최종 검증</div><div class="s">충돌 시 해당 작업자 재호출</div>');
+ B('rep', MX, 955, 230, 'c-green pill', '<div class="t">사용자 보고 · 학습 기록</div>');
+ T(552, 384, '※ 1회 실패는 같은 단계에서 재시도<br>&nbsp;&nbsp;&nbsp;&nbsp;(같은 작업 연속 2회 실패 = 미달)<br>※ 상승은 하위 작업당 3회까지', 'note');
+ T(560, 900, '※ 요청당 예산을 넘으면 어느 단계에서든<br>&nbsp;&nbsp;&nbsp;&nbsp;새 호출 차단 후 사용자 확인', 'note');
+ initSvg(); diamonds();
+ const G = '#6b7280', GR = '#2e7d32', RD = '#c62828', VI = '#6a3cd6', N = '#1f4e79';
+ link('start', 'b', 'tri', 't');
+ link('tri', 'b', 'plan', 't');
+ link('plan', 'b', 'work', 't');
+ link('work', 'b', 'eval', 't');
+ link('eval', 'b', 'dec', 't');
+ link('dec', 'l', 'down', 't', { route: 'hv', color: GR, label: '여유', lcolor: GR, lseg: 0 });
+ link('dec', 'b', 'keep', 't', { label: '충족' });
+ link('dec', 'r', 'up', 't', { route: 'hv', color: VI, label: '미달', lcolor: VI, lseg: 0 });
+ const wr = P('work', 'r');
+ link('up', 'r', 'work', 'r', { via: [[822, null], [null, wr[1]]], color: VI, label: '같은 하위 작업 재작업', lseg: 1, lside: 'left', lcolor: VI });
+ link('up', 'b', 'hitl', 't', { color: RD, label: '상승 3회 초과 · 최상단 미달', lcolor: RD });
+ const mt = P('more', 't');
+ link('keep', 'b', 'more', 't');
+ link('down', 'b', [mt[0], 688], null, { via: [[null, 688]], color: GR, noArrow: true });
+ const wl = P('work', 'l');
+ link('more', 'l', 'work', 'l', { via: [[34, null], [null, wl[1]]], color: N, label: '예: 다음 하위 작업 (조정된 단계 이어받음)', lseg: 2, lcolor: N });
+ link('more', 'b', 'merge', 't', { label: '아니오: 모두 완료' });
+ link('merge', 'b', 'rep', 't');
+ done();
+</script></body></html>

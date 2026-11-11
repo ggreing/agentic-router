@@ -1,0 +1,12 @@
+{
+  "id": "c-l1-02",
+  "level": "L1",
+  "source": "custom",
+  "fixture": "taskboard",
+  "title": "태스크 상태 전이(취소) 버그 수정",
+  "prompt": "taskboard 상태 전이 쪽 버그입니다. 태스크를 취소(`cancelled`)하려고 하면 todo든 in_progress든 항상 409가 나요. 그리고 지금 상태와 같은 상태로 바꾸는 요청(예: todo → todo)도 409가 나는데, 이건 에러 대신 그냥 아무 것도 안 하는 게 맞습니다.\n\n올바른 규칙 (`TaskService.changeStatus(taskId, status)`, `startTask` / `completeTask` / `cancelTask`, 그리고 `handlers.updateStatus({ params: { id }, body: { status } })` 모두 동일하게 적용):\n- todo → in_progress, cancelled 허용\n- in_progress → todo, done, cancelled 허용\n- done → in_progress 허용 (reopen)\n- cancelled → 어떤 상태로도 불가 (종료 상태)\n- 위에 없는 전이는 `ConflictError`, 메시지는 기존 형식 그대로 `Invalid status transition: <from> -> <to>` (예: `Invalid status transition: cancelled -> todo`). 핸들러 응답은 409, body `{ error: '<그 메시지>' }`.\n- 현재 상태와 같은 상태로의 요청은 에러 없이 현재 태스크를 그대로 반환하고, 저장도 하지 않아서 `updatedAt`이 바뀌면 안 됩니다. 핸들러는 200.\n\n알 수 없는 status 값에 대한 400 처리 등 나머지 동작은 그대로 두세요.",
+  "hidden_tests": ["hidden/status-transitions.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 30, "timeoutSec": 600 }
+}

@@ -1,0 +1,27 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="height:390px"></div>
+<script src="fig.js"></script>
+<script>
+ C('la', 10, 20, 600, 152, '구독 모드 (Pro · Max · Ultra)', '#0f8f84');
+ C('lb', 10, 198, 600, 178, 'API 키 모드', '#c2570c');
+ B('anth', 712, 198, 150, 'c-black', '<div class="t">Anthropic API</div><div class="s">외부 (인터넷)</div>', { h: 330 });
+ // lane A
+ B('ccA', 115, 72, 190, 'c-white', '<div class="t">Claude Code + 플러그인</div><div class="s">구독 로그인 (OAuth)</div>');
+ B('dmA', 430, 136, 160, 'c-blue', '<div class="t">라우터 데몬</div><div class="s">요청 특징 · 이벤트만 수신</div>');
+ // lane B
+ B('ccB', 115, 248, 190, 'c-white', '<div class="t">Claude Code + 플러그인</div><div class="s">AUTH_TOKEN = 로컬 토큰</div>');
+ B('px', 420, 248, 170, 'c-orange', '<div class="t">API 프록시 (로컬)</div><div class="s">토큰 검증 → API 키로 교체<br>본문 수정 없음 · 예산 차단</div>');
+ B('dmB', 115, 335, 160, 'c-blue', '<div class="t">라우터 데몬</div><div class="s">usage 집계 · 단계 기록</div>');
+ B('kc', 470, 340, 130, 'c-amber', '<div class="t">OS 키체인</div><div class="s">API 키 보관</div>');
+ initSvg();
+ const TEAL = '#0f8f84', OR = '#c2570c', G = '#6b7280';
+ const at = P('anth', 'l')[0];
+ link('ccA', 'r', [at, P('ccA', 'r')[1]], null, { color: TEAL, w: 2.4, label: '구독 토큰으로 직접 전송 (BASE_URL 미설정)', lcolor: TEAL });
+ link('ccA', 'b', 'dmA', 'l', { route: 'vh', both: true, label: '훅 · MCP (크리덴셜 없음)', lseg: 1 });
+ link('ccB', 'r', 'px', 'l', { color: OR, w: 2.4, label: '로컬 토큰', lcolor: OR });
+ link('px', 'r', [at, P('px', 'r')[1]], null, { color: OR, w: 2.4, label: 'API 키 (x-api-key)', lcolor: OR });
+ link('kc', 't', 'px', 'b', { color: OR, dash: true, bo: 50, label: '키 읽기', lcolor: OR });
+ link('ccB', 'b', 'dmB', 't', { both: true, label: '훅 · MCP' });
+ link('px', 'b', 'dmB', 'r', { ao: -50, route: 'vh', dash: true, label: 'usage 전달', lseg: 1 });
+ done();
+</script></body></html>

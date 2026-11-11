@@ -1,0 +1,32 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="height:480px"></div>
+<script src="fig.js"></script>
+<script>
+ B('desk', 120, 50, 150, 'c-gray', '<div class="t mono">desktop</div><div class="s">Tauri 2 셸 (Phase 4)</div>');
+ B('cli', 400, 50, 150, 'c-gray', '<div class="t mono">cli</div><div class="s">agentic-router 명령</div>');
+ B('plug', 680, 50, 200, 'c-teal', '<div class="t mono">plugin/</div><div class="s">Claude Code 플러그인 배포물</div>');
+ B('dash', 120, 178, 150, 'c-gray', '<div class="t mono">dashboard</div><div class="s">Vue 3</div>');
+ B('dmn', 400, 178, 150, 'c-navy', '<div class="t mono">daemon</div><div class="s">판정 API · 작업 원장</div>');
+ B('adp', 680, 178, 170, 'c-navy', '<div class="t mono">adapter-claude-code</div><div class="s">훅 스크립트 · MCP 도구</div>');
+ B('prx', 120, 305, 150, 'c-orange', '<div class="t mono">proxy</div><div class="s">LLM 게이트웨이</div>');
+ B('core', 430, 305, 300, 'c-violet', '<div class="t mono">core</div><div class="s">판정 · 팀 구성 · 티어 사다리 · LangGraph.js 그래프</div>');
+ B('pre', 300, 425, 200, 'c-amber', '<div class="t mono">presets/</div><div class="s">teams · ladder · rules · pricing</div>');
+ B('bch', 560, 425, 170, 'c-gray', '<div class="t mono">bench/</div><div class="s">벤치마크 과제 · 채점기</div>');
+ const lg = document.createElement('div'); lg.className = 'legend'; lg.style.left = '600px'; lg.style.top = '398px'; lg.style.flexDirection = 'column'; lg.style.alignItems = 'flex-start'; lg.style.gap = '6px';
+ lg.innerHTML = '<span><span class="ln" style="border-color:#374151"></span>코드 의존 (import)</span><span><span class="ln" style="border-color:#6b7280;border-top-style:dashed"></span>런타임 통신 · 설정</span>';
+ lg.style.left = '660px'; FIG.appendChild(lg);
+ initSvg();
+ const K = '#374151', G = '#6b7280';
+ link('cli', 'b', 'dmn', 't', { color: K, label: 'start · stop' });
+ link('desk', 'b', 'dash', 't', { dash: true, label: '화면 재사용' });
+ link('desk', 'r', 'dmn', 'l', { via: [[290, null], [null, 170]], bo: -8, color: K, label: 'sidecar 번들', lseg: 1 });
+ link('dash', 'r', 'dmn', 'l', { ao: 8, bo: 8, dash: true, label: 'HTTP 조회', lt: 0.4 });
+ link('adp', 't', 'plug', 'b', { color: K, label: '생성' });
+ link('plug', 'l', 'dmn', 'r', { via: [[540, null], [null, 170]], bo: -8, dash: true, label: '훅 · MCP 이벤트', lseg: 1 });
+ link('dmn', 'b', [400, P('core', 't')[1]], null, { color: K, label: 'import' });
+ link('adp', 'b', 'core', 'r', { route: 'vh', color: K, label: 'import', lseg: 0 });
+ link('prx', 'r', 'core', 'l', { color: K, label: 'import' });
+ link('pre', 't', [300, P('core', 'b')[1]], null, { dash: true, label: '설정 로드' });
+ link('bch', 't', [560, P('core', 'b')[1]], null, { color: K, label: '회귀 측정' });
+ done();
+</script></body></html>

@@ -1,0 +1,43 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css">
+<style>
+ #fig { padding: 14px 12px 12px; }
+ table { border-collapse: separate; border-spacing: 0 8px; width: 100%; }
+ th { white-space: nowrap; font-size: 12px; color: #6b7280; text-align: left; font-weight: 700; padding: 0 8px 2px; }
+ td { background: #f9fafb; padding: 10px 8px; vertical-align: middle; font-size: 13px; }
+ td:first-child { border-radius: 10px 0 0 10px; } td:last-child { border-radius: 0 10px 10px 0; }
+ .lv { font-weight: 700; font-size: 15px; color: #1f2937; white-space: nowrap; }
+ .lv small { display: block; font-size: 11.5px; color: #6b7280; font-weight: 400; }
+ .ex { color: #374151; font-size: 12.5px; width: 165px; }
+ .chips .chip { font-size: 12px; padding: 2px 9px; }
+ .lead { background: #fff; border-color: #374151; }
+ .t12 { background: linear-gradient(90deg, #e6f5e8 50%, #e3f0fd 50%); border-color: #2e7d32 #1f5fa8 #1f5fa8 #2e7d32; }
+ .bar { display: flex; gap: 3px; } .bar i { width: 11px; height: 11px; border-radius: 3px; background: #1f4e79; display: inline-block; }
+ .bar i.o { background: #fff; border: 1.5px dashed #1f4e79; }
+ .legend { position: static; margin-top: 6px; padding-left: 8px; }
+</style></head><body>
+<div id="fig">
+ <table>
+  <tr><th>난이도</th><th>대표 요청</th><th>기본 팀 프리셋 — 역할별 시작 단계 (총괄 = 메인 세션, 공통)</th><th>세션 수</th></tr>
+  <tr><td class="lv">L0<small>단순</small></td><td class="ex">오타 · 린트 수정, 단순 질문</td>
+      <td class="chips"><span class="chip c-t1">작업자 ×1 · 시작 s1</span> <span style="font-size:12px;color:#6b7280">팀 없음 · 단독 처리</span></td>
+      <td><div class="bar"><i></i></div></td></tr>
+  <tr><td class="lv">L1<small>일반</small></td><td class="ex">파일 1~3개 기능 · 버그 수정</td>
+      <td class="chips"><span class="chip c-t1">작업자 ×1 · 시작 s1</span><span class="chip c-t1">검토자 ×1 · 시작 s1</span></td>
+      <td><div class="bar"><i></i><i></i></div></td></tr>
+  <tr><td class="lv">L2<small>복합</small></td><td class="ex">모듈 단위 기능 추가, 리팩터링</td>
+      <td class="chips"><span class="chip c-t2">설계자 ×1 · 시작 s3</span><span class="chip c-t1">작업자 ×1~2 · 시작 s1</span><span class="chip c-t2">검토자 ×1 · 시작 s3</span><span class="chip c-t1">테스터 ×1 · 시작 s1</span></td>
+      <td><div class="bar"><i></i><i></i><i></i><i></i><i class="o"></i></div></td></tr>
+  <tr><td class="lv">L3<small>대규모</small></td><td class="ex">신규 서비스, 아키텍처 변경</td>
+      <td class="chips"><span class="chip c-t3">설계자 ×1 · 시작 s5</span><span class="chip c-t2">UI 디자이너 ×0~1 · 시작 s3</span><span class="chip c-t3">작업자 ×2 · 시작 s5</span><span class="chip c-t3">검토자 ×1 · 시작 s5</span><span class="chip c-t1">테스터 ×1 · 시작 s1</span></td>
+      <td><div class="bar"><i></i><i></i><i></i><i></i><i></i><i class="o"></i></div></td></tr>
+ </table>
+ <div class="legend">
+  <span><span class="sw" style="background:#e6f5e8;border-color:#2e7d32"></span>s1 = T1 Haiku 5.5</span>
+  <span><span class="sw" style="background:#e3f0fd;border-color:#1f5fa8"></span>s3 = T2 Sonnet 5.5</span>
+  <span><span class="sw" style="background:#efe8fd;border-color:#6a3cd6"></span>s5 = T3 Opus 5.5</span>
+  <span><span class="sw" style="background:#fff;border:1.5px dashed #1f4e79"></span>선택(총괄이 조정)</span>
+  <span style="color:#6b7280">※ 시작 이후 단계는 세션 평가(↑ · = · ↓)로만 바뀌며, 총괄은 예산 안에서 역할을 추가 · 제거</span>
+ </div>
+</div>
+<script src="fig.js"></script>
+<script>done();</script></body></html>

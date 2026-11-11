@@ -1,0 +1,33 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="height:690px"></div>
+<script src="fig.js"></script>
+<script>
+ const X = 230;
+ B('req', X, 32, 260, 'c-white pill', '<div class="t">새 사용자 요청 (UserPromptSubmit)</div>');
+ B('r1', X, 112, 280, 'c-white', '<div class="t">1차 규칙 판정</div><div class="s">키워드 · 파일 수 · 요청 유형 — 무료 · 수 ms</div>');
+ D('d1', X, 208, 170, 80, '신뢰도<br>충분?');
+ B('r2', X, 305, 280, 'c-white', '<div class="t">2차 유사 사례 검색</div><div class="s">로컬 임베딩 → 과거 사례 k-NN 투표 — 수십 ms</div>');
+ D('d2', X, 400, 170, 80, '신뢰도<br>충분?');
+ D('d3', X, 500, 160, 78, 'API 키 +<br>3차 켬?');
+ B('h3a', 100, 600, 175, 'c-orange', '<div class="t">3차-A: Haiku 5.5 판정</div><div class="s">구조화 출력 + Zod 검증</div>');
+ B('h3b', 360, 600, 175, 'c-teal', '<div class="t">3차-B: 총괄 자체 판정</div><div class="s">기준표 주입 → MCP로 보고</div>');
+ B('fin', 640, 300, 250, 'c-navy', '<div class="t" style="font-size:15px">판정 확정</div><div style="height:6px"></div>' +
+   '<div class="s" style="font-size:12.5px;line-height:1.7;color:#374151">level (L0~L3) · confidence<br>taskType · preset<br>budget · rationale</div>' +
+   '<div style="margin-top:10px;font-weight:700;color:#1f4e79">→ 총괄 컨텍스트에 주입</div>', { h: 300 });
+ initSvg(); diamonds();
+ const GR = '#2e7d32';
+ const fl = P('fin', 'l')[0];
+ link('req', 'b', 'r1', 't');
+ link('r1', 'b', 'd1', 't');
+ link('d1', 'b', 'r2', 't', { label: '아니오' });
+ link('d1', 'r', [fl, 208], null, { color: GR, label: '예', lcolor: GR });
+ link('r2', 'b', 'd2', 't');
+ link('d2', 'r', [fl, 400], null, { color: GR, label: '예', lcolor: GR });
+ link('d2', 'b', 'd3', 't', { label: '아니오' });
+ link('d3', 'l', 'h3a', 't', { route: 'hv', label: '예 (API 키 모드)', lside: 'left' });
+ link('d3', 'r', 'h3b', 't', { route: 'hv', label: '아니오 (구독 모드 등)' });
+ const fb = P('fin', 'b')[1];
+ link('h3b', 'r', [600, fb], null, { route: 'hv', color: GR, label: '3차 결과', lcolor: GR });
+ link('h3a', 'b', [660, fb], null, { via: [[null, 662], [660, null]], color: GR });
+ done();
+</script></body></html>

@@ -1,0 +1,5 @@
+{
+  "totalUsd": 50,
+  "perRunCapUsd": { "L0": 0.5, "L1": 1.5, "L2": 4, "L3": 8 },
+  "note": "totalUsd is the hard cap for Phase 0 runs (API list-price equivalent); lowered from 150 to 50 for the first pilot on 2026-11-10 at the user's request. Every run is also capped with claude --max-budget-usd at perRunCapUsd[level]. A run starts only if the ledger's remaining budget covers its full per-run cap, so total spend stays within totalUsd (the last turn of a run can overshoot its cap by a few cents)."
+}

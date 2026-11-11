@@ -1,0 +1,12 @@
+{
+  "id": "c-l0-03",
+  "level": "L0",
+  "source": "custom",
+  "fixture": "taskboard",
+  "title": "태스크 기본 우선순위 값 수정",
+  "prompt": "taskboard에서 priority 없이 태스크를 만들면 priority가 `'low'`로 들어가는데, 기획상 기본값은 `'medium'`이 맞습니다. `TaskService.createTask({ title })` 로 만들든, `createApp()`의 `handlers.createTask({ body: { title } })` 핸들러로 만들든 priority를 안 주면 `'medium'`이 되도록 고쳐 주세요. priority를 명시하면 지금처럼 그 값이 그대로 들어가야 합니다.",
+  "hidden_tests": ["hidden/default-priority.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 15, "timeoutSec": 300 }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "c-l2-02",
+  "level": "L2",
+  "source": "custom",
+  "fixture": "taskboard",
+  "title": "태스크 변경 이력(audit trail) 기능 추가",
+  "prompt": "taskboard에 태스크 변경 이력(audit trail)을 추가해 주세요. 누가 언제 무엇을 바꿨는지 태스크별로 조회할 수 있어야 합니다.\n\n## 이벤트 모델\n```ts\ntype AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed';\ninterface AuditEvent {\n  id: string;               // 이벤트마다 고유한 값\n  taskId: string;\n  type: AuditEventType;\n  actorId: string | null;   // 작업한 사용자 id, 모르면 null\n  at: string;               // ISO 8601. 그 변경으로 저장된 태스크의 updatedAt과 같은 값 (task.created는 createdAt)\n  changes: Record<string, { from: unknown; to: unknown }>;\n}\n```\n- `task.created`: `changes`는 `{}`\n- `task.assigned`: `{ assigneeId: { from: <이전 담당자 또는 null>, to: <새 담당자 또는 null> } }` (배정 해제도 이 이벤트)\n- `task.status_changed`: `{ status: { from: <이전 상태>, to: <새 상태> } }`\n- 실패한 작업(검증 에러, 404, 409 등)은 기록하지 않습니다.\n- 이미 같은 사람에게 배정된 태스크를 같은 사람에게 다시 배정하면 바뀌는 게 없으니 이벤트도 남기지 않습니다.\n- `AuditEvent`, `AuditEventType` 타입은 `src/index.ts`에서 export.\n\n## Service (`TaskService`)\n- 변경 메서드에 마지막 선택 인자 `actorId?: string | null` 추가 (생략하면 null): `createTask(input, actorId?)`, `assignTask(taskId, userId, actorId?)`, `changeStatus(taskId, status, actorId?)`, `startTask(taskId, actorId?)`, `completeTask(taskId, actorId?)`, `cancelTask(taskId, actorId?)`.\n- `getTaskHistory(taskId: string): AuditEvent[]` 추가 — 그 태스크의 이벤트를 발생 순서대로 반환. 없는 태스크면 기존과 같은 `NotFoundError` (`Task not found: <id>`).\n- 이벤트 저장소는 태스크 repo와 분리된 in-memory audit log로 만들고 `createApp`에서 연결해 주세요. 시각은 `createApp({ now })`로 주입되는 같은 clock을 씁니다.\n\n## Handlers\n- 기존 `createTask`, `assignTask`, `updateStatus` 핸들러는 `req.userId`를 actorId로 넘깁니다 (없으면 null).\n- 새 핸들러 `handlers.getTaskHistory(req)`: `req.params.id`의 이력을 200 `{ items: AuditEvent[] }`로 반환, 없는 태스크면 404 `{ error: 'Task not found: <id>' }`.",
+  "hidden_tests": ["hidden/audit-trail.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 60, "timeoutSec": 1200 }
+}

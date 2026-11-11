@@ -1,0 +1,12 @@
+{
+  "id": "c-l0-04",
+  "level": "L0",
+  "source": "custom",
+  "fixture": "textkit",
+  "title": "truncate 경계값 off-by-one 수정",
+  "prompt": "`truncate(text, maxLength, options?)` 버그 제보입니다. 문자열 길이가 `maxLength`와 정확히 같을 때도 잘려버려요. `truncate('hello', 5)`는 `'hello'` 그대로 나와야 하는데 `'hell…'`이 나옵니다. `ellipsis` 옵션을 줘도 똑같아요 (`truncate('abcdefgh', 8, { ellipsis: '...' })` → `'abcdefgh'` 이어야 함).\n\n길이가 `maxLength` 이하이면 원문을 그대로 반환하고, 초과할 때만 지금처럼 (ellipsis 포함 maxLength 글자로) 잘라 주세요.",
+  "hidden_tests": ["hidden/truncate-boundary.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 15, "timeoutSec": 300 }
+}

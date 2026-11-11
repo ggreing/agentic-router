@@ -1,0 +1,12 @@
+{
+  "id": "c-l1-05",
+  "level": "L1",
+  "source": "custom",
+  "fixture": "confkit",
+  "title": "deepMerge 입력 변경·undefined 덮어쓰기·prototype pollution 버그 수정",
+  "prompt": "confkit `deepMerge(...layers)`에 버그가 몇 개 있어서 고쳐 주세요. 시그니처(`deepMerge(...layers: ConfigObject[]): ConfigObject`)와 기본 동작(나중 레이어 우선, 중첩 객체는 키 단위 병합, 배열은 통째로 교체)은 그대로 유지합니다.\n\n1. 입력이 변경됩니다. `const a = { db: { host: 'a', port: 1 } }; deepMerge(a, { db: { port: 2 } })` 후에 `a.db.port`가 2로 바뀌어 있어요. 어떤 입력 레이어도 변경되면 안 되고, 결과 객체는 입력과 중첩 객체/배열 참조를 공유하면 안 됩니다 (결과를 수정해도 입력에 영향이 없어야 함).\n2. 나중 레이어의 값이 `undefined`이면 앞 레이어 값을 덮어쓰지 말고 무시해 주세요. `null`은 명시적인 값이라 지금처럼 덮어씁니다. 예: `deepMerge({ port: 8080 }, { port: undefined })` → `{ port: 8080 }`, `deepMerge({ port: 8080 }, { port: null })` → `{ port: null }`.\n3. 배열은 지금처럼 통째로 교체하되, 결과에는 복사본이 들어가야 합니다.\n4. 보안: 레이어에 `__proto__`, `constructor`, `prototype` 키가 있으면 (최상위든 중첩 객체 안이든, 예: `JSON.parse('{\"__proto__\": {\"polluted\": true}}')`) 그 키는 무시해서 prototype pollution이 일어나지 않게 하고, 결과에도 해당 키가 own property로 들어가지 않게 해 주세요.",
+  "hidden_tests": ["hidden/deep-merge.test.ts"],
+  "grade": { "cmd": "node --test \"test/**/*.test.ts\" \".bench-hidden/*.test.ts\"" },
+  "oracle": "oracle/",
+  "limits": { "maxTurns": 30, "timeoutSec": 600 }
+}
