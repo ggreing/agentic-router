@@ -1,0 +1,35 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="fig.css"></head><body>
+<div id="fig" style="width:860px;height:640px"></div>
+<script src="fig.js"></script>
+<script>
+ const X = 250;
+ B('req', X, 32, 270, 'c-white pill', '<div class="t">새 사용자 요청 (UserPromptSubmit)</div>');
+ B('r1', X, 112, 300, 'c-white', '<div class="t">1단계 규칙 판정</div><div class="s">키워드 · 언급 파일 수 · 요청 유형 — 무료 · 수 ms</div>');
+ D('d1', X, 212, 150, 74, '결과?');
+ B('dir', 70, 312, 120, 'c-gray', '<div class="t">직접</div><div class="s">총괄이 처리</div>');
+ B('team', X, 312, 170, 'c-navy', '<div class="t">팀</div><div class="s">L3 신호는 L2 팀으로 계획</div>');
+ D('d2', 470, 312, 170, 84, '판정이 구성을<br>바꿀 수 있나?');
+ B('l2', 470, 430, 190, 'c-navy', '<div class="t">L2 팀</div><div class="s">총괄이 필요한 역할만 호출</div>');
+ D('d3', 700, 430, 120, 70, '모드?');
+ B('jA', 590, 560, 170, 'c-orange', '<div class="t">API 키: Sonnet 판정</div><div class="s">effort medium · 점수 구간</div>');
+ B('jB', 780, 560, 150, 'c-teal', '<div class="t">구독: 총괄 판단</div><div class="s">기준 주입, 필요하면<br>작업자 호출로 재계획</div>');
+ B('fin', X, 560, 300, 'c-navy', '<div class="t" style="font-size:15px">판정 확정 → 총괄 컨텍스트에 주입</div>' +
+   '<div class="s" style="font-size:12.5px;line-height:1.6;color:#374151">레벨 · 프리셋 · 예산 · 역할별 Agent 호출 값</div>');
+ T(20, 612, '※ 위임 시작 레벨은 총괄 모델별(Opus급 · Sonnet은 L1부터, Haiku · 모름은 L2부터, L0은 항상 직접). 로컬 임베딩 유사 사례는 사례 200건 뒤 재평가(보류).', 'note', 820);
+ initSvg(); diamonds();
+ const GR = '#2e7d32', OR = '#c2410c';
+ link('req', 'b', 'r1', 't');
+ link('r1', 'b', 'd1', 't');
+ link('d1', 'l', 'dir', 't', { route: 'hv', label: '직접', lside: 'left' });
+ link('d1', 'b', 'team', 't', { label: '팀' });
+ link('d1', 'r', 'd2', 't', { route: 'hv', label: '불확실' });
+ link('d2', 'b', 'l2', 't', { label: '아니오 (L1 · L2 모두 위임)' });
+ link('d2', 'r', 'd3', 't', { route: 'hv', label: '예' });
+ link('d3', 'l', 'jA', 't', { route: 'hv', label: 'API 키', lside: 'left', color: OR, lcolor: OR });
+ link('d3', 'r', 'jB', 't', { route: 'hv', label: '구독' });
+ link('dir', 'b', 'fin', 'l', { route: 'vh', color: GR });
+ link('team', 'b', 'fin', 't', { color: GR });
+ link('l2', 'b', [370, P('fin', 't')[1]], null, { via: [[null, 497], [370, null]], color: GR });
+ link('jA', 'l', 'fin', 'r', { color: GR });
+ done();
+</script></body></html>
