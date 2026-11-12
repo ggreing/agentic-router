@@ -3,7 +3,7 @@
 // in the format the triage scorer reads (packages/core/src/triage-eval-cli.ts regret runs.jsonl --tasks tasks.jsonl).
 //
 //   node scripts/measure107.ts --api-key-helper "<keychain cmd>" [--tasks id,id] [--arrangements direct,team-L2,team-L3]
-//        [--lead opus] [--effort high] [--budget 50] [--dry-run] [--only-plan]
+//        [--lead opus] [--effort high] [--budget 50] [--cap-scale 1] [--dry-run] [--only-plan]
 //
 // - direct   : plain Claude Code, no plugin (the lead does the work alone)
 // - team-L2/3: plugin + daemon with config.forceLevel = L2 / L3 (decision 107 harness switch)
@@ -42,7 +42,9 @@ const LEAD = arg('lead', 'opus')!;
 const EFFORT = arg('effort', 'high')!;
 const BUDGET = Number(arg('budget', '50'));
 const HELPER = arg('api-key-helper');
-const CAP: Record<string, number> = { L1: 2, L2: 5, L3: 10 };
+// --cap-scale shrinks the per-run caps (and so the budget-stop threshold) for a cheaper lead model
+const CAP_SCALE = Number(arg('cap-scale', '1'));
+const CAP: Record<string, number> = Object.fromEntries(Object.entries({ L1: 2, L2: 5, L3: 10 }).map(([k, v]) => [k, v * CAP_SCALE]));
 type Arrangement = 'direct' | 'team-L2' | 'team-L3';
 
 fs.mkdirSync(OUT, { recursive: true });
