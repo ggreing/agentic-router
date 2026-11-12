@@ -5,9 +5,9 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, afterEasyPass, afterOtherResult, afterRaise, atDispatch, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
+  ACCEPTANCE_RULE_VERSION, ACCEPT_WINDOW_PROMPTS, MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, dissatisfactionRule, holdoutDraw, isReask, promptSimilarity, afterEasyPass, afterOtherResult, afterRaise, atDispatch, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
   leadModelClass, normalizeLeadTriage, readRoleFile, redact, routerToolDef, routerToolErrorText, routerToolName, stepIndex, stepUp, triage,
-  type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
+  type LeadModelClass, type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
   type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
   type VerifySignal,
 } from '@agentic-router/core';
@@ -15,13 +15,15 @@ import type { ConfigFile } from './config.ts';
 import { awaitsUser, classifyPrompt } from './continuation.ts';
 import { takeSnapshot } from './git.ts';
 import { writeJsonAtomic, type HomeLayout } from './home.ts';
-import type { AgentRow, ClientRow, Ledger, RequestRow, SlotRow, SubtaskReview, SubtaskRow } from './ledger.ts';
+import type { AcceptState, AgentRow, ClientRow, Holdout, Ledger, RequestRow, SlotRow, SubtaskReview, SubtaskRow } from './ledger.ts';
 import { errorText, nullLogger, type Logger } from './log.ts';
 import { cleanVerifyEnv, verifyEnv, withoutEnvValues } from './env.ts';
 import { eventPayload, tailText } from './payload.ts';
 import { PresetResolver } from './presets.ts';
 import { crossCheck, type CrossCheck } from './proxyusage.ts';
-import { requestChanges, takeRequestSnapshot, type ChangeStats, type RequestSnapshot } from './record.ts';
+import { checkEndState, requestChanges, requestEndState, takeRequestSnapshot, type ChangeStats, type RequestEndState, type RequestSnapshot } from './record.ts';
+import { PromptMemory, acceptanceBlob, addSignal, newAcceptState, storedAcceptance } from './accept.ts';
+import { LEAD_CLASSES, RELEASE_LEVELS, applyRelease, releaseChange, routingHoldoutRate, routingMode, routingView, type RoutingView } from './routing.ts';
 import { BASH_NOT_FOUND, type Shell } from './shell.ts';
 import { checkAgentCall, isAgentTool, managedRole, parseScope, parseTag, scopeFileBody, startStep, stepOf } from './policy.ts';
 import { SessionQueue } from './queue.ts';
@@ -85,6 +87,8 @@ export interface StatusView {
   clients: ClientRow[];
   /** Spec 3.5 step changes: a miss raises a slot one step; stepping down after easy results waits for review scores. */
   stepAdjust: { up: 'on'; down: 'on' | 'off' };
+  /** Decision 138: auto-release mode, holdout share, and per lead class and level the two arms and what the rule says. */
+  routing: RoutingView;
 }
 
 export class Router {
@@ -100,6 +104,7 @@ export class Router {
   readonly #abort = new AbortController();
   readonly #inflight = new Set<Promise<unknown>>();        // verify runs (outside the queue)
   readonly #snapshots = new Map<string, Promise<RequestSnapshot | undefined>>();   // T7: request start states being taken
+  readonly #prompts = new PromptMemory();                   // decision 137: the last prompts of a session, in memory only
   readonly #tickets = new TicketStore();                    // decision 134: PreToolUse of a router tool -> its tools/call
 
   constructor(o: RouterOptions) {
@@ -223,6 +228,7 @@ export class Router {
     }
     if (cls.kind === 'level') return this.#routerLevel(ev, cls.level, latest, ctx);
     if ((cls.kind === 'resume' || cls.kind === 'continue') && latest) {
+      if (cls.kind === 'continue') this.#acceptOnPrompt(ev, prompt, 'continue', latest.id);   // decision 137
       this.ledger.reopenRequest(latest.id, this.#at());
       // An HITL answer continues silently; /router resume re-reads the ledger into the lead's context.
       return cls.kind === 'resume' ? { context: this.#summary(latest.id, 'resumed') } : NONE;
@@ -231,9 +237,12 @@ export class Router {
       this.ledger.setRequestStatus(latest.id, 'closed', this.#at());   // superseded by the new prompt
       this.#recordClose(latest.id, ev);
     }
+    this.#acceptOnPrompt(ev, prompt, 'new');   // decision 137: this prompt is in the window of the requests before it
     const req = this.#newRequest(ev, prompt);
     ctx.requestId = req.id;
-    return { context: this.#triageContext(req.triage, req.team, ev.cwd, req.leadModel) };
+    if (!ev.spooled) this.#prompts.remember(ev.sessionId, req.id, prompt, this.#now().getTime());
+    const notice = !ev.spooled && req.leadClass && routingMode(this.#config) === 'on' ? this.ledger.takeReleaseNotice(req.leadClass) : undefined;   // decision 138
+    return { context: this.#triageContext(req.triage, req.team, ev.cwd, req.leadModel), ...(notice ? { userMessage: notice } : {}) };
   }
 
   /** The brief for the lead; an uncertain triage also names the L2 team the lead would call (core). */
@@ -261,11 +270,17 @@ export class Router {
     const opened = this.ledger.tx(() => {
       const manual = forced ? undefined : this.ledger.getPendingLevel(ev.sessionId);
       const final = forced ? this.#forcedTriage(t, forced, presets) : manual ? this.#manualTriage(t, manual, presets) : t;
+      const id = `r-${randomUUID()}`;
+      // decision 138: a request the rules planned may be handled lead-direct on purpose (holdout, released level)
+      const plan = forced || manual || ev.spooled || when.closedAt
+        ? { triage: final, team: presets[final.level] }
+        : this.#routingPlan(id, final, presets, leadModelClass(leadModel));
       const req = this.ledger.createRequest({
-        id: `r-${randomUUID()}`, sessionId: ev.sessionId, promptId: str(ev.raw.prompt_id) ?? null,
+        id, sessionId: ev.sessionId, promptId: str(ev.raw.prompt_id) ?? null,
         createdAt: when.createdAt ?? (ev.spooled && ev.receivedAt ? ev.receivedAt : this.#at()),
         ...(when.closedAt ? { closedAt: when.closedAt } : {}),
-        triage: final, team: presets[final.level], presetSource: source, leadModel: leadModel ?? null, leadClass: leadModelClass(leadModel),
+        triage: plan.triage, team: plan.team, presetSource: source, leadModel: leadModel ?? null, leadClass: leadModelClass(leadModel),
+        ...('holdout' in plan && plan.holdout ? { holdout: plan.holdout } : {}),
         ...(forced ? { forcedFrom: t.level } : {}),
       });
       if (!manual) return req;
@@ -322,8 +337,11 @@ export class Router {
         readLeadUsage(transcript, span),
         this.#rereadAgents(requestId, transcript),
       ]);
+      // decision 137: the files this request changed, for the checks of its acceptance window
+      const endState = snap ? await requestEndState(snap).catch(() => null) : null;
       await this.#queue.run(ev.sessionId || '_', () => {
         for (const a of agents) this.#applyReread(a, requestId);
+        if (endState?.files.length && !this.ledger.getAcceptState(requestId)?.done) this.ledger.setEndState(requestId, endState);
         this.#writeRecord(requestId, changes, lead, prompts);
       });
     })());
@@ -388,6 +406,7 @@ export class Router {
     const flags = this.ledger.costFlags(requestId);
     const outcome = r.outcome ?? (subs.length ? 'delegated' : r.team.leadDirect ? 'direct' : 'no_delegation');
     const notifications = prompts.filter(p => p.notification).length;
+    const acceptance = this.#acceptAtClose(requestId, changes, subs.length);   // decision 137
     const record = {
       version: 1,
       triage: {
@@ -400,7 +419,9 @@ export class Router {
         forcedFrom: r.forcedFrom, replannedFrom: r.replannedFrom?.level ?? null,
         manualLevel: [r.triage, r.replannedFrom, r.overriddenTriage].find(t => t?.source === 'manual')?.level ?? null,
         leadModel: r.leadModel, leadClass: r.leadClass,
+        holdout: r.holdout,   // decision 138
       },
+      acceptance: acceptanceBlob(acceptance, ACCEPTANCE_RULE_VERSION),
       outcome,
       changes,
       time: { durationMs, activeMs: Math.max(0, durationMs - extras.awaitingMs), awaitingMs: extras.awaitingMs },
@@ -428,8 +449,9 @@ export class Router {
       requestId, sessionId: r.sessionId, createdAt: r.createdAt, closedAt, kind: record.triage.kind, level: record.triage.level, finalLevel: r.level,
       outcome, changedFiles: changes?.changedFiles ?? null, linesAdded: changes?.linesAdded ?? null, linesRemoved: changes?.linesRemoved ?? null,
       durationMs, activeMs: record.time.activeMs, subtaskUsd: record.costs.subtaskUsd, leadUsd: record.costs.leadUsd, totalUsd: record.costs.totalUsd,
-      record, prompt: extras.prompt,
+      record, prompt: extras.prompt, acceptance: storedAcceptance(acceptance), acceptSignals: acceptance.signals,
     });
+    this.#evaluateRelease(r.leadClass);   // decision 138
   }
 
   #manualTriage(base: TriageResult, level: Level, presets: Record<Level, TeamPreset>): TriageResult {
@@ -1082,6 +1104,7 @@ export class Router {
     this.#recordClient(ev);
     const latest = this.ledger.latestRequest(ev.sessionId);
     ctx.requestId = latest?.id ?? null;
+    if (ev.source === 'resume' && !ev.spooled) this.#acceptOnTurnEnd(ev.sessionId, false);   // decision 137
     if (!latest || (ev.source !== 'compact' && ev.source !== 'resume')) return NONE;
     if (latest.status === 'closed') return NONE;   // audit #13: nothing in progress to restore
     return { context: this.#summary(latest.id, ev.source === 'compact' ? 'after compaction' : 'resumed session') };
@@ -1092,6 +1115,7 @@ export class Router {
     const latest = this.ledger.latestRequest(ev.sessionId);
     ctx.requestId = latest?.id ?? null;
     this.#expireStale(ev.sessionId);
+    if (!ev.spooled) this.#acceptOnTurnEnd(ev.sessionId, true);   // decision 137
     if (!latest || latest.status === 'closed') return NONE;
     // Audit #13: a turn the lead spent on a task notification does not answer an open question to the user.
     if (latest.status === 'awaiting_user' && this.#turnStartedByNotification(ev.sessionId)) return NONE;
@@ -1634,6 +1658,155 @@ export class Router {
     return r.steppedDownTo;
   }
 
+  // ------------------------------------------------------------------ acceptance (spec 3.8, decision 137)
+  //
+  // After a request closes, the next two user prompts of the session are its window. At each of them, and at
+  // the Stop that follows, the request's files are looked at again (reverted, mostly deleted, committed); the
+  // prompt itself is compared with the request's prompt held in memory (the same request again) and, on the
+  // first one, read for a dissatisfaction phrase. What is stored: signals, two similarity numbers, a rule id.
+  // The verdict rule is core's (acceptance.ts); "accepted" means no objection was seen.
+
+  /** A user prompt arrived: it counts in the window of the session's closed requests. */
+  #acceptOnPrompt(ev: RouterEvent, prompt: string, kind: 'new' | 'continue', except?: string): void {
+    if (ev.spooled) return;
+    const now = this.#now().getTime();
+    const at = this.#at();
+    for (const w of this.ledger.acceptWindows(ev.sessionId)) {
+      if (w.status !== 'closed' || w.requestId === except) continue;
+      const state = w.state ?? newAcceptState();
+      if (state.done || state.applicable === false) continue;
+      if (state.promptsSeen >= ACCEPT_WINDOW_PROMPTS) {   // the window passed without a Stop closing it
+        state.done = true;
+        this.#saveAccept(ev.sessionId, w.requestId, state);
+        continue;
+      }
+      const turn = ++state.promptsSeen;
+      if (kind === 'new') {
+        const previous = this.#prompts.get(ev.sessionId, w.requestId, now);
+        const sim = previous === undefined ? undefined : promptSimilarity(previous, prompt);
+        state.similarity.push(sim ?? null);
+        if (previous === undefined && turn === 1) addSignal(state, { kind: 'unavailable', turn, at, value: 'previous prompt not in memory' });
+        if (sim && isReask(sim)) addSignal(state, { kind: 'reask', turn, at, value: Math.max(sim.jaccard, sim.containment) });
+      }
+      if (turn === 1) {
+        const rule = dissatisfactionRule(prompt);
+        if (rule) addSignal(state, { kind: 'dissatisfied', turn, at, value: rule });
+      }
+      this.#saveAccept(ev.sessionId, w.requestId, state);
+      this.#checkFiles(ev.sessionId, w.requestId, turn, false);
+    }
+  }
+
+  /** A turn ended (or the session was resumed): the files of the requests in their window are looked at again. */
+  #acceptOnTurnEnd(sessionId: string, closing: boolean): void {
+    for (const w of this.ledger.acceptWindows(sessionId)) {
+      if (w.status !== 'closed' || !w.state || w.state.done || w.state.applicable === false) continue;
+      this.#checkFiles(sessionId, w.requestId, w.state.promptsSeen, closing);
+    }
+  }
+
+  /** Reads the request's files again, after the hook answers; the result is written back through the session queue. */
+  #checkFiles(sessionId: string, requestId: string, turn: number, closing: boolean): void {
+    const es = this.ledger.getEndState<RequestEndState>(requestId);
+    if (!es) {
+      if (closing) this.#closeWindow(sessionId, requestId);
+      return;
+    }
+    this.#track((async () => {
+      const res = await checkEndState(es);
+      await this.#queue.run(sessionId || '_', () => {
+        const state = this.ledger.getAcceptState(requestId);
+        if (!state || state.done) return;
+        const at = this.#at();
+        if (!res.available) addSignal(state, { kind: 'unavailable', turn, at, value: res.why });
+        else {
+          if (res.signals.reverted) addSignal(state, { kind: 'reverted', turn, at, value: res.signals.revertedFiles });
+          if (res.signals.mostlyDeleted) addSignal(state, { kind: 'mostly_deleted', turn, at });
+          if (res.committed) addSignal(state, { kind: 'committed', turn, at });
+        }
+        if (storedAcceptance(state) === 'not_accepted' || (closing && state.promptsSeen >= ACCEPT_WINDOW_PROMPTS)) state.done = true;
+        this.#saveAccept(sessionId, requestId, state);
+      });
+    })());
+  }
+
+  #closeWindow(sessionId: string, requestId: string): void {
+    const state = this.ledger.getAcceptState(requestId);
+    if (!state || state.done || state.promptsSeen < ACCEPT_WINDOW_PROMPTS) return;
+    state.done = true;
+    this.#saveAccept(sessionId, requestId, state);
+  }
+
+  /** Stores what was seen; a record that exists already follows; a closed window drops the end state and the prompt. */
+  #saveAccept(sessionId: string, requestId: string, state: AcceptState): void {
+    this.ledger.setAcceptState(requestId, state);
+    if (state.done) {
+      this.ledger.setEndState(requestId, null);
+      this.#prompts.forget(sessionId, requestId);
+    }
+    if (state.applicable === undefined || !this.ledger.getRecord(requestId)) return;   // the record is written at close with this state
+    this.ledger.setRecordAcceptance(requestId, storedAcceptance(state), state.signals, acceptanceBlob(state, ACCEPTANCE_RULE_VERSION));
+    this.#evaluateRelease(this.ledger.getRequest(requestId)?.leadClass ?? null);
+  }
+
+  /** At the record write: whether the request is one to accept at all, and its acceptance so far. */
+  #acceptAtClose(requestId: string, changes: ChangeStats | null, subtasks: number): AcceptState {
+    const state = this.ledger.getAcceptState(requestId) ?? newAcceptState();
+    state.applicable = (changes?.changedFiles ?? 0) > 0 || subtasks > 0;
+    this.ledger.setAcceptState(requestId, state);
+    return state;
+  }
+
+  // ------------------------------------------------------------------ auto-release (spec 3.8, decision 138)
+  //
+  // The baseline is the user's own work: a share of the requests at a delegated level (config holdoutRate) is
+  // handled lead-direct on purpose. When the comparison (routing.ts, core release.ts) says a level costs
+  // clearly more delegated than direct, mode 'on' raises that lead class's start level and tells the user;
+  // the default mode 'observe' only shows it. A released level keeps a probe share delegated, to come back.
+
+  /** How a new request planned by the rules is staffed: as its level says, or lead-direct on purpose (holdout, released). */
+  #routingPlan(requestId: string, t: TriageResult, presets: Record<Level, TeamPreset>, leadClass: string): { triage: TriageResult; team: TeamPreset; holdout?: Holdout } {
+    const base = presets[t.level];
+    const mode = routingMode(this.#config);
+    if (mode === 'off' || base.leadDirect || !RELEASE_LEVELS.includes(t.level)) return { triage: t, team: base };
+    const auto = mode === 'on' ? this.ledger.getRelease(leadClass)?.autoDelegateFrom ?? null : null;
+    const released = !!auto && LEVEL_ORDER.indexOf(t.level) < LEVEL_ORDER.indexOf(auto);
+    const drawn = holdoutDraw(requestId, routingHoldoutRate(this.#config));
+    if (released ? drawn : !drawn) return { triage: t, team: base, ...(released ? { holdout: 'probe' as const } : {}) };
+    const team: TeamPreset = { ...base, leadDirect: true };
+    const why = released
+      ? `released (decision 138): ${t.level} requests of this lead are handled directly for now`
+      : 'holdout (decision 138): handled directly on purpose, to measure what delegation saves';
+    return { triage: withKind({ ...t, rationale: `${why}; ${t.rationale}` }, team), team, holdout: released ? 'released' : 'direct' };
+  }
+
+  /** After a record changed: in mode 'on', apply what the rule says for this lead class. */
+  #evaluateRelease(leadClass: string | null): void {
+    if (!leadClass || routingMode(this.#config) !== 'on' || !(LEAD_CLASSES as readonly string[]).includes(leadClass)) return;
+    try {
+      const change = releaseChange(this.ledger, this.#config, leadClass as LeadModelClass, this.#at());
+      if (!change) return;
+      applyRelease(this.ledger, this.#config, change, this.#at());
+      this.#log.info(change.kind === 'release' ? 'level released: handled lead-direct from now' : 'level re-enabled: delegated again', {
+        leadClass, level: change.level, ratio: change.decision.ratio, delegated: change.decision.need.delegated[0], direct: change.decision.need.direct[0],
+      });
+    } catch (e) {
+      this.#log.error('auto-release evaluation failed', { leadClass, error: errorText(e) });
+    }
+  }
+
+  /** What status, router_get_plan and the dashboard show about auto-release. */
+  routing(): RoutingView {
+    return routingView(this.ledger, this.#config, this.#at());
+  }
+
+  /** `agentic-router routing reset`: every released level is delegated again; the records stay. */
+  routingReset(): { cleared: number } {
+    const cleared = this.ledger.clearReleases();
+    this.#log.info('auto-release state cleared', { cleared });
+    return { cleared };
+  }
+
   // ------------------------------------------------------------------ summaries
 
   #summary(requestId: string, why: string): string {
@@ -1654,7 +1827,8 @@ export class Router {
     const r = sessionId ? this.ledger.latestRequest(sessionId) : this.ledger.latestRequestAny();
     const clients = this.ledger.recentClients(10);
     const stepAdjust = { up: 'on' as const, down: this.#stepDownOn() ? 'on' as const : 'off' as const };
-    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust };
+    const routing = this.routing();
+    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust, routing };
     const subs = this.ledger.listSubtasks(r.id);
     const slots = this.ledger.getSlots(r.id);
     const roles: RoleView[] = [];
@@ -1690,6 +1864,7 @@ export class Router {
       sessionCostUsd: round6(this.ledger.sessionCostUsd(r.sessionId)),
       clients,
       stepAdjust,
+      routing,
     };
   }
 }
@@ -1716,6 +1891,7 @@ export function outputRateEstimate(modelId: string, tokens: number): number | nu
 const MAX_COMPACT_SUBTASKS = 20;
 /** Audit #11: an allowed subtask whose subagent has not started after this long never will. */
 const STALE_PENDING_MS = 30_000;
+const LEVEL_ORDER: readonly Level[] = ['L0', 'L1', 'L2', 'L3'];
 /** Decision 127: this many rejects in a row on a slot raise it, as two verify failures do. */
 const REJECTS_FOR_RAISE = 2;
 /** router_get_plan lists this many of the latest subtasks. */

@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileFingerprint, filterOverrides, git, headRef, repoRoot } from './git.ts';
 import { normalizeEol, sameContent } from './tree.ts';
+import { ABSENT, MAX_END_STATE_FILES, fileSignals, type FileEnd, type FileNow, type FileSignals } from '@agentic-router/core';
 
 export const MAX_SNAPSHOT_FILES = 5000;
 const MAX_COUNT_BYTES = 8 * 1024 * 1024;
@@ -114,4 +115,68 @@ export async function requestChanges(snap: RequestSnapshot): Promise<ChangeStats
   out.changedDirs = dirs.size;
   if (truncated || snap.truncated) out.truncated = true;
   return out;
+}
+
+// ------------------------------------------------------------------ acceptance (decision 137)
+
+/**
+ * The files a request changed, kept until its acceptance window closes: per file the content before and
+ * after and the lines the request added. `start` is a fingerprint, ABSENT for a file the request created,
+ * or CLEAN for a file that was as in the start commit. No file content is kept.
+ */
+export interface EndFile extends FileEnd { addedBefore: number }
+export interface RequestEndState { root: string; head?: string; files: EndFile[]; truncated?: boolean }
+export const CLEAN = 'clean';
+
+export async function requestEndState(snap: RequestSnapshot): Promise<RequestEndState> {
+  const { stats: end, status, truncated } = await diffStats(snap.root, snap.head);
+  const files: EndFile[] = [];
+  for (const f of [...new Set([...Object.keys(snap.files), ...Object.keys(end)])].sort()) {
+    const s = snap.files[f];
+    const now = fileFingerprint(snap.root, f);
+    if (s ? sameContent(s.fp, now) : !(f in end)) continue;        // unchanged during the request
+    const addedBefore = s?.added ?? 0;
+    const start = s ? s.fp : status[f] === 'A' ? ABSENT : CLEAN;
+    files.push({ path: f, start, end: now, added: Math.max(0, (end[f]?.added ?? 0) - addedBefore), addedBefore });
+  }
+  const cut = files.length > MAX_END_STATE_FILES;
+  return {
+    root: snap.root, ...(snap.head ? { head: snap.head } : {}), files: cut ? files.slice(0, MAX_END_STATE_FILES) : files,
+    ...(cut || truncated || snap.truncated ? { truncated: true } : {}),
+  };
+}
+
+export type EndStateCheck =
+  | { available: false; why: 'no_start_commit' | 'not_a_work_tree' | 'other_branch' | 'git_failed' }
+  | { available: true; signals: FileSignals; committed: boolean };
+
+/**
+ * Looks at a request's files again (decision 137): back at their start state, mostly deleted, or committed
+ * as the request left them. Not available when the work tree is on a history that does not contain the
+ * request's start commit (another branch, a reset): the files then say nothing about this request.
+ */
+export async function checkEndState(es: RequestEndState): Promise<EndStateCheck> {
+  if (!es.head) return { available: false, why: 'no_start_commit' };
+  if (!fs.existsSync(es.root) || !(await repoRoot(es.root).catch(() => undefined))) return { available: false, why: 'not_a_work_tree' };
+  try {
+    await git(es.root, ['merge-base', '--is-ancestor', es.head, 'HEAD']);
+  } catch {
+    return { available: false, why: 'other_branch' };
+  }
+  try {
+    const { stats } = await diffStats(es.root, es.head);
+    const headNow = await headRef(es.root);
+    const dirty = headNow && headNow !== es.head ? new Set(Object.keys((await diffStats(es.root, headNow)).stats)) : undefined;
+    const now: Record<string, FileNow> = {};
+    for (const f of es.files) {
+      const fp = fileFingerprint(es.root, f.path);
+      const atStart = f.start === CLEAN ? !(f.path in stats) : f.start === ABSENT ? fp === ABSENT : sameContent(f.start, fp);
+      const atEnd = f.end === ABSENT ? fp === ABSENT : sameContent(f.end, fp);
+      now[f.path] = { fp: atStart ? f.start : atEnd ? f.end : fp, added: Math.max(0, (stats[f.path]?.added ?? 0) - f.addedBefore) };
+    }
+    const signals = fileSignals(es.files, now);
+    return { available: true, signals, committed: !!dirty && signals.untouched && es.files.every(f => !dirty.has(f.path)) };
+  } catch {
+    return { available: false, why: 'git_failed' };
+  }
 }

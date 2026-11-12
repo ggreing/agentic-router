@@ -29,6 +29,8 @@ async function open(id: string): Promise<void> {
   try { detail.value = await api.detail(id); }
   catch (e) { detailError.value = e instanceof ApiError ? e : new ApiError('daemon_off'); }
 }
+const recAcceptance = (d: RequestDetail | null): string | null => (d?.record?.acceptance as { verdict?: string } | undefined)?.verdict ?? null;
+const recHoldout = (d: RequestDetail | null): string | null => (d?.record?.plan as { holdout?: string } | undefined)?.holdout ?? null;
 
 onMounted(() => void load(true));
 </script>
@@ -55,6 +57,9 @@ onMounted(() => void load(true));
             <td>
               <span :class="['badge', r.success ? 'ok' : 'bad']">{{ r.success ? 'ok' : 'failed' }}</span>
               <span class="muted"> {{ r.outcome }}</span>
+              <span v-if="r.acceptance === 'not_accepted'" class="badge bad" title="user acceptance">not accepted</span>
+              <span v-else-if="r.acceptance === 'unobserved'" class="badge" title="user acceptance">unobserved</span>
+              <span v-if="r.holdout" class="badge warn" :title="'routing arm (decision 138)'">{{ r.holdout }}</span>
             </td>
             <td>{{ usd(r.leadUsd) }} / {{ usd(r.subtaskUsd) }}</td>
             <td>{{ usd(r.totalUsd) }}<span v-if="r.estimated" class="badge warn" title="contains an estimate">est</span><span v-if="r.unknown" class="badge warn" title="some cost unknown">?</span><span v-if="r.budgetExceeded" class="badge bad">over</span></td>
@@ -77,7 +82,7 @@ onMounted(() => void load(true));
       </div>
       <p v-if="detailError" class="muted">Could not load detail: {{ detailError.kind }}</p>
       <template v-else-if="detail">
-        <p class="muted" style="margin: 6px 0;"><code class="mono">{{ detail.requestId }}</code> · {{ detail.signals.length }} signals · prompt: {{ detail.prompt ? 'recorded' : 'not recorded' }}</p>
+        <p class="muted" style="margin: 6px 0;"><code class="mono">{{ detail.requestId }}</code> · {{ detail.signals.length }} signals · prompt: {{ detail.prompt ? 'recorded' : 'not recorded' }}<span v-if="recAcceptance(detail)"> · acceptance: {{ recAcceptance(detail) }}</span><span v-if="recHoldout(detail)"> · holdout: {{ recHoldout(detail) }}</span></p>
         <table v-if="detail.signals.length">
           <thead><tr><th>subtask</th><th>attempt</th><th>check</th><th>ok</th><th>detail</th></tr></thead>
           <tbody>

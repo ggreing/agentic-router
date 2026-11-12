@@ -60,10 +60,23 @@ test('stop asks the children in reverse order (the proxy before the daemon), and
   assert.deepEqual(Object.values(sup.states()).map(s => s.state), ['stopped', 'stopped', 'stopped']);
 });
 
+/** An OS-assigned free port: test files run in parallel, and two temp homes must not pick the same one. */
+async function ownPort(): Promise<void> {
+  const { readConfig, writeConfig } = await import('../src/setup.ts');
+  const net = await import('node:net');
+  const port = await new Promise<number>((resolve, reject) => {
+    const s = net.createServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => resolve(p)); });
+  });
+  writeConfig({ ...readConfig()!, daemonPort: port });
+}
+
 test('start and stop run the real daemon under the supervisor', async () => {
   const { ensureLocalState, readConfig } = await import('../src/setup.ts');
   const { start, status, stop, runningSupervisor } = await import('../src/daemonctl.ts');
   await ensureLocalState();
+  await ownPort();
   const cfg = readConfig()!;
   try {
     const started = await start();

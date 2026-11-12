@@ -18,7 +18,7 @@ const AT = '2026-11-10T00:00:00.000Z';
 test('ledger opens in WAL mode with the six Phase 1 tables plus pending_levels and clients', () => withLedger(l => {
   assert.equal(l.journalMode(), 'wal');
   const tables = (l.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>).map(r => r.name);
-  assert.deepEqual(tables, ['agents', 'clients', 'confirmations', 'costs', 'events', 'pending_levels', 'proxy_rows', 'request_records', 'requests', 'sessions', 'signals', 'slots', 'subtasks']);
+  assert.deepEqual(tables, ['agents', 'clients', 'confirmations', 'costs', 'events', 'pending_levels', 'proxy_rows', 'release_state', 'request_records', 'requests', 'session_limits', 'sessions', 'signals', 'slots', 'subtasks']);
 }));
 
 test('requests and subtasks round-trip in RequestRecord / SubtaskRecord shape', () => withLedger(l => {

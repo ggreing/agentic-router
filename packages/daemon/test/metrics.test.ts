@@ -22,6 +22,8 @@ interface SeedOpts {
   prompt?: string | null;
   rationale?: string;
   leadClass?: string;
+  holdout?: string;
+  acceptance?: string;
 }
 
 function seed(l: Ledger, o: SeedOpts): void {
@@ -32,7 +34,7 @@ function seed(l: Ledger, o: SeedOpts): void {
   const record = {
     version: 1,
     triage: { kind: 'team', level, confidence: 0.7, source: 'rule', rule: o.rule ?? 'r.files', rationale: o.rationale ?? 'ok' },
-    plan: { level, preset: level, leadDirect: false, replannedFrom: o.replannedFrom ?? null, manualLevel: null, leadClass: o.leadClass ?? 'opus', forcedFrom: null },
+    plan: { level, preset: level, leadDirect: false, replannedFrom: o.replannedFrom ?? null, manualLevel: null, leadClass: o.leadClass ?? 'opus', forcedFrom: null, holdout: o.holdout ?? null },
     outcome: o.outcome ?? 'delegated',
     subtasks: subs,
     verifyFailures: 0,
@@ -44,6 +46,7 @@ function seed(l: Ledger, o: SeedOpts): void {
     changedFiles: 1, linesAdded: 1, linesRemoved: 0, durationMs: 1000, activeMs: 900,
     subtaskUsd: o.subtaskUsd ?? 0, leadUsd: o.leadUsd ?? null, totalUsd: o.totalUsd ?? 0, record, prompt: o.prompt ?? null,
   });
+  if (o.acceptance) l.db.prepare('UPDATE request_records SET acceptance = ? WHERE request_id = ?').run(o.acceptance, o.id);
 }
 
 const iso = (d: number) => new Date(Date.UTC(2026, 10, d, 10, 0, 0)).toISOString();
@@ -61,7 +64,7 @@ test('metricsSummary: counts, success proxy, rates, cost totals, by-level', () =
   assert.equal(m.teamFitRate, 2 / 3);          // b stepped up -> not team-fit
   assert.equal(m.cost.totalUsd, 6);
   assert.equal(m.cost.leadUsd, 4.3);
-  assert.equal(m.costPerAcceptedTaskUsd, 1.5); // (1 + 2) / 2
+  assert.equal(m.costPerAcceptedTaskUsd, 3);   // decision 137: (1 + 2 + 3) / 2, the failed request's cost is carried by the accepted ones
   assert.equal(m.flags.estimated, 1);
   assert.equal(m.baseline, null);
   const l2 = m.byLevel.find(x => x.level === 'L2')!;
@@ -112,6 +115,21 @@ test('metricsRequests: level filter and row shape (success proxy, flags)', () =>
   assert.equal(only3.rows[0]!.success, true);
   assert.equal(only3.rows[0]!.budgetExceeded, true);
   assert.equal(metricsRequests(l, { level: 'L1' }).rows[0]!.success, false);
+  l.close();
+});
+
+test('metricsRequests exposes holdout + acceptance; not_accepted fails even when verify passed (decisions 137/138)', () => {
+  const l = new Ledger(':memory:');
+  seed(l, { id: 'h1', closedAt: iso(10), subtasks: [{ status: 'passed' }], holdout: 'direct', acceptance: 'accepted' });
+  seed(l, { id: 'h2', closedAt: iso(11), subtasks: [{ status: 'passed' }], acceptance: 'not_accepted' });
+  const rows = metricsRequests(l).rows;
+  const h1 = rows.find(r => r.requestId === 'h1')!;
+  assert.equal(h1.holdout, 'direct');
+  assert.equal(h1.acceptance, 'accepted');
+  assert.equal(h1.success, true);
+  const h2 = rows.find(r => r.requestId === 'h2')!;
+  assert.equal(h2.acceptance, 'not_accepted');
+  assert.equal(h2.success, false, 'verify passed but the user rejected it');
   l.close();
 });
 

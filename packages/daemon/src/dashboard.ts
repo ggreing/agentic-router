@@ -1,11 +1,11 @@
 // Dashboard + metrics HTTP surface (decision 132), prepared as a module so it can be unit-tested with
-// its own node:http server and hooked into server.ts in a few lines once that file is free. server.ts
+// its own node:http server and hooked into server.ts in a few lines. server.ts
 // calls `dashboard.handle(req, res)` BEFORE its own routing: it returns true when it has taken ownership
 // of the request (any /dashboard/* or /router/v1/metrics/* path) and written the response, false otherwise.
 //
 // Trust model (distinct from the hook API, which refuses browsers): the static SPA shell is served
 // unauthenticated (it carries no data); the metrics API requires a session cookie obtained through a
-// one-time code. `agentic-router dashboard` (A's CLI) calls POST /dashboard/register-code with the local
+// one-time code. The CLI's `agentic-router dashboard` calls POST /dashboard/register-code with the local
 // Bearer token to mint a code, then opens http://127.0.0.1:<port>/dashboard#code=<code>; the page reads
 // the fragment, POSTs it once to /dashboard/auth, and the daemon sets an HttpOnly SameSite=Strict cookie.
 // Every route also checks Host (loopback only -> DNS-rebinding defence), Origin and Sec-Fetch-Site
@@ -16,6 +16,7 @@ import path from 'node:path';
 import type http from 'node:http';
 import type { Ledger } from './ledger.ts';
 import { metricsSummary, metricsRequests, metricsRequestDetail, metricsTriageReport, type RequestsQuery } from './metrics.ts';
+import { latestLimits } from './limits.ts';
 import type { Level } from '@agentic-router/core';
 
 export interface DashboardDeps {
@@ -156,7 +157,7 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     const window = { since: q.get('since') ?? undefined, until: q.get('until') ?? undefined };
     const sub = url.pathname.slice('/router/v1/metrics'.length).replace(/^\//, '');
     try {
-      if (sub === 'summary') return sendJson(res, 200, metricsSummary(d.ledger, window));
+      if (sub === 'summary') return sendJson(res, 200, { ...metricsSummary(d.ledger, window), limits: latestLimits(d.ledger.db) });
       if (sub === 'requests') {
         const before = q.get('before');
         const bits = before ? before.split(',') : null;
@@ -174,7 +175,11 @@ export function createDashboard(d: DashboardDeps): Dashboard {
         return detail ? sendJson(res, 200, detail) : sendJson(res, 404, { error: 'no such request' });
       }
       if (sub === 'triage-report') return sendJson(res, 200, metricsTriageReport(d.ledger, window));
-      if (sub === 'now') return sendJson(res, 200, d.statusView ? d.statusView(q.get('session_id') ?? undefined) : { request: null, roles: [] });
+      if (sub === 'now') {
+        const sid = q.get('session_id') ?? undefined;
+        const view = d.statusView ? d.statusView(sid) : { request: null, roles: [] };
+        return sendJson(res, 200, { ...(view as Record<string, unknown>), limits: latestLimits(d.ledger.db, sid) });
+      }
     } catch {
       return sendJson(res, 500, { error: 'metrics query failed' });
     }
@@ -216,7 +221,11 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     if (!secFetchOk(req)) { sendJson(res, 403, { error: 'cross-site requests are not allowed' }); return true; }
 
     if (p === '/dashboard/register-code') { registerCode(req, res); return true; }
-    if (p === '/dashboard/auth') { void auth(req, res); return true; }
+    if (p === '/dashboard/auth') {
+      // A client that aborts mid-body rejects the body read; handle it so there is no unhandled rejection.
+      auth(req, res).catch(() => { try { if (!res.headersSent && res.writable) sendJson(res, 400, { error: 'bad request' }); } catch { /* socket gone */ } });
+      return true;
+    }
     if (isMetrics) { metrics(req, res, url); return true; }
     serveStatic(req, res, p);
     return true;

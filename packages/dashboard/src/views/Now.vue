@@ -7,6 +7,7 @@ import StateBanner from '../components/StateBanner.vue';
 
 const res = useResource(() => api.now());
 onMounted(res.run);
+const limitPct = (n: number): string => `${n.toFixed(0)}%`;
 </script>
 
 <template>
@@ -25,6 +26,11 @@ onMounted(res.run);
         <span>cost {{ usd(res.data.value.costUsd) }} / budget {{ usd(res.data.value.request.budgetUsd) }}</span>
         <span v-if="res.data.value.costEstimated" class="badge warn">estimated</span>
         <span v-if="res.data.value.costUnknown" class="badge warn">partly unknown</span>
+      </div>
+      <div class="row" style="margin-top: 8px;" v-if="res.data.value.limits && (res.data.value.limits.fiveHour || res.data.value.limits.sevenDay)">
+        <span class="muted">Subscription:</span>
+        <span v-if="res.data.value.limits.fiveHour" class="badge">5h {{ limitPct(res.data.value.limits.fiveHour.usedPercentage) }}</span>
+        <span v-if="res.data.value.limits.sevenDay" class="badge">7d {{ limitPct(res.data.value.limits.sevenDay.usedPercentage) }}</span>
       </div>
     </div>
     <div class="panel muted" v-else>No active request in this session.

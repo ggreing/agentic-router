@@ -20,6 +20,8 @@ function rows(): TimelineRow[] {
       totalUsd: Number((0.09 + i * 0.0025).toFixed(3)),
       success: i % 6 !== 0, subtasks: level === 'L0' ? 0 : 1 + (i % 3), verifyFailures: i % 6 === 0 ? 2 : 0,
       estimated: i % 4 === 0, unknown: i % 9 === 0, budgetExceeded: i % 11 === 0,
+      acceptance: i % 6 === 0 ? 'not_accepted' : i % 3 === 0 ? 'unobserved' : 'accepted',
+      holdout: i % 4 === 0 ? 'direct' : null,
     });
   }
   return out;
@@ -39,6 +41,15 @@ export function mockSummary(): MetricsSummary {
     costPerAcceptedTaskUsd: 0.14,
     cost: { totalUsd: Number(ALL.reduce((a, r) => a + r.totalUsd, 0).toFixed(3)), leadUsd: Number(ALL.reduce((a, r) => a + (r.leadUsd ?? 0), 0).toFixed(3)), subtaskUsd: Number(ALL.reduce((a, r) => a + r.subtaskUsd, 0).toFixed(3)) },
     cacheHitRate: 0.62, flags: { estimated: 6, unknown: 3, budgetExceeded: 2 }, byLevel, baseline: null,
+    acceptance: {
+      accepted: ALL.filter(r => r.acceptance === 'accepted').length,
+      notAccepted: ALL.filter(r => r.acceptance === 'not_accepted').length,
+      unobserved: ALL.filter(r => r.acceptance === 'unobserved').length,
+      notApplicable: 0, unknown: 0,
+      unobservedShare: ALL.filter(r => r.acceptance === 'unobserved').length / ALL.length,
+      signals: { reask: 2, reverted: 1, committed: 7 },
+    },
+    limits: { fiveHour: { usedPercentage: 23.5, resetsAt: 1738425600 }, sevenDay: { usedPercentage: 41.2, resetsAt: 1738857600 }, spendLimit: null, updatedAt: new Date().toISOString() },
   };
 }
 
@@ -96,5 +107,34 @@ export function mockNow(): NowView {
       { role: 'reviewer', slot: 0, step: 's3', model: 'sonnet', effort: 'medium', status: 'idle' },
     ],
     costUsd: 0.39, costEstimated: true, costUnknown: false, sessionCostUsd: 1.27,
+    limits: { fiveHour: { usedPercentage: 23.5, resetsAt: 1738425600 }, sevenDay: { usedPercentage: 41.2, resetsAt: 1738857600 }, spendLimit: null, updatedAt: new Date().toISOString() },
+    routing: {
+      mode: 'observe', holdoutRate: 0.1,
+      rule: { majorityMin: 30, minorityMin: 10, releaseAbove: 1.5, reenableAtOrBelow: 1, windowDays: 60 },
+      classes: [
+        {
+          leadClass: 'opus', configuredFrom: 'L1', autoFrom: null, effectiveFrom: 'L1',
+          levels: [
+            { level: 'L1', delegatedByConfig: true, released: false, candidate: true,
+              delegated: { n: 32, accepted: 28, costUsd: 4.2, costPerAcceptedUsd: 0.15 },
+              direct: { n: 11, accepted: 9, costUsd: 2.7, costPerAcceptedUsd: 0.30 },
+              decision: { action: 'release', reason: 'delegated_not_dearer', ratio: 0.5, delegatedCost: 0.15, directCost: 0.30, need: { delegated: [32, 30], direct: [11, 10] } } },
+            { level: 'L2', delegatedByConfig: true, released: false, candidate: false,
+              delegated: { n: 8, accepted: 7, costUsd: 1.1, costPerAcceptedUsd: 0.16 },
+              direct: { n: 2, accepted: 2, costUsd: 0.6, costPerAcceptedUsd: 0.30 },
+              decision: { action: 'hold', reason: 'not_enough_data', ratio: null, delegatedCost: 0.16, directCost: 0.30, need: { delegated: [8, 30], direct: [2, 10] } } },
+          ],
+        },
+        {
+          leadClass: 'haiku', configuredFrom: 'L2', autoFrom: null, effectiveFrom: 'L2',
+          levels: [
+            { level: 'L1', delegatedByConfig: false, released: false, candidate: false,
+              delegated: { n: 0, accepted: 0, costUsd: 0, costPerAcceptedUsd: null },
+              direct: { n: 0, accepted: 0, costUsd: 0, costPerAcceptedUsd: null },
+              decision: { action: 'hold', reason: 'not_enough_data', ratio: null, delegatedCost: null, directCost: null, need: { delegated: [0, 30], direct: [0, 10] } } },
+          ],
+        },
+      ],
+    },
   };
 }

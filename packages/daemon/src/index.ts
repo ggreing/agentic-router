@@ -81,7 +81,10 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     const replay = await replaySpool(home.spoolDir, adapter, router, logger, opts.now);
     let close: () => Promise<void> = async () => {};
     const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
-    const srv = createHttpServer({ router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, onShutdown: () => void close().catch(() => {}) });
+    const srv = createHttpServer({
+      router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, ...(opts.now ? { now: opts.now } : {}),
+      onShutdown: () => void close().catch(() => {}),
+    });
     server = srv;
     await new Promise<void>((resolve, reject) => {
       srv.once('error', reject);

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Ledger } from '../src/ledger.ts';
 import { createDashboard } from '../src/dashboard.ts';
+import { applyLimitsSchema, recordLimits } from '../src/limits.ts';
 
 const TOKEN = 'dash-token-0123456789abcdef';
 
@@ -44,6 +45,8 @@ function rq(port: number, method: string, pathname: string, opts: { headers?: Re
 async function withServer(fn: (ctx: { port: number; dash: ReturnType<typeof createDashboard>; ledger: Ledger }) => Promise<void>): Promise<void> {
   const ledger = new Ledger(':memory:');
   seed(ledger);
+  applyLimitsSchema(ledger.db);   // A folds this into the ledger migration; here we create it directly
+  recordLimits(ledger.db, { sessionId: 's', rateLimits: { five_hour: { used_percentage: 23.5, resets_at: 1738425600 }, seven_day: { used_percentage: 41.2, resets_at: 1738857600 } }, at: '2026-11-12T10:00:00.000Z' });
   const distDir = tmpDist();
   let addr: () => number = () => 0;
   const dash = createDashboard({ ledger, token: TOKEN, distDir, port: () => addr(), statusView: () => ({ request: { id: 'req-1', level: 'L2' }, roles: [], costUsd: 0.11, costEstimated: false, costUnknown: false, sessionCostUsd: 0.11 }) });
@@ -100,11 +103,11 @@ test('every metrics sub-endpoint responds with a session cookie', async () => {
     const cookie = String(auth.headers['set-cookie']).split(';')[0]!;
     const h = { ...host(port), cookie };
     for (const [p, check] of [
-      ['/router/v1/metrics/summary', (b: Record<string, unknown>) => assert.equal(b.total, 1)],
+      ['/router/v1/metrics/summary', (b: Record<string, unknown>) => { assert.equal(b.total, 1); assert.equal((b.limits as { fiveHour: { usedPercentage: number } }).fiveHour.usedPercentage, 23.5); }],
       ['/router/v1/metrics/requests?limit=5', (b: Record<string, unknown>) => assert.equal((b.rows as unknown[]).length, 1)],
       ['/router/v1/metrics/requests/req-1', (b: Record<string, unknown>) => assert.equal(b.requestId, 'req-1')],
       ['/router/v1/metrics/triage-report', (b: Record<string, unknown>) => assert.ok(b.overall)],
-      ['/router/v1/metrics/now', (b: Record<string, unknown>) => assert.ok(b.request)],
+      ['/router/v1/metrics/now', (b: Record<string, unknown>) => { assert.ok(b.request); assert.ok((b.limits as { sevenDay: unknown }).sevenDay); }],
     ] as Array<[string, (b: Record<string, unknown>) => void]>) {
       const r = await rq(port, 'GET', p, { headers: h });
       assert.equal(r.status, 200, p);

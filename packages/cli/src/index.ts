@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// agentic-router <init|start|stop|status|doctor|supervise|mode|token|key|proxy>
+// agentic-router <init|start|stop|status|doctor|dashboard|routing|supervise|mode|token|key|proxy>
 import fs from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths, type Level } from '@agentic-router/core';
-import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planProject, planStatusLine, type PlannedChange } from './setup.ts';
+import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planProject, planStatusLine, readConfig, type PlannedChange } from './setup.ts';
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
 import { planApiSettings } from './apimode.ts';
 import { allowUpstream, configureApi, keySet, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
+import { dashboardCommand } from './dashboard.ts';
+import { autoReleaseSummary, configuredAutoRelease, routingReset } from './routing.ts';
 import { runSupervisor } from './supervise.ts';
 
 export { doctor, ladderBreakers, versionAtLeast } from './doctor.ts';
@@ -72,6 +74,9 @@ async function init(f: Record<string, string | boolean>) {
   const config = api ? await configureApi(local.config, api) : local.config;
   console.log(`local state ready: daemon port ${config.daemonPort}, token ${token}, plugin ${pluginDir}`);
   console.log(`per-request budgets (provisional): ${Object.entries(config.budgetsUsd).map(([k, v]) => `${k} $${v}`).join(', ')}`);
+  // decision 138: the holdout changes how some requests are handled, so init says so
+  const ar = configuredAutoRelease(config);
+  console.log(`auto-release: ${autoReleaseSummary(ar.mode, ar.rate)}`);
   const changes: PlannedChange[] = [];
   // A settings file we cannot parse skips only that step (review #12); nothing is overwritten.
   const step = (name: string, plan: () => PlannedChange[]) => {
@@ -105,6 +110,14 @@ async function apiCommand(cmd: string, args: string[], f: Record<string, string 
   return 2;
 }
 
+async function routingResetCommand(): Promise<number> {
+  const cfg = readConfig();
+  let token = '';
+  try { token = fs.readFileSync(paths.token(), 'utf8').trim(); } catch { /* below */ }
+  if (!cfg || !token) { console.log('Not set up yet: run `agentic-router init` first.'); return 2; }
+  return routingReset({ port: cfg.daemonPort, token });
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 const f = flags(rest);
 const positional = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && rest[i - 1]!.startsWith('--') && f[rest[i - 1]!.slice(2)] === a));
@@ -121,6 +134,8 @@ if (isMain) {
     for (const c of checks) console.log(`${c.ok ? 'ok  ' : c.blocking ? 'FAIL' : 'warn'} ${c.name.padEnd(36)} ${c.detail}`);
     if (checks.some(c => !c.ok && c.blocking)) process.exitCode = 1;
   } else if (cmd === 'supervise') await runSupervisor();
+  else if (cmd === 'dashboard') process.exitCode = await dashboardCommand(f);
+  else if (cmd === 'routing' && positional[0] === 'reset') process.exitCode = await routingResetCommand();
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|mode direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
+  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|mode direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
 }

@@ -8,4 +8,6 @@ export * from './pricing.ts';
 export * from './roles.ts';
 export * from './triage-judge.ts';
 export * from './tools.ts';
+export * from './acceptance.ts';
+export * from './release.ts';
 export type * from './proxy-wire.ts';

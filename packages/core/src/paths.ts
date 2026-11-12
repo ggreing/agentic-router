@@ -58,6 +58,8 @@ export interface RouterConfig {
   forceLevel?: Level;        // benchmarks / debugging only (decision 107): plan every new request at this level
   recordPrompts?: boolean;   // decision 109: store redacted prompt text in request records (opt-in; default false)
   stepDown?: 'on' | 'off';   // decision 135: two easy passes in a row move a slot one step down (default on)
+  autoRelease?: 'on' | 'observe' | 'off';   // decision 138: default observe (holdout runs and the comparison is shown; nothing switches)
+  holdoutRate?: number;      // decision 138: share of delegated-level requests handled lead-direct as the baseline, 0 to 0.2 (default 0.1)
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com

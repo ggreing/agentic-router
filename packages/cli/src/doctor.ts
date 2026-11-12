@@ -9,6 +9,8 @@ import { HINT_HEADERS_ENV, isRouterHelper, proxyBaseUrl } from './apimode.ts';
 import { SettingsParseError, defaultClaudeSettings, readConfig, readJsonFile, type CliConfig } from './setup.ts';
 import { health, localRequest } from './daemonctl.ts';
 import { proxyHealth, readSuperviseStatus, type SuperviseStatus } from './supervise.ts';
+import type { StatusView } from '@agentic-router/daemon';
+import { autoReleaseSummary, configuredAutoRelease, routingChecks } from './routing.ts';
 
 export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
 
@@ -100,15 +102,21 @@ export function compareHookClient(c: HookClient, home: string, port: number): Ch
     detail: problems.join('; ') || `last session ${c.seenAt ?? '?'}: node ${c.nodeVersion ?? '?'}, same home and port` };
 }
 
-async function hookClientCheck(port: number): Promise<Check | null> {
+type DaemonStatus = { clients?: HookClient[]; routing?: StatusView['routing'] };
+
+async function daemonStatus(port: number): Promise<DaemonStatus | null> {
   try {
     const token = fs.readFileSync(paths.token(), 'utf8').trim();
     const r = await localRequest(port, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
     if (!r || r.status !== 200) return null;
-    const clients = (JSON.parse(r.body) as { clients?: HookClient[] }).clients ?? [];
-    if (!clients.length) return { name: 'hooks seen from Claude Code', ok: true, blocking: false, detail: 'no Claude Code session has reported yet (start one with the plugin loaded)' };
-    return compareHookClient(clients[0]!, routerHome(), port);
+    return JSON.parse(r.body) as DaemonStatus;
   } catch { return null; }
+}
+
+function hookClientCheck(st: DaemonStatus, port: number): Check {
+  const clients = st.clients ?? [];
+  if (!clients.length) return { name: 'hooks seen from Claude Code', ok: true, blocking: false, detail: 'no Claude Code session has reported yet (start one with the plugin loaded)' };
+  return compareHookClient(clients[0]!, routerHome(), port);
 }
 
 /** Hint headers (x-claude-code-prompt-id, request-class) reach a custom base URL from 2.1.273 (decision 130). */
@@ -198,7 +206,11 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   if (cfg) {
     const h = await health(cfg.daemonPort);
     checks.push({ name: 'daemon', ok: !!h, blocking: false, detail: h ? `running (${h.version ?? '?'})` : 'not running: Claude Code works, but without routing' });
-    if (h) { const c = await hookClientCheck(cfg.daemonPort); if (c) checks.push(c); }
+    const st = h ? await daemonStatus(cfg.daemonPort) : null;
+    if (st) checks.push(hookClientCheck(st, cfg.daemonPort));
+    // decision 138: what auto-release does now (from the daemon), or what the config file will make it do
+    if (st?.routing) checks.push(...routingChecks(st.routing));
+    else { const a = configuredAutoRelease(cfg); checks.push({ name: 'auto-release (config)', ok: true, blocking: false, detail: autoReleaseSummary(a.mode, a.rate) }); }
   }
   if (cfg?.apiMode) {
     let token = '';

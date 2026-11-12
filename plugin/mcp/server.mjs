@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agentic-router MCP server: a dependency-free stdio JSON-RPC relay between Claude Code and the local
-// daemon (decision 127, C's MCP note section 3.2). Same single-file, no-dependency style as relay.mjs.
+// daemon (decision 127). Same single-file, no-dependency style as relay.mjs.
 //
 // Framing: one JSON-RPC 2.0 message per line on stdin/stdout, UTF-8, '\n' only. Nothing but JSON lines
 // goes to stdout; logs go to stderr. Methods: initialize, notifications/initialized (no reply), ping,

@@ -1,5 +1,6 @@
 // config.json and token, both written by `agentic-router init` (CLI).
 import fs from 'node:fs';
+import { MAX_HOLDOUT_RATE, holdoutRate } from '@agentic-router/core';
 import type { Level, RouterConfig, TeamPreset } from '@agentic-router/core';
 
 /** config.json as read: every field may be missing (tests and fresh homes pass the port explicitly). */
@@ -50,6 +51,13 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
   const budgets = parseBudgets(o.budgetsUsd, warnings);
   if (budgets) out.budgetsUsd = budgets;
   if (o.recordPrompts === true) out.recordPrompts = true;
+  // Decision 138: auto-release mode (default observe) and the holdout share (default 0.1, at most 0.2)
+  if (o.autoRelease === 'on' || o.autoRelease === 'observe' || o.autoRelease === 'off') out.autoRelease = o.autoRelease;
+  else if (o.autoRelease !== undefined) warnings.push('config.autoRelease ignored: not "on", "observe" or "off"');
+  if (o.holdoutRate !== undefined && !(typeof o.holdoutRate === 'number' && o.holdoutRate >= 0 && o.holdoutRate <= MAX_HOLDOUT_RATE)) {
+    warnings.push(`config.holdoutRate ${JSON.stringify(o.holdoutRate)} is not a number from 0 to ${MAX_HOLDOUT_RATE}: the nearest allowed value is used`);
+  }
+  out.holdoutRate = holdoutRate(o.holdoutRate);
   // Decision 130: in API-key proxy mode the proxy's usage rows are the cost source (transcripts a cross-check)
   if (o.apiMode === 'proxy' || o.apiMode === 'direct') out.apiMode = o.apiMode;
   else if (o.apiMode !== undefined) warnings.push(`config.apiMode ignored: ${JSON.stringify(o.apiMode)} is not "proxy" or "direct"`);

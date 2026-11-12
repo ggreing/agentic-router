@@ -3,16 +3,18 @@ import { ref } from 'vue';
 import Overview from './views/Overview.vue';
 import Timeline from './views/Timeline.vue';
 import Learning from './views/Learning.vue';
+import Routing from './views/Routing.vue';
 import Now from './views/Now.vue';
 
-type TabId = 'overview' | 'timeline' | 'learning' | 'now';
+type TabId = 'overview' | 'timeline' | 'learning' | 'routing' | 'now';
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'timeline', label: 'Requests' },
   { id: 'learning', label: 'Learning' },
+  { id: 'routing', label: 'Routing' },
   { id: 'now', label: 'Now' },
 ];
-const views = { overview: Overview, timeline: Timeline, learning: Learning, now: Now };
+const views = { overview: Overview, timeline: Timeline, learning: Learning, routing: Routing, now: Now };
 const active = ref<TabId>('overview');
 </script>
 

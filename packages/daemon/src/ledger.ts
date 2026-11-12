@@ -10,9 +10,11 @@ import type {
   Level, RequestRecord, Role, SignalKind, Step, SubtaskRecord, SubtaskStatus, TeamPreset, TriageResult, Verdict,
   UsageRow, VerifySignal,
 } from '@agentic-router/core';
+import type { AcceptSignal } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
+import { LIMITS_SCHEMA } from './limits.ts';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 12;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -73,7 +75,28 @@ export interface RequestRow extends RequestRecord {
   /** Decision 117: the lead's model when the request opened (null: not known) and its class. */
   leadModel: string | null;
   leadClass: string | null;
+  /**
+   * Decision 138: 'direct' = handled lead-direct on purpose as the baseline although its level is delegated;
+   * 'probe' = delegated on purpose although its level is released; 'released' = lead-direct because its level
+   * is released. Null: planned as the presets say.
+   */
+  holdout: Holdout | null;
 }
+
+export type Holdout = 'direct' | 'probe' | 'released';
+
+/** Decision 137: what was seen of a closed request in its acceptance window. */
+export interface AcceptState {
+  /** The request changed files or delegated work; unset until its record is written. */
+  applicable?: boolean;
+  promptsSeen: number;
+  signals: AcceptSignal[];
+  /** Similarity of each following request prompt to this request's prompt (numbers only; null: not comparable). */
+  similarity: Array<{ jaccard: number; containment: number } | null>;
+  done: boolean;
+}
+
+export interface ReleaseRow { leadClass: string; autoDelegateFrom: Level | null; notice: string | null; detail: unknown; updatedAt: string }
 
 export interface SubtaskRow extends SubtaskRecord {
   agentType: string;
@@ -190,7 +213,10 @@ CREATE TABLE IF NOT EXISTS requests (
   prompt_text    TEXT,
   lead_model     TEXT,
   lead_class     TEXT,
-  lead_triage    TEXT
+  lead_triage    TEXT,
+  end_state      TEXT,
+  accept_state   TEXT,
+  holdout        TEXT
 );
 CREATE INDEX IF NOT EXISTS requests_by_session ON requests(session_id, created_at);
 
@@ -347,7 +373,18 @@ CREATE TABLE IF NOT EXISTS request_records (
   lead_usd      REAL,
   total_usd     REAL,
   record        TEXT NOT NULL,
-  prompt        TEXT
+  prompt        TEXT,
+  acceptance    TEXT,
+  accept_signals TEXT
+);
+
+-- decision 138: the delegation start level the auto-release raised for a lead class, and a notice not yet shown
+CREATE TABLE IF NOT EXISTS release_state (
+  lead_class         TEXT PRIMARY KEY,
+  auto_delegate_from TEXT,
+  notice             TEXT,
+  detail             TEXT,
+  updated_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS request_records_closed ON request_records (closed_at);
 
@@ -416,7 +453,7 @@ function toRequest(r: Row): RequestRow {
     overriddenTriage: r.override_from === null || r.override_from === undefined ? null : json<TriageResult>(r.override_from),
     outcome: sn(r.outcome) as RequestOutcome | null,
     presetSource: sn(r.preset_source), forcedFrom: sn(r.forced_from) as Level | null,
-    leadModel: sn(r.lead_model), leadClass: sn(r.lead_class),
+    leadModel: sn(r.lead_model), leadClass: sn(r.lead_class), holdout: sn(r.holdout) as Holdout | null,
     replannedFrom: r.replanned_from === null || r.replanned_from === undefined ? null : json<TriageResult>(r.replanned_from),
   };
 }
@@ -438,6 +475,13 @@ function toConfirmation(r: Row): ConfirmationRow {
   return {
     requestId: s(r.request_id), kind: s(r.kind) as ConfirmationRow['kind'], subtaskId: s(r.subtask_id), payload: json<unknown>(r.payload),
     afterEventId: n(r.after_event_id), createdAt: s(r.created_at),
+  };
+}
+
+function toRelease(r: Row): ReleaseRow {
+  return {
+    leadClass: s(r.lead_class), autoDelegateFrom: sn(r.auto_delegate_from) as Level | null, notice: sn(r.notice),
+    detail: r.detail === null || r.detail === undefined ? null : json<unknown>(r.detail), updatedAt: s(r.updated_at),
   };
 }
 
@@ -467,6 +511,7 @@ export interface NewRequest {
   forcedFrom?: Level;
   leadModel?: string | null;
   leadClass?: string;
+  holdout?: Holdout;
 }
 
 export interface DispatchInput {
@@ -521,6 +566,9 @@ export interface RecordRow {
   totalUsd: number;
   record: Record<string, unknown>;
   prompt: string | null;
+  /** Decision 137: accepted | not_accepted | unobserved | n/a, and the signals behind it. */
+  acceptance?: string | null;
+  acceptSignals?: unknown;
 }
 
 export type SubtaskPatch = Partial<Pick<SubtaskRow, 'status' | 'verdict' | 'agentId' | 'upCount' | 'writeScope' | 'review' | 'protectedGranted'>>;
@@ -569,6 +617,12 @@ export class Ledger {
     for (const c of ['easy_streak', 'last_easy', 'lock_left', 'down_count']) if (!slotCols.includes(c)) this.db.exec(`ALTER TABLE slots ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`);
     if (!slotCols.includes('lock_step')) this.db.exec('ALTER TABLE slots ADD COLUMN lock_step TEXT');
     // v9 -> v10: proxy_rows (decision 130) is created by SCHEMA; request totals are recounted from the cost rows
+    // v10 -> v11: session_limits, the latest subscription rate limits per session (spec 3.8), from limits.ts
+    this.db.exec(LIMITS_SCHEMA);
+    // v11 -> v12: acceptance (decision 137) and auto-release (decision 138); release_state is created by SCHEMA
+    for (const c of ['end_state', 'accept_state', 'holdout']) if (!reqCols.includes(c)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${c} TEXT`);
+    const recCols = (this.db.prepare('PRAGMA table_info(request_records)').all() as Row[]).map(r => s(r.name));
+    for (const c of ['acceptance', 'accept_signals']) if (!recCols.includes(c)) this.db.exec(`ALTER TABLE request_records ADD COLUMN ${c} TEXT`);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -611,10 +665,10 @@ export class Ledger {
 
   createRequest(r: NewRequest): RequestRow {
     this.db.prepare(`INSERT INTO requests (id, session_id, created_at, prompt_id, level, preset, budget_usd, triage, team, status, closed_at,
-        preset_source, forced_from, lead_model, lead_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        preset_source, forced_from, lead_model, lead_class, holdout) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(r.id, r.sessionId, r.createdAt, r.promptId, r.triage.level, r.triage.preset, r.triage.budgetUsd,
         JSON.stringify(r.triage), JSON.stringify(r.team), r.closedAt ? 'closed' : 'open', r.closedAt ?? null,
-        r.presetSource ?? null, r.forcedFrom ?? null, r.leadModel ?? null, r.leadClass ?? null);
+        r.presetSource ?? null, r.forcedFrom ?? null, r.leadModel ?? null, r.leadClass ?? null, r.holdout ?? null);
     return this.getRequest(r.id)!;
   }
 
@@ -713,15 +767,17 @@ export class Ledger {
 
   upsertRecord(r: RecordRow): void {
     this.db.prepare(`INSERT INTO request_records (request_id, session_id, created_at, closed_at, kind, level, final_level, outcome,
-        changed_files, lines_added, lines_removed, duration_ms, active_ms, subtask_usd, lead_usd, total_usd, record, prompt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        changed_files, lines_added, lines_removed, duration_ms, active_ms, subtask_usd, lead_usd, total_usd, record, prompt, acceptance, accept_signals)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (request_id) DO UPDATE SET closed_at = excluded.closed_at, kind = excluded.kind, level = excluded.level,
         final_level = excluded.final_level, outcome = excluded.outcome, changed_files = excluded.changed_files,
         lines_added = excluded.lines_added, lines_removed = excluded.lines_removed, duration_ms = excluded.duration_ms,
         active_ms = excluded.active_ms, subtask_usd = excluded.subtask_usd, lead_usd = excluded.lead_usd,
-        total_usd = excluded.total_usd, record = excluded.record, prompt = excluded.prompt`)
+        total_usd = excluded.total_usd, record = excluded.record, prompt = excluded.prompt, acceptance = excluded.acceptance,
+        accept_signals = excluded.accept_signals`)
       .run(r.requestId, r.sessionId, r.createdAt, r.closedAt, r.kind, r.level, r.finalLevel, r.outcome, r.changedFiles,
-        r.linesAdded, r.linesRemoved, r.durationMs, r.activeMs, r.subtaskUsd, r.leadUsd, r.totalUsd, JSON.stringify(r.record), r.prompt);
+        r.linesAdded, r.linesRemoved, r.durationMs, r.activeMs, r.subtaskUsd, r.leadUsd, r.totalUsd, JSON.stringify(r.record), r.prompt,
+        r.acceptance ?? null, r.acceptSignals === undefined ? null : JSON.stringify(r.acceptSignals));
   }
 
   getRecord(requestId: string): Record<string, unknown> | undefined {
@@ -793,6 +849,68 @@ export class Ledger {
     this.db.prepare(`INSERT INTO slots (request_id, role, slot, step, up_count, updated_at, fail_streak, lead_raises) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
       ON CONFLICT (request_id, role, slot) DO UPDATE SET fail_streak = COALESCE(?, fail_streak), lead_raises = COALESCE(?, lead_raises), updated_at = excluded.updated_at`)
       .run(requestId, role, slot, step, at, c.failStreak ?? 0, c.leadRaises ?? 0, c.failStreak ?? null, c.leadRaises ?? null);
+  }
+
+  // ------------------------------------------------------------------ acceptance (decision 137)
+
+  setEndState(requestId: string, endState: unknown | null): void {
+    this.db.prepare('UPDATE requests SET end_state = ? WHERE id = ?').run(endState === null ? null : JSON.stringify(endState), requestId);
+  }
+
+  getEndState<T>(requestId: string): T | undefined {
+    const r = this.db.prepare('SELECT end_state FROM requests WHERE id = ?').get(requestId) as Row | undefined;
+    return r && r.end_state !== null && r.end_state !== undefined ? json<T>(r.end_state) : undefined;
+  }
+
+  setAcceptState(requestId: string, state: AcceptState): void {
+    this.db.prepare('UPDATE requests SET accept_state = ? WHERE id = ?').run(JSON.stringify(state), requestId);
+  }
+
+  getAcceptState(requestId: string): AcceptState | undefined {
+    const r = this.db.prepare('SELECT accept_state FROM requests WHERE id = ?').get(requestId) as Row | undefined;
+    return r && r.accept_state !== null && r.accept_state !== undefined ? json<AcceptState>(r.accept_state) : undefined;
+  }
+
+  /** The session's latest requests, newest first, with what was seen of each so far (undefined: nothing yet). */
+  acceptWindows(sessionId: string, limit = 4): Array<{ requestId: string; status: RequestStatus; state: AcceptState | undefined }> {
+    return (this.db.prepare('SELECT id, status, accept_state FROM requests WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(sessionId, limit) as Row[])
+      .map(r => ({ requestId: s(r.id), status: s(r.status) as RequestStatus, state: r.accept_state === null || r.accept_state === undefined ? undefined : json<AcceptState>(r.accept_state) }));
+  }
+
+  /** Writes the acceptance of a request whose record exists already (a signal arrived after it closed). */
+  setRecordAcceptance(requestId: string, acceptance: string, signals: unknown, blob: unknown): void {
+    this.db.prepare(`UPDATE request_records SET acceptance = ?, accept_signals = ?, record = json_set(record, '$.acceptance', json(?)) WHERE request_id = ?`)
+      .run(acceptance, JSON.stringify(signals), JSON.stringify(blob), requestId);
+  }
+
+  // ------------------------------------------------------------------ auto-release (decision 138)
+
+  getRelease(leadClass: string): ReleaseRow | undefined {
+    const r = this.db.prepare('SELECT * FROM release_state WHERE lead_class = ?').get(leadClass) as Row | undefined;
+    return r && toRelease(r);
+  }
+
+  listReleases(): ReleaseRow[] {
+    return (this.db.prepare('SELECT * FROM release_state ORDER BY lead_class').all() as Row[]).map(toRelease);
+  }
+
+  setRelease(leadClass: string, p: { autoDelegateFrom: Level | null; notice?: string | null; detail?: unknown }, at: string): void {
+    this.db.prepare(`INSERT INTO release_state (lead_class, auto_delegate_from, notice, detail, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (lead_class) DO UPDATE SET auto_delegate_from = excluded.auto_delegate_from, notice = COALESCE(excluded.notice, notice),
+        detail = excluded.detail, updated_at = excluded.updated_at`)
+      .run(leadClass, p.autoDelegateFrom, p.notice ?? null, p.detail === undefined ? null : JSON.stringify(p.detail), at);
+  }
+
+  /** The notice of a release or re-enable, returned once. */
+  takeReleaseNotice(leadClass: string): string | undefined {
+    const r = this.db.prepare('SELECT notice FROM release_state WHERE lead_class = ?').get(leadClass) as Row | undefined;
+    if (!r || r.notice === null || r.notice === undefined) return undefined;
+    this.db.prepare('UPDATE release_state SET notice = NULL WHERE lead_class = ?').run(leadClass);
+    return s(r.notice);
+  }
+
+  clearReleases(): number {
+    return Number(this.db.prepare('DELETE FROM release_state').run().changes);
   }
 
   // ------------------------------------------------------------------ router tools (decisions 127-129)

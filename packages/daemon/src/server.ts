@@ -9,9 +9,19 @@
 //   200 with { ok, ... }: a refused call is a tool result for the lead, not a transport error.
 // - API-key mode proxy (decision 130): POST /router/v1/usage takes usage rows ({ accepted, duplicates,
 //   rejected }); GET /router/v1/budget?session_id=&prompt_id= answers { requestId, budgetUsd, spentUsd } or 404.
+// - POST /router/v1/limits takes the status line's rate_limits for a session (spec 3.8): { stored }.
+// - POST /router/v1/routing/reset (`agentic-router routing reset`, decision 138): every released level is
+//   delegated again; answers { cleared }. No body.
+// - /dashboard/* and /router/v1/metrics/* belong to the dashboard module (decision 132), which runs first and
+//   has its own rules (same-origin browser pages with a session cookie). Every other route still refuses any
+//   Origin header.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import type { ClientAdapter } from './adapter.ts';
+import { createDashboard, type Dashboard } from './dashboard.ts';
+import type { Ledger } from './ledger.ts';
+import { recordLimits } from './limits.ts';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyUsage } from './proxyusage.ts';
 import type { Router } from './router.ts';
@@ -25,7 +35,12 @@ export const API = {
   shutdown: '/router/v1/shutdown',
   usage: '/router/v1/usage',
   budget: '/router/v1/budget',
+  limits: '/router/v1/limits',
+  routingReset: '/router/v1/routing/reset',
 } as const;
+
+/** The built dashboard (packages/dashboard/dist) next to this package in the workspace. */
+export const DEFAULT_DASHBOARD_DIST = fileURLToPath(new URL('../../dashboard/dist', import.meta.url));
 
 export interface ServerDeps {
   router: Router;
@@ -38,6 +53,11 @@ export interface ServerDeps {
   onShutdown?: () => void;
   /** API-key mode proxy rows and budget answers (decision 130). */
   proxyUsage?: ProxyUsage;
+  /** For the rate limits route and the dashboard; without it neither is served. */
+  ledger?: Ledger;
+  /** The built dashboard; default DEFAULT_DASHBOARD_DIST. */
+  dashboardDir?: string;
+  now?: () => Date;
 }
 
 class HttpError extends Error {
@@ -54,7 +74,15 @@ export function createHttpServer(d: ServerDeps): http.Server {
   const tokenDigest = digest(d.token);
   const maxBody = d.maxBodyBytes ?? MAX_BODY_BYTES;
 
+  const now = d.now ?? (() => new Date());
+  let dashboard: Dashboard | undefined;
   const server = http.createServer((req, res) => {
+    try {
+      if (dashboard?.handle(req, res)) return;
+    } catch (e) {
+      d.logger.error('dashboard request failed', { url: req.url, error: errorText(e) });
+      return send(res, 500, { error: 'internal error' });
+    }
     handle(req, res).catch(e => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) d.logger.error('request failed', { url: req.url, error: errorText(e) });
@@ -64,6 +92,13 @@ export function createHttpServer(d: ServerDeps): http.Server {
   });
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;
+  if (d.ledger) {
+    dashboard = createDashboard({
+      ledger: d.ledger, token: d.token, distDir: d.dashboardDir ?? DEFAULT_DASHBOARD_DIST,
+      port: () => { const a = server.address(); return a && typeof a !== 'string' ? a.port : null; },
+      statusView: sessionId => d.router.status(sessionId),
+    });
+  }
 
   const hostOk = (host: string | undefined): boolean => {
     const a = server.address();
@@ -87,7 +122,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
       return send(res, 200, { ok: true, version: d.version });
     }
-    if (route !== API.status && route !== API.hook && route !== API.shutdown && route !== API.tools && route !== API.usage && route !== API.budget) throw new HttpError(404, 'not found');
+    if (!(Object.values(API) as string[]).includes(route) || route === API.health) throw new HttpError(404, 'not found');
     if (!authOk(req.headers.authorization)) throw new HttpError(401, 'unauthorized');
 
     if (route === API.shutdown) {
@@ -96,6 +131,12 @@ export function createHttpServer(d: ServerDeps): http.Server {
       d.logger.info('shutdown requested over the API');
       res.on('finish', () => d.onShutdown?.());
       return send(res, 200, { ok: true });
+    }
+
+    if (route === API.routingReset) {
+      if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
+      req.resume();                                   // no body expected; discard any
+      return send(res, 200, d.router.routingReset());
     }
 
     if (route === API.status) {
@@ -118,6 +159,12 @@ export function createHttpServer(d: ServerDeps): http.Server {
     if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
     const body = await readJson(req, maxBody);
     if (route === API.tools) return send(res, 200, await d.router.tool(body));
+    if (route === API.limits) {
+      if (!d.ledger) throw new HttpError(404, 'not found');
+      const sessionId = typeof body.sessionId === 'string' && /^[\x21-\x7e]{1,128}$/.test(body.sessionId) ? body.sessionId : '';
+      if (!sessionId) throw new HttpError(400, 'sessionId is required');
+      return send(res, 200, { stored: recordLimits(d.ledger.db, { sessionId, rateLimits: body.rateLimits, at: now().toISOString() }) });
+    }
     if (route === API.usage) {
       if (!d.proxyUsage) throw new HttpError(404, 'not found');
       try {

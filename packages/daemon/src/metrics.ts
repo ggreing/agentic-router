@@ -1,14 +1,17 @@
 // Read-only metrics read-model for the local dashboard (spec 2.2, 3.7, 3.8; decision 132).
 // Pure queries over the ledger's request_records / costs / signals — no writes, no HTTP. The daemon's
-// dashboard routes (wave 2) call these and serialise the result; keeping them here makes the KPI math,
+// dashboard routes call these and serialise the result; keeping them here makes the KPI math,
 // keyset pagination and masking unit-testable against an in-memory Ledger with no server.
 //
-// MVP proxies (decision 132): "success" is the verify outcome (acceptance detection comes later); the
+// Success (decision 137): the verify outcome, unless the request was seen not to be accepted by the user
+// (request_records.acceptance = 'not_accepted'). "Accepted" means no objection was seen; the summary shows
+// how much of it was unobserved. The auto-release panel (decision 138) is metricsRouting. The
 // Phase-0 OFF baseline is undetermined (Appendix B), so baseline deltas are null until it is measured.
 // No prompt text is ever returned unless request_records.prompt is set (config.recordPrompts, decision 109).
 import type { SQLInputValue } from 'node:sqlite';
 import { redact, type Level } from '@agentic-router/core';
 import type { Ledger } from './ledger.ts';
+import { recordVerifyOk, routingView, type RoutingConfig, type RoutingView } from './routing.ts';
 
 type Row = Record<string, SQLInputValue>;
 const s = (v: unknown): string => String(v ?? '');
@@ -22,7 +25,7 @@ function parse<T>(v: unknown, fallback: T): T {
 /** The shape of the T7 `record` blob (packages/daemon/src/router.ts); only the fields the dashboard reads. */
 interface RecordBlob {
   triage?: { kind?: string | null; level?: Level; confidence?: number; source?: string; rule?: string | null };
-  plan?: { manualLevel?: Level | null; replannedFrom?: Level | null; leadClass?: string | null; forcedFrom?: Level | null };
+  plan?: { manualLevel?: Level | null; replannedFrom?: Level | null; leadClass?: string | null; forcedFrom?: Level | null; holdout?: string | null };
   outcome?: string;
   subtasks?: Array<{ id: string; role: string; slot: number; step: string; upCount: number; status: string; verdict: string | null; attempts: number; costUsd: number }>;
   verifyFailures?: number;
@@ -42,11 +45,12 @@ const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
 const clampLimit = (n?: number): number => Math.min(MAX_LIMIT, Math.max(1, Math.floor(n ?? DEFAULT_LIMIT)));
 
-/** A request "succeeded" (MVP verify proxy): a direct request, or every subtask reached status 'passed'. */
-function recordSucceeded(rec: RecordBlob): boolean {
-  const subs = rec.subtasks ?? [];
-  if (!subs.length) return rec.outcome !== 'no_delegation';
-  return subs.every(x => x.status === 'passed');
+/**
+ * A request "succeeded": verify is fine (a direct request, or every subtask reached status 'passed') and the
+ * user was not seen to reject it (decision 137). `acceptance` is the record's column; null on older records.
+ */
+function recordSucceeded(rec: RecordBlob, acceptance?: unknown): boolean {
+  return recordVerifyOk(rec) && acceptance !== 'not_accepted';
 }
 /** The initial team held: no manual override, no re-plan, no slot ever stepped up. */
 function teamHeld(rec: RecordBlob): boolean {
@@ -74,6 +78,15 @@ export interface MetricsSummary {
   startStepFitRate: number | null;
   upRate: number | null;
   costPerAcceptedTaskUsd: number | null;
+  /**
+   * Decision 137: how the requests of the window were judged. `unobservedShare` is the part of the judged
+   * task requests whose window ended with the session before anything was seen (counted as accepted);
+   * `signals` counts the requests on which each signal was seen.
+   */
+  acceptance: {
+    accepted: number; notAccepted: number; unobserved: number; notApplicable: number; unknown: number;
+    unobservedShare: number | null; signals: Record<string, number>;
+  };
   cost: { totalUsd: number; leadUsd: number; subtaskUsd: number };
   cacheHitRate: number | null;
   flags: { estimated: number; unknown: number; budgetExceeded: number };
@@ -85,15 +98,22 @@ export interface MetricsSummary {
 /** KPI tiles for the overview screen (spec 3.8). */
 export function metricsSummary(ledger: Ledger, w: MetricsWindow = {}): MetricsSummary {
   const params: SQLInputValue[] = [];
-  const rows = ledger.db.prepare(`SELECT level, total_usd, lead_usd, subtask_usd, record FROM request_records${windowClause(w, params)}`).all(...params) as Row[];
+  const rows = ledger.db.prepare(`SELECT level, total_usd, lead_usd, subtask_usd, record, acceptance, accept_signals FROM request_records${windowClause(w, params)}`).all(...params) as Row[];
   const total = rows.length;
   let successful = 0, teamFit = 0, startStepFit = 0, upAny = 0;
   let totalUsd = 0, leadUsd = 0, subtaskUsd = 0, acceptedUsd = 0;
   let estimated = 0, unknown = 0, budgetExceeded = 0;
+  const acc = { accepted: 0, notAccepted: 0, unobserved: 0, notApplicable: 0, unknown: 0, signals: {} as Record<string, number> };
   const byLevel = new Map<Level, { count: number; totalUsd: number; ok: number }>();
   for (const r of rows) {
     const rec = parse<RecordBlob>(r.record, {});
-    const ok = recordSucceeded(rec);
+    const ok = recordSucceeded(rec, r.acceptance);
+    const a = sn(r.acceptance);
+    if (a === 'accepted') acc.accepted++; else if (a === 'not_accepted') acc.notAccepted++; else if (a === 'unobserved') acc.unobserved++;
+    else if (a === 'n/a') acc.notApplicable++; else acc.unknown++;
+    for (const kind of new Set((parse<Array<{ kind?: string }> | null>(r.accept_signals, null) ?? []).map(x => x.kind).filter((k): k is string => !!k))) {
+      acc.signals[kind] = (acc.signals[kind] ?? 0) + 1;
+    }
     const tUsd = num(r.total_usd);
     totalUsd += tUsd; leadUsd += num(r.lead_usd); subtaskUsd += num(r.subtask_usd);
     if (ok) { successful++; acceptedUsd += tUsd; }
@@ -124,7 +144,9 @@ export function metricsSummary(ledger: Ledger, w: MetricsWindow = {}): MetricsSu
     teamFitRate: rate(teamFit, total),
     startStepFitRate: rate(startStepFit, total),
     upRate: rate(upAny, total),
-    costPerAcceptedTaskUsd: successful > 0 ? round6(acceptedUsd / successful) : null,
+    // decision 137: every request's cost over the requests that passed verify and were not seen to be rejected
+    costPerAcceptedTaskUsd: successful > 0 ? round6(totalUsd / successful) : null,
+    acceptance: { ...acc, unobservedShare: rate(acc.unobserved, acc.accepted + acc.notAccepted + acc.unobserved) },
     cost: { totalUsd: round6(totalUsd), leadUsd: round6(leadUsd), subtaskUsd: round6(subtaskUsd) },
     cacheHitRate: denom > 0 ? round6(num(c.cr) / denom) : null,
     flags: { estimated, unknown, budgetExceeded },
@@ -132,6 +154,11 @@ export function metricsSummary(ledger: Ledger, w: MetricsWindow = {}): MetricsSu
       .map(([level, v]) => ({ level, count: v.count, totalUsd: round6(v.totalUsd), successRate: rate(v.ok, v.count) })),
     baseline: null,
   };
+}
+
+/** The auto-release panel (decision 138): mode, holdout share, and per lead class and level the two arms and the rule's answer. */
+export function metricsRouting(ledger: Ledger, cfg: RoutingConfig, nowIso: string = new Date().toISOString()): RoutingView {
+  return routingView(ledger, cfg, nowIso);
 }
 
 export interface TimelineRow {
@@ -157,6 +184,10 @@ export interface TimelineRow {
   estimated: boolean;
   unknown: boolean;
   budgetExceeded: boolean;
+  /** decision 137: the user-acceptance verdict ('accepted' | 'not_accepted' | 'unobserved' | 'n/a' | null). */
+  acceptance: string | null;
+  /** decision 138: 'direct' (holdout baseline) | 'probe' | 'released' | null. */
+  holdout: string | null;
 }
 
 /**
@@ -175,7 +206,7 @@ export function metricsRequests(ledger: Ledger, q: RequestsQuery = {}): { rows: 
   if (q.before) { where.push('(closed_at < ? OR (closed_at = ? AND request_id < ?))'); params.push(q.before.closedAt, q.before.closedAt, q.before.requestId); }
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   const rows = ledger.db.prepare(`SELECT request_id, created_at, closed_at, kind, level, final_level, outcome,
-      changed_files, lines_added, lines_removed, duration_ms, active_ms, lead_usd, subtask_usd, total_usd, record
+      changed_files, lines_added, lines_removed, duration_ms, active_ms, lead_usd, subtask_usd, total_usd, record, acceptance
     FROM request_records${clause} ORDER BY closed_at DESC, request_id DESC LIMIT ?`).all(...params, limit + 1) as Row[];
   const page = rows.slice(0, limit);
   const nextCursor = rows.length > limit ? { closedAt: s(page[page.length - 1]!.closed_at), requestId: s(page[page.length - 1]!.request_id) } : null;
@@ -189,8 +220,9 @@ export function metricsRequests(ledger: Ledger, q: RequestsQuery = {}): { rows: 
       changedFiles: nn(r.changed_files), linesAdded: nn(r.lines_added), linesRemoved: nn(r.lines_removed),
       durationMs: nn(r.duration_ms), activeMs: nn(r.active_ms),
       leadUsd: nn(r.lead_usd), subtaskUsd: num(r.subtask_usd), totalUsd: num(r.total_usd),
-      success: recordSucceeded(rec), subtasks: (rec.subtasks ?? []).length, verifyFailures: rec.verifyFailures ?? 0,
+      success: recordSucceeded(rec, r.acceptance), subtasks: (rec.subtasks ?? []).length, verifyFailures: rec.verifyFailures ?? 0,
       estimated: !!f.estimated, unknown: !!f.unknown, budgetExceeded: !!f.budgetExceeded,
+      acceptance: sn(r.acceptance), holdout: rec.plan?.holdout ?? null,
     };
   });
   return { rows: mapped, nextCursor };

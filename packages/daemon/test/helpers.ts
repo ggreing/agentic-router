@@ -22,7 +22,7 @@ export function rmrf(dir: string): void {
 export function makeHome(config: Record<string, unknown> = {}): string {
   const home = tmpDir('home');
   fs.writeFileSync(path.join(home, 'token'), TOKEN + '\n');
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: 0, fableOptIn: false, ...config }));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: 0, fableOptIn: false, holdoutRate: 0, ...config }));
   return home;
 }
 

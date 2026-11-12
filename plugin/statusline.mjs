@@ -27,6 +27,53 @@ export function routerHome(env = process.env) {
   return env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
 }
 
+// ---------------------------------------------------------------- subscription limit capture (spec 3.8)
+// The status line runs on every render, so forwarding rate_limits to the daemon is rate-limited: send only
+// when the value changed or the last send is older than this interval. The daemon (limits.ts) parses the
+// raw rate_limits object; here we just forward it. Fire-and-(briefly)-wait so a render stays fast.
+export const LIMITS_ENDPOINT = '/router/v1/limits';
+export const LIMITS_MIN_INTERVAL_MS = 60_000;
+const LIMITS_POST_TIMEOUT_MS = 500;
+const safeName = s => String(s).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128);
+const limitsHash = rateLimits => { try { return JSON.stringify(rateLimits); } catch { return ''; } };
+
+/** Whether to post rate_limits now, given the last send stamp ({hash, at}). Pure, for the rate limiter. */
+export function shouldSendLimits(stamp, rateLimits, now, minIntervalMs = LIMITS_MIN_INTERVAL_MS) {
+  const hash = limitsHash(rateLimits);
+  if (!hash || hash === '{}' || rateLimits === undefined || rateLimits === null) return false;
+  if (!stamp || typeof stamp !== 'object') return true;
+  if (stamp.hash !== hash) return true;
+  return now - (Number(stamp.at) || 0) >= minIntervalMs;
+}
+
+function postLimits({ port, token, sessionId, rateLimits, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ sessionId, rateLimits, at: new Date().toISOString() });
+    const req = http.request({
+      host: '127.0.0.1', port, path: LIMITS_ENDPOINT, method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: `Bearer ${token}`, host: `127.0.0.1:${port}` },
+      timeout: timeoutMs,
+    }, res => { res.resume(); res.on('end', resolve); res.on('error', reject); });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+/** Reads the per-session stamp, decides via shouldSendLimits, posts if due, and updates the stamp. Never throws. */
+export async function maybeSendLimits({ home, port, token, sessionId, rateLimits, now = Date.now() }) {
+  if (!Number.isInteger(port) || port <= 0 || !token || !sessionId) return;
+  const dir = path.join(home, 'limits-cache');
+  const file = path.join(dir, `${safeName(sessionId)}.json`);
+  let stamp;
+  try { stamp = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* no stamp yet */ }
+  if (!shouldSendLimits(stamp, rateLimits, now)) return;
+  // Stamp before the POST so rapid renders don't queue duplicate requests even if the POST is slow.
+  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify({ hash: limitsHash(rateLimits), at: now })); } catch { /* best effort */ }
+  try { await postLimits({ port, token, sessionId, rateLimits }); } catch { /* daemon down/slow: the status line still prints */ }
+}
+
 /** One line from a /router/v1/status response; roles with the same step are grouped (coder×2 s1). */
 export function formatStatus(view) {
   if (!view || typeof view !== 'object' || !view.request) return '[Router] idle';
@@ -111,14 +158,21 @@ function readStdin() {
 }
 
 export async function statusLine(input, env = process.env) {
-  let sessionId;
-  try { sessionId = JSON.parse(input).session_id; } catch { /* no session: latest request */ }
+  let parsed = {};
+  try { parsed = JSON.parse(input); } catch { /* no session: latest request */ }
+  const sessionId = typeof parsed.session_id === 'string' ? parsed.session_id : undefined;
   const home = routerHome(env);
   const config = readJson(path.join(home, 'config.json')) ?? {};
   const token = readText(path.join(home, 'token'));
+  // Forward subscription rate limits to the daemon (rate-limited); runs alongside the status fetch so it
+  // adds no latency beyond its own short timeout, and never affects the printed line.
+  const limits = (!env[NESTED_ENV] && sessionId && parsed.rate_limits)
+    ? maybeSendLimits({ home, port: config.daemonPort, token, sessionId, rateLimits: parsed.rate_limits })
+    : Promise.resolve();
   const [view, wrapped] = await Promise.all([
-    fetchStatus({ port: config.daemonPort, token, sessionId: typeof sessionId === 'string' ? sessionId : undefined }),
+    fetchStatus({ port: config.daemonPort, token, sessionId }),
     env[NESTED_ENV] ? Promise.resolve('') : runWrapped(config.wrappedStatusLine, input, WRAPPED_TIMEOUT_MS, env),
+    limits,
   ]);
   const router = view === null ? '[Router] OFF' : formatStatus(view);
   return wrapped ? `${router} | ${wrapped}` : router;
