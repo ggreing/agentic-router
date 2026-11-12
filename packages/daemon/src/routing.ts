@@ -35,15 +35,19 @@ export const routingHoldoutRate = (c: RoutingConfig): number => (routingMode(c) 
 interface RecordBlob {
   plan?: { level?: Level; leadDirect?: boolean; leadClass?: string | null; holdout?: string | null; forcedFrom?: Level | null; manualLevel?: Level | null; replannedFrom?: Level | null };
   outcome?: string;
-  subtasks?: Array<{ status: string }>;
+  subtasks?: Array<{ status: string; verdict?: string | null }>;
   costs?: { unknown?: boolean };
 }
 
-/** Verify said the request's work is fine: a direct request, or every subtask passed. */
-export function recordVerifyOk(rec: { outcome?: string; subtasks?: Array<{ status: string }> }): boolean {
+/**
+ * Verify said the request's work is fine: a direct request, or every subtask passed. A writer that changed
+ * nothing (decision 145: hitl / no_changes) is neither a pass nor a miss, so it does not make the request fail;
+ * a miss or a reject that waits for the user (hitl / miss, hitl / rejected) still does.
+ */
+export function recordVerifyOk(rec: { outcome?: string; subtasks?: Array<{ status: string; verdict?: string | null }> }): boolean {
   const subs = rec.subtasks ?? [];
   if (!subs.length) return rec.outcome !== 'no_delegation';
-  return subs.every(x => x.status === 'passed');
+  return subs.every(x => x.status === 'passed' || (x.status === 'hitl' && x.verdict === 'no_changes'));
 }
 
 export interface Arms {

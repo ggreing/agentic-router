@@ -28,6 +28,14 @@ const MODEL = args.model ?? 'sonnet';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-e2e-'));
 const HOME = path.join(TMP, 'home');
 const env = { ...process.env, AGENTIC_ROUTER_HOME: HOME };
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+/** Integration runs must be deterministic: no auto-release holdout draw (decision 138). */
+function noHoldout(): void {
+  const f = path.join(HOME, 'config.json');
+  const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+  c.holdoutRate = 0;
+  fs.writeFileSync(f, `${JSON.stringify(c, null, 2)}\n`, { mode: 0o600 });
+}
 for (const k of Object.keys(env)) if (/^(CLAUDECODE|CLAUDE_CODE_(CHILD_SESSION|SESSION_ID|MESSAGING_\w+|SESSION_ATTENDED|ENTRYPOINT|EXECPATH)|CLAUDE_PID|CLAUDE_EFFORT)$/.test(k)) delete env[k];
 const cli = (...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'packages/cli/src/index.ts'), ...a], { env, encoding: 'utf8', cwd: TMP });
 
@@ -257,6 +265,7 @@ if (DRY) {
 if (ROUND5) {
   printAllowPolicy(log);
   cli('init', '--yes', '--claude-settings', path.join(TMP, 'claude-settings.json'), '--project', TMP);
+  noHoldout();
   log(cli('start').trim());
   const port = (() => { try { return Number(JSON.parse(fs.readFileSync(path.join(HOME, 'config.json'), 'utf8')).daemonPort); } catch { return 0; } })();
   const token = (() => { try { return fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim(); } catch { return ''; } })();
@@ -290,6 +299,7 @@ if (ROUND5) {
   console.log(`\nreport: ${path.join(TMP, 'e2e-report.txt')}\nsummaries: ${TMP}`);
 } else {
 cli('init', '--yes', '--claude-settings', path.join(TMP, 'claude-settings.json'), '--project', TMP);
+noHoldout();
 log(cli('start').trim());
 
 // Scenarios: E1/E2 fixed tasks, plus `--tasks c-l1-01,c-l1-03` for any custom bench task.
