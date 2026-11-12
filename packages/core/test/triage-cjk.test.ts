@@ -91,6 +91,28 @@ test('lists, sections and file names as Japanese and Chinese text writes them', 
   assert.deepEqual(answer(many), ['team', 'L2', 'many-files']);
 });
 
+test('a file name is recognized when a particle attaches directly, in each language', () => {
+  const files = (p: string) => promptFeatures(p).filePaths;
+  // Korean: a particle attaches straight to the name, so Hangul ends the name like a space (decision 139)
+  assert.equal(files('app.ts에서 그 함수를 고쳐'), 1);
+  assert.equal(files('README.md를 고쳐 주세요'), 1);
+  assert.equal(files('src/utils.ts의 포맷을 정리해'), 1);
+  assert.equal(files('config.json으로 설정을 옮겨'), 1);
+  // Japanese (kana) and Chinese (Han) were already handled; confirm they still are
+  assert.equal(files('app.tsを直して'), 1);
+  assert.equal(files('index.tsの型を直す'), 1);
+  assert.equal(files('改一下 app.ts 里的默认值'), 1);
+  assert.equal(files('把 app.ts 改一下'), 1);
+  // the whole name is kept, the particle is not pulled into it
+  assert.equal(files('src/app.module.ts를 수정'), 1);
+  // negatives: particle-like or punctuation-like text that is not a file name
+  assert.equal(files('에러를 고쳐 주세요'), 0);
+  assert.equal(files('버전을 2.0으로 올려'), 0);
+  assert.equal(files('그 함수의 동작을 설명해'), 0);
+  // many files named with Korean particles between them still reach the many-files rule
+  assert.deepEqual(answer('src/a.ts와 src/b.ts와 src/c.ts와 src/d.ts와 src/e.ts와 src/f.ts를 정리해 주세요'), ['team', 'L2', 'many-files']);
+});
+
 test('script mix: the record keeps hangulRatio and adds kana, Han and Latin shares', () => {
   const f = (p: string) => (x => [x.script, x.hangulRatio, x.kanaRatio, x.hanRatio, x.latinRatio])(promptFeatures(p));
   assert.deepEqual(f('오타를 고쳐 주세요'), ['ko', 1, 0, 0, 0]);
@@ -108,11 +130,12 @@ test('script mix: the record keeps hangulRatio and adds kana, Han and Latin shar
 
 test('the translated sets: same tasks and labels, no team-sized request answered direct, answers close to the originals', () => {
   const original = loadPromptSet(fixture('prompts.yaml'));
-  for (const lang of ['ja', 'zh']) {
+  // Traditional Chinese (Taiwan usage) is a separate set but the same Han script, so its detected script is 'zh'.
+  for (const [lang, script] of [['ja', 'ja'], ['zh', 'zh'], ['zh-Hant', 'zh']] as const) {
     const set = loadPromptSet(fixture(`prompts.${lang}.yaml`));
     assert.equal(set.length, 60, lang);
     assert.deepEqual(set.map(p => [p.id, p.split, p.label]), original.map(p => [p.id, p.split, p.label]), lang);
-    assert.ok(set.every(p => p.lang === lang && promptFeatures(p.prompt).script === lang), `${lang}: every prompt is in that language`);
+    assert.ok(set.every(p => p.lang === lang && promptFeatures(p.prompt).script === script), `${lang}: every prompt is in that language`);
     const s = scoreSet(set, stage1);
     assert.deepEqual([s.under, s.over, s.decidedAccuracy], [0, 0, 1], `${lang}: no confident wrong answer`);
     const a = languageAgreement(original, set, stage1);
@@ -124,7 +147,7 @@ test('the translated sets: same tasks and labels, no team-sized request answered
 });
 
 test('the translated bench tasks: 15 each, labelled by level, settled like the originals', () => {
-  for (const lang of ['ja', 'zh']) {
+  for (const lang of ['ja', 'zh', 'zh-Hant']) {
     const set = loadPromptSet(fixture(`bench.${lang}.yaml`));
     assert.equal(set.length, 15, lang);
     assert.ok(set.every(p => p.style === 'task' && p.split === 'bench' && p.id === p.task && /^c-l[0-3]-0\d$/.test(p.id)), lang);

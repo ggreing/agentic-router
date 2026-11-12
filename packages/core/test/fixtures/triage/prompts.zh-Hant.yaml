@@ -1,0 +1,747 @@
+# Triage evaluation prompts in Traditional Chinese (Taiwan usage, decision 139): the 30 tasks of
+# prompts.yaml, both wordings.
+#
+# Written natively in Traditional Chinese as a Taiwanese developer would type them (程式/檔案/資料庫/函式/
+# 伺服器/預設/快取 and so on), not converted character by character from the Simplified set. Same task ids,
+# labels and splits as prompts.yaml; `from` is the language of the original. Code, identifiers, paths and
+# log lines are kept as they are. Used to compare stage 1 across languages; the limits stated in
+# prompts.yaml apply here too.
+
+- task: t01
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    interpolate 的錯誤訊息裡有個錯字 vlaue，改一下
+  spec: |
+    textkit 的 `interpolate` 在碰到沒有值的 placeholder 時，丟出來的錯誤訊息裡有一個錯字。
+
+    ## 重現步驟
+    1. 呼叫 `interpolate('Hi {{name}}', {})`
+    2. 丟出 `TextkitError`
+    3. 印出 `message`
+
+    ## 實際
+    `Missing vlaue for placeholder "name"`
+
+    ## 預期
+    `Missing value for placeholder "name"`
+
+    這句話會原封不動顯示在使用者介面上，所以要在發版前改掉。只要改這個字串，`strict: false` 時保留 placeholder 的行為、錯誤類別和錯誤碼都不要動。我已經確認其他檔案裡沒有一樣的錯字。
+
+- task: t02
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    把請求的預設逾時從 30 秒調到 60 秒
+  spec: |
+    我們 HTTP 請求的預設逾時對報表類的端點來說太短了，網路慢的客戶常常碰到逾時。
+
+    我想要的是：
+    - `src/http/defaults.ts` 裡的 `DEFAULT_TIMEOUT_MS` 從 `30_000` 改成 `60_000`。
+    - 用戶端的其他部分都不變：單次呼叫的覆寫值仍然優先，重試維持原樣。
+    - 這個常數只在這一處定義，呼叫端都是 import 它。
+
+    補充一點背景，也許有用：這個月 `/reports/export` 的 p99 大約是 41 秒，上次發版以來，客服團隊已經記了 11 張關於這個頁面 "request timed out" 的工單。我們討論過按端點個別設定，最後決定暫時不做。請不要加設定項，只改預設值。
+
+- task: t03
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 0, dirs: 0 }
+  short: |
+    這個正規表示式比對的是什麼？ `^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$`
+  spec: |
+    做程式碼審查時看到下面這個正規表示式，可以解釋一下它到底比對什麼嗎？
+
+    ```ts
+    const FILE_REF = /^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$/;
+    ```
+
+    我的理解是這樣。
+    - 有一個以上用斜線分隔的路徑片段
+    - 最後一個片段一定要帶副檔名
+
+    想弄清楚的幾點：
+    1. 為什麼 `src/a.ts` 可以，而 `a.ts` 不行？
+    2. 副檔名限制成 `{1,5}` 有什麼理由嗎？`.jsonl` 可以嗎？
+    3. Windows 路徑(`src\a.ts`)比對得到嗎？
+    4. `[\w.-]` 裡的 `.` 為什麼不用跳脫？
+
+    不用改程式，只要說明一下就好。
+
+- task: t04
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    清一下 src/server/app.ts 裡沒用到的 import，lint 在報
+  spec: |
+    main 上 `npm run lint` 過不了，有三條被當成錯誤的警告，都在 `src/server/app.ts`：
+
+    ```
+    src/server/app.ts
+      3:10  error  'readFileSync' is defined but never used   no-unused-vars
+      4:8   error  'path' is defined but never used            no-unused-vars
+      9:15  error  'RequestContext' is defined but never used  no-unused-vars
+    ```
+
+    它們是上週拿掉的靜態檔案處理器留下來的。請只刪掉這三個 import，其他都不要動。我確認過 `path` 在檔案後面沒有以別的名字被用到。不要改 lint 設定，也不要重新排版這個檔案；diff 應該就是刪掉三行(如果其中兩個在同一行，那就更少)。
+
+- task: t05
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    README 裡的安裝指令寫成了 npm i confkitt，打錯了。改成 confkit
+  spec: |
+    README 的安裝說明裡，套件名稱打錯了。
+
+    - 位置：`README.md`「安裝」一節的第一個程式碼區塊
+    - 現在：`npm i confkitt`
+    - 正確的值：`npm i confkit`
+
+    已經有兩次客服反映，新使用者直接複製貼上就得到 404。同一節下面的 `pnpm add confkit`、`yarn add confkit` 兩行是對的，維持原樣就好。英文 README(`README.en.md`)裡沒有這個錯字。這只是文件改動，不用動測試或版號。
+
+- task: t06
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    上傳記錄裡寫的是 "MB"，但數字其實是 KB，把這條訊息改對
+  spec: |
+    看正式環境記錄檔時注意到的一個小問題。上傳處理器會把每個被接受的檔案大小這樣記下來：
+
+    ```
+    upload accepted: report-2026-10.pdf (48213 MB)
+    ```
+
+    這個數字是 `file.size / 1024`，所以是 KB，不是 MB。48 GB 的 PDF 那可就厲害了。
+
+    請把訊息裡的單位改成 "KB"。計算維持原樣：解析這些記錄行的儀表板只讀數字、忽略單位，所以改數字會弄壞儀表板，改單位的文字才是安全的。這一行在 `src/upload/handler.ts` 裡，處理 "accepted" 情況的那個函式中。這種記錄呼叫只有一處。
+
+- task: t07
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    parseDate 把 2024-02-29 當成無效日期擋掉了，修一下這個 bug
+  spec: |
+    `parseDate` 會擋掉閏年的 2 月 29 日，這是個 bug。
+
+    ## 重現
+    ```ts
+    parseDate('2024-02-29') // ValidationError: invalid day for month
+    parseDate('2023-02-29') // ValidationError (這個行為是對的)
+    parseDate('2000-02-29') // ValidationError (不對，2000 年是閏年)
+    parseDate('1900-02-29') // ValidationError (對的，1900 年不是閏年)
+    ```
+
+    ## 看起來有問題的地方
+    `src/date/parse.ts` 的 `daysInMonth` 對 2 月總是回傳 28。
+
+    ## 預期行為
+    - 能被 4 整除是閏年，但能被 100 整除是平年，但能被 400 整除又是閏年
+    - 其他月份和格式驗證維持現況
+
+    請在 `test/date/parse.test.ts` 裡加上上面這四種情況。其他函式(`formatDate`、`addDays`)不用動。
+
+- task: t08
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    給 `sync` 指令加一個 --dry-run 旗標，只印出將要上傳的內容，不真的上傳
+  spec: |
+    CLI 的功能需求：`mytool sync --dry-run`。
+
+    現在的 `sync` 會走過本機資料夾，把每個檔案跟遠端清單比對，再上傳有變動的檔案。我想先看看它會做什麼。
+
+    行為：
+    - `--dry-run`(布林值，預設 false)只有 `sync` 指令接受。
+    - 帶上這個旗標時，指令照常執行到上傳呼叫之前，然後對每個將要上傳的檔案印一行，格式是 `would upload <relative path> (<size> bytes)`，最後再印一行 `N file(s) would be uploaded`。
+    - 不發生任何網路寫入。讀取遠端清單沒問題。
+    - 清單讀取成功時，離開碼跟現在一樣是 0。
+    - `--help` 會列出這個旗標，並附一行說明。
+
+    這個指令在 `src/commands/sync.ts`；上傳本身就是靠近結尾的那次 `uploader.put()` 呼叫。請在 `test/commands/sync.test.ts` 既有測試的旁邊加一個測試，檢查設了這個旗標時什麼都沒上傳。
+
+- task: t09
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    把列表 API 的 pageSize 上限限制在 100，超過就回 400
+  spec: |
+    列表查詢 API 沒有 `pageSize` 上限，像 `?pageSize=100000` 這種請求會直接進來。昨天就有這麼一個請求，回應花了 9 秒。
+
+    需求：
+    1. `pageSize` 超過 100 時回 400，回應內容用跟現有驗證錯誤相同的格式(`{ error: 'validation', details: ['pageSize must be <= 100'] }`)。
+    2. `pageSize` 小於 1 或不是整數時，跟現在一樣是 400(已經實作)。
+    3. 省略時預設值 20 不變。
+
+    驗證在 `src/handlers/listTasks.ts` 的查詢解析那段。服務層和儲存庫層都不用改。請在 `test/handlers/listTasks.test.ts` 裡加上 101 和 100 兩種情況。
+
+- task: t10
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 1, dirs: 1 }
+  short: |
+    訂單沒有出貨資訊時，renderInvoice 會當掉，報 "Cannot read properties of undefined (reading 'lines')"，請修復
+  spec: |
+    線上當掉，從週二那次部署之後開始。幫一張還沒出貨的訂單產生發票時會丟例外。
+
+    ```
+    TypeError: Cannot read properties of undefined (reading 'lines')
+        at shipmentTotal (/app/src/billing/totals.ts:48:27)
+        at renderInvoice (/app/src/billing/invoice.ts:112:19)
+        at InvoiceController.show (/app/src/http/controllers/invoice.ts:31:22)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at next (/app/node_modules/express/lib/router/route.js:144:13)
+        at Route.dispatch (/app/node_modules/express/lib/router/route.js:114:3)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at /app/node_modules/express/lib/router/index.js:284:15
+        at Function.process_params (/app/node_modules/express/lib/router/index.js:346:12)
+        at next (/app/node_modules/express/lib/router/index.js:280:10)
+    ```
+
+    環境：Node 24.3，應用版本 5.18.2，Postgres 16。凡是 `shipment` 為 null 的訂單都會出現，大約佔被檢視發票的 4%。
+
+    預期：沒有出貨資訊的訂單產生出來時，運費合計為 0，沒有出貨明細。我覺得 `shipmentTotal` 應該把缺少的出貨資訊當成空的來處理。請幫沒有出貨資訊的訂單加一個回歸測試。
+
+- task: t11
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    CSV 匯出時，值裡有雙引號檔案就壞了。做一下跳脫處理
+  spec: |
+    CSV 匯出的 bug 回報。只要有任務的標題裡帶雙引號，在 Excel 裡欄位就會跑掉。
+
+    例：匯出標題為 `"긴급" 배포 점검` 的任務，現在的輸出是這樣。
+
+    ```
+    id,title,status
+    t-12,""긴급" 배포 점검",todo
+    ```
+
+    預期的輸出(RFC 4180)：
+
+    ```
+    id,title,status
+    t-12,"""긴급"" 배포 점검",todo
+    ```
+
+    規則整理如下：
+    - 值裡只要有雙引號、逗號、換行其中之一，就用雙引號把整個值包起來。
+    - 值裡面的雙引號寫成兩個。
+    - 其他的值跟現在一樣原樣寫出。
+
+    應該只改 `src/export/csv.ts` 的 `escapeCell` 就行。請在 `test/export/csv.test.ts` 裡加上含雙引號、逗號、換行的三種值。
+
+- task: t12
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    讓 fetchJson 在碰到 5xx 和網路錯誤時用指數退避重試，最多 3 次
+  spec: |
+    `src/net/fetchJson.ts` 裡的 `fetchJson` 第一次失敗就放棄了。我希望它能重試。
+
+    規則：
+    1. 網路錯誤和 HTTP 500 到 599 時重試。4xx 絕不重試。
+    2. 總共最多嘗試 3 次(也就是重試 2 次)。
+    3. 第二次嘗試前等 200 ms，第三次前等 400 ms。
+    4. 如果每次嘗試都失敗，原樣丟出最後一個錯誤。
+    5. 呼叫端傳進來的 `AbortSignal` 會立刻中止等待，並以中止原因 reject。
+    6. 呼叫端可以用 `{ retries: 0 }` 關掉重試；預設是 2。
+
+    改完後的簽章：
+
+    ```ts
+    export interface FetchJsonOptions { retries?: number; signal?: AbortSignal }
+    export function fetchJson<T>(url: string, options?: FetchJsonOptions): Promise<T>;
+    ```
+
+    現有的呼叫端都不傳選項，必須繼續正常運作。測試放在 `test/net/fetchJson.test.ts`；這個檔案裡已經有一個可以用的假伺服器輔助函式，另外請用假的計時器，這樣測試就不用真的等待。
+
+- task: t13
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 3, dirs: 2 }
+  short: |
+    給快取加一個 TTL 選項。在設定裡按秒指定，預設不過期
+  spec: |
+    想給記憶體快取加上過期時間。
+
+    - 設定：`cache.ttlSeconds`(數字，選用)。省略或為 0 時，跟現在一樣不過期。
+    - 用 `Cache.set(key, value)` 放進去的項目，從放入當下算起過了 `ttlSeconds` 之後，`get` 回傳 `undefined`，內部也把它刪掉。
+    - `Cache.has(key)` 也照同樣的標準。
+    - 負數或不是數字的值，在讀取設定時照現有驗證錯誤的方式擋掉。
+
+    要改的地方大概是 `src/cache/cache.ts`、放設定 schema 的 `src/config/schema.ts`，還有 `test/cache/cache.test.ts`。時間不要用 `Date.now()`，而是用注入到建構函式裡的 `now()` 函式，這樣測試裡可以撥動時鐘(`src/util/clock.ts` 裡已經有 `Clock` 型別)。
+
+- task: t14
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 1 }
+  short: |
+    test/report/weekly.test.ts 在 CI 上失敗，本機卻會過，我覺得是時區的問題。可以把這個測試修好嗎
+  spec: |
+    我們有一個不穩定的測試。`test/report/weekly.test.ts` 裡的 `weekly report groups tasks by ISO week`，在台北的每一台筆電上都會過，在跑 UTC 的 CI 上卻失敗。
+
+    ```
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+
+    + '2026-W45'
+    - '2026-W46'
+        at TestContext.<anonymous> (test/report/weekly.test.ts:41:10)
+    ```
+
+    目前查到的狀況：
+    - 測試的 fixture 用 `new Date(2026, 10, 9, 0, 30)` 建日期，這是本地時間。
+    - 在 UTC 下，那個時刻還是 8 號星期日，屬於第 45 週。
+    - 正式程式(`src/report/weekly.ts`)接受一個 `timeZone` 參數，就我所見是正確的。
+
+    所以我認為錯的是測試，不是程式。請讓 fixture 不依賴機器的時區(用帶明確時差的 ISO 字串來建日期，並給函式傳 `timeZone: 'Asia/Taipei'`)，如果 `test/report/helpers.ts` 裡的共用輔助函式也是這樣建日期的，那裡也一併修掉。除非你發現 `src/report/weekly.ts` 真的有錯，否則不要改它；如果真的有錯，改之前先告訴我。
+
+- task: t15
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    給 deepMerge 加一個串接陣列的選項(arrays: 'concat')。預設跟現在一樣是取代
+  spec: |
+    請給 confkit 的 `deepMerge` 加一個選擇陣列合併方式的選項。這個任務只改一個函式和它的測試。
+
+    ```ts
+    interface MergeOptions { arrays?: 'replace' | 'concat' | 'unique' }
+    function deepMerge(layers: ConfigObject[], options?: MergeOptions): ConfigObject;
+    ```
+
+    規則：
+    1. 省略 `arrays` 時是 `'replace'`，跟現在的行為一樣(後面圖層的陣列整個取代)。
+    2. `'concat'` 時，把同一個鍵的陣列按圖層順序串起來。
+    3. `'unique'` 跟 `'concat'` 一樣，但會拿掉重複的原始值，並保留第一次出現的順序。
+    4. 對於含物件的陣列，`'unique'` 按 `JSON.stringify` 的結果比較，而不是按參考。
+    5. 一邊是陣列、另一邊不是陣列時，不管選項是什麼，後面的值勝出。
+    6. 巢狀物件裡的陣列也套用同樣的規則。
+    7. 任何情況下都不改動輸入的圖層。
+    8. 結果不和輸入共用陣列參考。
+    9. 未知的 `arrays` 值丟出 `ConfigError`。
+
+    現有的呼叫端是像 `deepMerge(a, b, c)` 這樣用可變參數的。這次不要把簽章改成上面那樣，而是維持現有形式，當最後一個參數長得像 `MergeOptions` 時就把它當成選項。程式寫在 `src/merge.ts`，測試在 `test/merge.test.ts`。
+
+- task: t16
+  lang: zh-Hant
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    幫任務加上留言功能
+  spec: |
+    請幫 taskboard 加上任務留言功能。儲存庫、服務、處理器三層各自照職責分開做。
+
+    ## 模型
+    ```ts
+    interface Comment {
+      id: string;
+      taskId: string;
+      authorId: string;
+      body: string;        // 1~2000 個字元，以去掉前後空白後的長度為準
+      createdAt: string;   // ISO 8601
+      editedAt: string | null;
+    }
+    ```
+
+    ## 儲存庫 (`CommentRepo`)
+    - `add(comment)`, `listByTask(taskId)`, `get(id)`, `update(id, patch)`, `remove(id)`
+    - `listByTask` 按 `createdAt` 由舊到新
+
+    ## 服務 (`CommentService`)
+    - 給不存在的任務留言時丟 `NotFoundError`
+    - `body` 驗證不過是 `ValidationError`(details 裡有 `'body'`)
+    - 只有作者本人可以編輯、刪除，否則是 `ForbiddenError`
+    - 編輯後填上 `editedAt`
+    - 任務被刪除時，該任務的留言也一起刪掉(在 `TaskService.deleteTask` 裡呼叫)
+
+    ## 處理器
+    - `POST /tasks/:id/comments`, `GET /tasks/:id/comments`, `PATCH /comments/:id`, `DELETE /comments/:id`
+    - 錯誤對應跟現有處理器一致：Validation 400，Forbidden 403，NotFound 404
+
+    ## 測試
+    - 服務和處理器各自的正常與失敗情況，以及刪除任務時的連鎖刪除
+
+- task: t17
+  lang: zh-Hant
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 6, dirs: 4 }
+  short: |
+    任務列表的端點需要過濾、排序和分頁
+  spec: |
+    幫任務列表加上過濾、排序和分頁。現在 `GET /tasks` 把所有任務放在 `{ items }` 裡回傳。按層拆分工作：過濾本身放在儲存庫裡，驗證和預設值放在服務裡，查詢字串的解析放在處理器裡。
+
+    ## 服務
+    新增 `TaskService.queryTasks(query?: TaskQuery): TaskPage`，`listTasks()` 仍然回傳完整的陣列。
+
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];        // any of these
+      assigneeId?: string | null;   // null = unassigned only
+      text?: string;                // case-insensitive match in title
+      sort?: 'createdAt' | 'priority' | 'dueDate';
+      order?: 'asc' | 'desc';
+      page?: number;                // 1-based, default 1
+      pageSize?: number;            // default 20, max 100
+    }
+    interface TaskPage { items: Task[]; total: number; page: number; pageSize: number }
+    ```
+
+    ## 儲存庫
+    - `TaskRepo.find(filter, sort, range)` 回傳目前這一頁，以及分頁前的總數。
+    - 按 `priority` 排序時用 low < medium < high 的順序；相同時退回按 `createdAt` 由舊到新。
+
+    ## 處理器
+    - `GET /tasks?status=todo,in_progress&assignee=u1&sort=priority&order=desc&page=2&pageSize=50`
+    - `assignee=none` 代表未指派。
+    - 未知的 status 值、非數字的 page、超過 100 的 `pageSize`，都回 400 和一般的驗證錯誤回應內容。
+
+    ## 測試
+    - 儲存庫：每個過濾條件單獨使用、組合使用，每個排序鍵的兩個方向，翻到最後一頁之後的頁。
+    - 服務：預設值和驗證。
+    - 處理器：查詢解析和錯誤對應。
+
+- task: t18
+  lang: zh-Hant
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 4 }
+  short: |
+    做一個驗證中介軟體，並幫所有處理器加上權限檢查
+  spec: |
+    API 需要加上驗證和權限檢查。現在所有端點都是開放的。
+
+    做一個中介軟體，檢查請求裡的 `Authorization: Bearer <token>`，並填好 `ctx.user`(id, role)。沒有權杖或權杖不對就是 401。然後幫所有處理器加上角色檢查。檢視任務，登入使用者都可以；建立和修改需要 `member` 以上；刪除和使用者管理只有 `admin` 可以。權限不夠就是 403。
+
+    處理器大約有八個(在 `src/handlers/` 底下)，每個處理器的測試也要改成帶上驗證標頭。權杖檢查當成新模組放在 `src/auth/` 底下，簽章密鑰從設定裡讀。角色和允許操作的對應表放在同一個地方(`src/auth/policy.ts`)，不要讓條件判斷散落在各個處理器裡。現有的服務層不接收使用者資訊，只有需要記錄作者的 `createTask` 和 `addComment` 改成接收 `actorId`。
+
+- task: t19
+  lang: zh-Hant
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 3 }
+  short: |
+    重構設定載入：defaults、檔案和 env 應該是各自獨立的來源，按順序合併，最後做 schema 驗證
+  spec: |
+    我們的設定載入已經長成一個 400 行的函式(`src/config/load.ts` 裡的 `loadConfig`)：讀一個 JSON 檔案，用手寫的 `if` 區塊把環境變數疊上去，邊讀邊驗證。每加一個設定項都要動四個地方。我想把它重新整理一下。
+
+    目標樣子：
+    - 一個 `ConfigSource` 介面，只有一個方法 `read(): Promise<ConfigObject>`。
+    - 三個來源：`DefaultsSource`、`FileSource(path)` 和 `EnvSource(prefix)`。env 來源把 `APP_DB__HOST` 對應成 `db.host`(雙底線 = 巢狀)，不做任何轉換；值維持字串。
+    - `loadConfig(sources)` 按順序讀它們，並用現有的 `deepMerge` 合併。
+    - 驗證和型別轉換只做一次，在合併之後，由 `src/config/schema.ts` 裡的 schema 物件驅動(string, number, boolean, enum, required, default)。來自環境變數的 `port: '8080'` 在那裡變成數字 8080；缺少必填值或型別不對時，一次回報所有問題，而不是只報第一個。
+    - 對外入口 `getConfig()` 維持簽章和回傳型別不變，這樣應用的其他部分不用改。
+
+    請維持每個現有設定項目前的行為(大約三十個；`test/config/` 現在的測試描述了它們)，並為每個來源、合併順序和驗證訊息補上測試。舊的 `loadConfig` 函式本體最後應該消失，而不是留在新程式旁邊。
+
+- task: t20
+  lang: zh-Hant
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    記錄一下變更歷史，好讓我們能看到是誰在什麼時候改了任務
+  spec: |
+    請幫 taskboard 加上任務的變更歷史。要能按任務查到是誰、在什麼時候、改了什麼。
+
+    ## 事件模型
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed' | 'task.deleted';
+    interface AuditEvent {
+      id: string;
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;
+      at: string;                       // ISO 8601
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    }
+    ```
+
+    ## 記錄時機
+    1. `createTask`：`task.created`，`after` 裡是建立出來的任務
+    2. `assignTask`：`task.assigned`，`before`/`after` 裡只有 `assigneeId`
+    3. `changeStatus`：只有狀態真的變了才記 `task.status_changed`
+    4. `deleteTask`：`task.deleted`，`before` 裡是刪除前的任務
+    5. 失敗的請求(驗證失敗、409)不記錄
+
+    ## 儲存和查詢
+    - `AuditRepo.append(event)`、`AuditRepo.listByTask(taskId)`(按時間順序)
+    - `GET /tasks/:id/audit` 以 `{ items }` 回應，任務不存在時 404
+    - 已刪除任務的歷史必須保留，也能查詢
+
+    ## 其他
+    - `actorId` 由處理器從請求上下文取出，再傳給服務
+    - 在服務方法的簽章裡把 `actorId` 加成最後一個選用參數
+    - 補上服務和處理器的測試
+
+- task: t21
+  lang: zh-Hant
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 9, dirs: 3 }
+  short: |
+    把資料存取層從 callback 改成 async/await
+  spec: |
+    資料存取層還在用 Node 風格的 callback，而它上面的所有程式都用 Promise，所以每個服務都得手動把儲存庫呼叫包進 `new Promise(...)`。我希望儲存庫直接回傳 Promise。
+
+    `src/repo/` 底下有五個儲存庫檔案(users, tasks, comments, tags, sessions)，外加它們每一個都會用到的共用輔助模組 `src/repo/db.ts`。每個匯出的函式現在接收 `(args..., cb)`；改完之後接收 `(args...)`，並回傳一個 Promise，它 reject 時用的錯誤物件跟以前 callback 收到的一樣。`db.ts` 裡的輔助模組要把 `query` 和 `transaction` 當成回傳 Promise 的函式對外提供，而且 `transaction` 在它執行的函式 reject 時一定要復原。
+
+    然後是呼叫端：`src/service/` 底下的三個服務應該拿掉手寫的包裝，直接 `await` 儲存庫呼叫。行為不能變，包括交易內查詢的順序，以及哪些錯誤會往外拋。
+
+    儲存庫的測試用的是一個以 callback 為基礎的假 `db`；這個假物件也要做同樣的轉換。請用一種每轉換完一個儲存庫、整個測試套件都保持通過的方式來做，這樣這次改動就可以一個檔案一個檔案地審查。
+
+- task: t22
+  lang: zh-Hant
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 12, dirs: 5 }
+  short: |
+    把錯誤訊息全部換成訊息鍵，並配上韓文/英文的文案目錄
+  spec: |
+    顯示給使用者的錯誤訊息以韓文字串的形式散落在程式各處。因為要接入英文使用者，我們打算把訊息換成鍵，再從按語言分的目錄裡取出來用。
+
+    方式是這樣設想的。在 `src/i18n/` 底下放 `ko.json`、`en.json` 兩個目錄，以及 `t(key, params, locale)` 函式。鍵採用 `task.not_found`、`validation.required` 這種點號寫法，值裡可以用 `{name}` 形式的佔位符。錯誤類別不再帶訊息字串，而是帶 `code` 和 `params`，在產生回應的最後一步(`src/handlers/http.ts` 的錯誤對應)依請求的 `Accept-Language` 轉成句子。不支援的語言一律回韓文。
+
+    要改的地方是所有會丟錯誤的服務(任務、使用者、留言、專案)、驗證工具，以及處理器的錯誤對應。有不少測試是直接比對訊息字串的，這些要改成比對 `code`，句子本身只在目錄的測試裡確認一次。為了讓用到目錄裡沒有的鍵時測試能發現，請再加一個測試，確認兩個目錄的鍵集合相同，而且程式裡用到的鍵都在其中。
+
+- task: t23
+  lang: zh-Hant
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 5 }
+  short: |
+    刪除任務應該是軟刪除，這樣我們還能還原
+  spec: |
+    我們現在是真的把任務刪掉，而客服一直在要求把某個任務找回來。請把刪除改成軟刪除。
+
+    ## 模型
+    - `Task` 增加 `deletedAt: string | null`(ISO 8601)。它不為 null 時，任務就是已刪除。
+
+    ## 儲存庫
+    - `remove(id)` 設定 `deletedAt`，而不是刪掉這一列。
+    - `get`、`list` 和 `find` 跳過已刪除的任務，除非呼叫時帶了 `{ includeDeleted: true }`。
+    - 新增 `restore(id)`，清掉 `deletedAt`。
+    - 新增 `purge(olderThan: Date)`，真正移除在那個日期之前被刪除的任務。
+
+    ## 服務
+    - 從呼叫端的角度看，`deleteTask` 的行為不變：任務消失，第二次刪除是 404。
+    - 對從未被刪除或不存在的任務，`restoreTask(id)` 以 `NotFoundError` 失敗。
+    - 已刪除任務的留言和稽核事件保留；它們隨任務一起回來。
+    - 計數和週報忽略已刪除的任務。
+
+    ## HTTP
+    - `DELETE /tasks/:id` 對用戶端來說不變。
+    - `POST /tasks/:id/restore`，僅管理員可用。
+    - `GET /tasks?deleted=only`，僅管理員可用，列出垃圾桶。
+
+    ## 遷移和日常清理
+    - 用一次遷移加上這一欄，所有現有列都為 null。
+    - 一個每日任務以目前時間減 30 天呼叫 `purge`。
+
+    ## 測試
+    - 儲存庫、服務和處理器各個層面，加上在已經有任務的資料庫上跑遷移。
+
+- task: t24
+  lang: zh-Hant
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 5 }
+  short: |
+    加上按使用者的通知設定(email/Slack 管道，按事件 on/off)
+  spec: |
+    請讓每個使用者可以選擇接收通知的管道和事件。
+
+    ## 設定模型
+    ```ts
+    type Channel = 'email' | 'slack';
+    type NotifyEvent = 'task.assigned' | 'task.due_soon' | 'comment.added';
+    interface NotificationSettings {
+      userId: string;
+      channels: Record<Channel, { enabled: boolean; address: string | null }>;
+      events: Record<NotifyEvent, Channel[]>;
+    }
+    ```
+
+    ## 需求
+    1. 沒有設定的使用者按預設值處理(只開 email，所有事件都走 email)。
+    2. 用 `GET /me/notifications`、`PUT /me/notifications` 查詢和儲存。
+    3. 開啟的管道一定要有位址，並驗證 email 位址和 Slack Webhook URL 的格式。
+    4. 事件指定的管道如果是關的，儲存時回 400。
+    5. 送出通知的一方(`NotificationService.notify(event, userId, payload)`)讀取設定，只送到對應的管道。
+    6. 各管道的送出器拆成 `EmailSender`、`SlackSender`，實作同一個介面。
+    7. 一個管道送出失敗時，其他管道照常送，失敗記到記錄檔裡。
+    8. 原本在 `task.assigned` 裡直接送 email 的程式，換成呼叫 `notify`。
+    9. `task.due_soon` 由一個每小時執行的任務找出 24 小時內到期的任務後呼叫。
+
+    ## 測試
+    - 設定的驗證、預設值、管道選擇、一個管道失敗時的行為
+
+- task: t25
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 25, dirs: 8 }
+  short: |
+    從零開始設計並實作一個負責支付處理的新服務
+  spec: |
+    現在是在訂單服務裡直接呼叫支付公司的 API，隨著支付方式愈來愈多，已經撐不住了。我們打算把支付拆成獨立的服務。請從設計開始。
+
+    ## 範圍
+    - 新服務 `payments`(HTTP API + worker)
+    - 支付授權、請款、取消、部分退款
+    - 兩家支付公司的轉接器(現在在用的 A 公司、準備接入的 B 公司)和共用介面
+    - Webhook 接收與簽章驗證，防止重試造成的重複處理(冪等鍵)
+    - 支付狀態機和狀態流轉歷史
+    - 與訂單服務的對接：訂單服務不再直接呼叫支付公司，只呼叫 `payments` 的 API
+
+    ## 需要決定的事(請給建議)
+    1. 和訂單服務是用同步呼叫綁定，還是用事件鬆耦合
+    2. 儲存 schema 和金額的表示(整數最小單位)
+    3. 部分失敗時的補償處理
+    4. 現有支付資料的遷移方式，以及切換期間是否雙寫
+
+    ## 交付物
+    - 架構文件和 API 規格
+    - 服務程式、遷移、每個轉接器的合約測試
+    - 替換訂單服務那邊的呼叫端
+    - 在本機同時啟動兩個服務的設定
+
+- task: t26
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 30, dirs: 10 }
+  short: |
+    把訂單流程從服務之間的同步 REST 呼叫，遷到以訊息佇列為基礎的事件驅動架構上
+  spec: |
+    現在下單是一連串同步的 REST 呼叫：checkout 呼叫 inventory，inventory 呼叫 pricing，然後 checkout 呼叫 payments，最後呼叫 notifications。其中任何一個慢了，整個請求就逾時；中間某一步失敗，就會給一個根本不存在的訂單留下被預留的庫存。
+
+    我想把這條流程遷到訊息佇列上的事件。broker 還沒選；請推薦一個並說明理由。
+
+    寫任何程式之前一定要先設計好的內容：
+    - 事件(`order.placed`、`stock.reserved`、`stock.rejected`、`payment.captured`、`payment.failed`、`order.confirmed`、`order.cancelled`)及其負載和版本規則。
+    - 誰擁有哪個狀態，以及取代呼叫鏈的 saga，包括每一步的補償。
+    - 投遞保證：at-least-once 搭配冪等的消費者；每個生產者裡放一張 outbox 表，讓資料庫提交和發布不會不一致；一條死信通道，而且能夠重放。
+    - 按訂單 id 的順序要求。
+    - 現在結果是稍後才到的，checkout 的 API 怎麼回應瀏覽器。
+
+    然後是具體的工作，一個服務一個服務地做：checkout、inventory、pricing、payments 和 notifications 各自要有發布者和消費者、outbox 及其轉發器，以及針對它們生產或消費的每個事件的合約測試。服務之間舊的 REST 端點要保留到新通道以影子模式跑過之後；請規劃這次遷移和切換，並告訴我每個階段我們能復原什麼。
+
+    可觀測性也是其中一部分：每個事件都帶關聯 id，並且要有辦法看到某個訂單卡在哪裡。
+
+- task: t27
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 40, dirs: 12 }
+  short: |
+    幫服務導入多租戶。每家客戶公司的資料必須完全隔離
+  spec: |
+    現在的服務是以只有一家客戶公司為前提做的。第二家客戶的合約已經談定，所以要改成一次部署能容納多家客戶公司。客戶公司之間的資料絕對不能混在一起。
+
+    首先要決定隔離方式。在每張表上放 `tenant_id` 的方式、分 schema 的方式、分資料庫的方式，請比較這三種，並提出適合我們規模(客戶公司幾十家、表四十多張)的方案。我在考慮 `tenant_id` 欄位加上列級安全策略的組合，但沒有把握。
+
+    方式確定之後，變動的範圍如下。驗證權杖裡要帶上租戶，每個請求都要設好租戶上下文，並自動套用到儲存庫層的所有查詢上。重點是即使某條查詢漏寫了條件，也看不到其他客戶公司的資料。所有表都需要遷移，現有資料填為第一家客戶公司所有。唯一約束(email、專案鍵等)改成在租戶範圍內唯一。快取鍵、背景任務、檔案儲存路徑、搜尋索引、稽核記錄裡也都要帶上租戶。還需要給管理員用的建立和停用租戶的 API。
+
+    測試方面，請在每一層都鋪上一條基本的檢查：「存取其他租戶的資料時，看起來就像不存在」。
+
+- task: t28
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 22, dirs: 7 }
+  short: |
+    設計並做出一套外掛系統，讓第三方可以幫 CLI 增加指令和匯出器
+  spec: |
+    總有人給 CLI 提 pull request，再加一個匯出器或是再加一個子指令，而我們不想把這些全都攬下來。我想要一套外掛系統，讓他們可以自己發布這些東西。
+
+    ## 外掛能做什麼
+    - 註冊指令(名稱、選項、處理函式)。
+    - 為 `export` 指令註冊匯出器(格式名、副檔名、一個把我們的資料模型轉成位元組的函式)。
+    - 掛到 `beforeSync` 和 `afterSync` 上。
+
+    ## 需要設計的內容
+    1. 擴充 API 及其穩定性承諾：帶版本的 `PluginApi` 物件，哪些是公開的，我們怎麼做淘汰。
+    2. 探索和載入：外掛是名為 `mytool-plugin-*` 的 npm 套件，列在設定檔裡；載入順序；兩個外掛註冊了同一個名字時怎麼辦。
+    3. 隔離：外掛在載入期間或掛鉤裡丟例外，不能把 CLI 帶當；決定我們做到什麼程度(try/catch、worker 執行緒、權限)。
+    4. 設定：每個外掛在設定檔裡有自己的一段、經過驗證的設定。
+    5. 開發者體驗：樣板、型別宣告、`mytool plugin doctor` 指令。
+
+    ## 遷移
+    - 把三個內建匯出器(csv, json, markdown)和 `stats` 指令搬到同一套 API 上，讓核心自己也用它提供給別人的機制。
+    - 對不安裝外掛的人，行為沒有變化。
+
+    ## 交付物
+    - 先出一份設計文件，供審查。
+    - 載入器、帶型別宣告的 API 套件、遷移後的內建功能、針對載入、衝突和出錯外掛的測試，以及含一個完整範例外掛的文件。
+
+- task: t29
+  lang: zh-Hant
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 60, dirs: 15 }
+  short: |
+    想把現在的單體結構全面重新設計，讓模組邊界清楚起來。一路做到拆套件
+  spec: |
+    程式碼庫在一個 `src/` 底下纏著 300 多個檔案，彼此之間朝任意方向 import。改一個功能，常常會弄壞毫不相干的測試。我們打算把結構重新理一遍。
+
+    ## 目標
+    - 按領域劃分模組(帳號、專案、任務、通知、支付、報表)並劃清邊界，模組之間只透過公開入口(`index.ts`)互相使用。
+    - 把相依方向定成單向：領域 → 共用工具可以，反過來不行；領域之間只允許規定好的方向。
+    - 消除循環相依(目前有 40 個以上)。
+    - 儲存存取和 HTTP 推到各模組內部的外層，領域邏輯不知道它們的存在。
+    - 能拆成 workspace 套件的就拆。
+
+    ## 首先需要的東西
+    1. 對目前相依圖的分析，以及模組邊界的提案
+    2. 分階段的遷移計畫：不是一次全搬完，每個階段結束時建置和測試都必須通過
+    3. 強制邊界的辦法(lint 規則或相依檢查)以及接入 CI
+    4. 哪些留作共用、哪些下放到模組的判斷標準
+
+    ## 限制
+    - 不改對外 API 和資料庫 schema
+    - 遷移期間功能開發還在繼續，所以不是開一個大分支，而是用許多小改動來推進
+
+- task: t30
+  lang: zh-Hant
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 35, dirs: 9 }
+  short: |
+    行動端需要能離線使用，並在重新連線後同步
+  spec: |
+    現場技師在沒有訊號的地下室和屋頂上用我們的行動 App，而現在這個 App 在那些地方毫無用處：每個頁面都從 API 載入，每次編輯都是一次請求。我希望 App 能完全離線運作，並在連線恢復時同步。
+
+    這等於把用戶端的資料層重做一遍，需要先做設計。我想得到的問題有：裝置上的本機儲存，作為 UI 的唯一資料來源(用哪種資料庫、什麼樣的 schema、在 App 版本之間怎麼遷移)；一個本機變更的佇列，帶有在裝置上產生的穩定 id；一套和伺服器之間的同步協定，把這些變更送出去，並拉取別人的變更，斷線之後可以續傳，而且開銷夠小、可以常常執行；還有衝突處理。對於衝突，我不想在整筆記錄上用「最後寫入者勝出」。兩位技師編輯同一張工單的不同欄位時，各自的變更都應該保留；同一個欄位上真正的衝突應該呈現給使用者。照片和簽名體積很大，需要自己的、帶重試的上傳通道。
+
+    伺服器端也需要配套的工作：按使用者的變更流、冪等地接收批次變更，以及為刪除保留墓碑標記，這樣一台離線兩週的裝置就不會讓已刪除的記錄復活。
+
+    App 裡的每個頁面都要從「先請求再繪製」改成讀取本機儲存並監聽它，而且 UI 需要顯示同步狀態和待送出的變更。請在寫程式之前，先從一份設計文件開始，內容涵蓋儲存、協定和衝突規則，以及現有安裝的遷移計畫。

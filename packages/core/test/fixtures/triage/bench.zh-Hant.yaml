@@ -1,0 +1,436 @@
+# The 15 bench task prompts (bench/tasks/custom/*/task.json, written in Korean) in Traditional Chinese
+# (Taiwan usage, decision 139). Same ids; the label is the task's authored level (L2 and above = team).
+# Code, identifiers and the exact strings a task asks for are kept as they are. Used only to compare stage 1
+# across languages: the bench itself still runs the original prompts.
+
+- task: c-l0-01
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    textkit 的 `interpolate` 在碰到沒有值的 placeholder 時丟出的錯誤訊息裡有個錯字(`vlaue`)。這條訊息會原封不動顯示在使用者介面上，所以需要改掉。
+
+    比如呼叫 `interpolate('Hi {{name}}', {})` 會丟出 `TextkitError`，它的 `message` 必須剛好是 `Missing value for placeholder "name"`(引號裡是 placeholder 的名字)。
+
+    除了這條訊息，其他行為(比如 strict: false 時保留 placeholder)請不要改。
+
+- task: c-l0-02
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    README 裡把 `wordCount` 列為套件的函式，但 `src/index.ts`(barrel)裡漏了 export，所以 `import { wordCount } from './src/index.ts'` 用不了。請把 `src/count.ts` 裡的 `wordCount` 也從 `src/index.ts` export 出來。既有的 export(`charCount` 等)要維持不變。
+
+- task: c-l0-03
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    在 taskboard 裡不帶 priority 建立任務時，priority 會是 `'low'`，但照產品設計預設值應該是 `'medium'`。不管是用 `TaskService.createTask({ title })` 建立，還是用 `createApp()` 的 `handlers.createTask({ body: { title } })` 處理器建立，只要沒給 priority，就應該是 `'medium'`，請改一下。有明確指定 priority 時，要跟現在一樣原樣使用那個值。
+
+- task: c-l0-04
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    回報一個 `truncate(text, maxLength, options?)` 的 bug。字串長度和 `maxLength` 剛好相等時也會被截斷。`truncate('hello', 5)` 應該原樣回傳 `'hello'`，結果卻是 `'hell…'`。帶上 `ellipsis` 選項也一樣(`truncate('abcdefgh', 8, { ellipsis: '...' })` → 應該是 `'abcdefgh'`)。
+
+    長度不超過 `maxLength` 時原樣回傳原文，只有超過時才像現在這樣截斷(連同 ellipsis 一共 maxLength 個字元)。
+
+- task: c-l0-05
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    confkit 的 `parseDuration('1h')` 回傳的是 `360000`。1 小時應該是 `3600000` ms。因為這個，像 `'1h30m'` 這種複合值也算錯了(應該是 `5400000`)。請修一下。其他單位(ms, s, m, d)現在是對的。
+
+- task: c-l1-01
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit 的 `slugify` 只能正確處理 ASCII，這是個問題。`slugify('Crème Brûlée')` 會變成 `'cr-me-br-l-e'`，韓文標題乾脆變成空字串。請照下面的要求修改。
+
+    簽章：`slugify(input: string, options?: SlugifyOptions): string`，`interface SlugifyOptions { separator?: string }`(`SlugifyOptions` 型別也從 `src/index.ts` export)。
+
+    規則：
+    1. 結果是小寫。
+    2. 去掉拉丁字母的變音符號(重音)：`slugify('Crème Brûlée')` → `'creme-brulee'`，`slugify('ÉCOLE Française')` → `'ecole-francaise'`。
+    3. 韓文等其他文字系統的字母和數字原樣保留：`slugify('안녕 세상')` → `'안녕-세상'`，`slugify('React 훅 정리 2편')` → `'react-훅-정리-2편'`。(結果裡的韓文必須是一般的合成形式(NFC)字串。)
+    4. 連續的非字母/數字字元換成一個分隔符，首尾的分隔符去掉。
+    5. 可以用 `options.separator` 指定分隔符，預設值是 `'-'`：`slugify('  --Hello,   World!--  ', { separator: '_' })` → `'hello_world'`。
+    6. 空字串、只有空白、只有符號的輸入回傳 `''`。
+
+    既有行為(`slugify('Hello, World!')` → `'hello-world'`，`'Version 2.0 Release'` → `'version-2-0-release'`)必須保持。
+
+- task: c-l1-02
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    taskboard 狀態流轉方面的 bug。想把任務取消(`cancelled`)時，不管是 todo 還是 in_progress，總是回傳 409。另外，改成跟目前狀態相同的狀態的請求(例如 todo → todo)也回傳 409，這種情況不應該報錯，直接什麼都不做才對。
+
+    正確的規則(`TaskService.changeStatus(taskId, status)`、`startTask` / `completeTask` / `cancelTask`，以及 `handlers.updateStatus({ params: { id }, body: { status } })` 都同樣適用)：
+    - todo → in_progress, cancelled 允許
+    - in_progress → todo, done, cancelled 允許
+    - done → in_progress 允許 (reopen)
+    - cancelled → 不能變成任何狀態(終止狀態)
+    - 上面沒有列出的流轉是 `ConflictError`，訊息沿用既有格式 `Invalid status transition: <from> -> <to>`(例如 `Invalid status transition: cancelled -> todo`)。處理器的回應是 409，body 為 `{ error: '<那條訊息>' }`。
+    - 請求變成跟目前相同的狀態時，不報錯，原樣回傳目前的任務，也不儲存，所以 `updatedAt` 不能變。處理器回傳 200。
+
+    對未知 status 值回傳 400 等其餘行為維持原樣。
+
+- task: c-l1-03
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit `wordWrap(text, width)` 的改進需求。想把它用在 CLI 的說明輸出上，但有兩個問題。
+
+    1) 輸入裡原有的換行(`\n`)全都不見了，被併成一個段落。請對輸入的每一行分別做 wrap，再用 `\n` 把結果接回去。空行(段落分隔)和只有空白的行保留為空行。在一行之內，跟現在一樣把連續的空格/tab 當成單字分隔，首尾空白丟掉。
+       - `wordWrap('aaa bbb\n\nccc ddd', 3)` → `'aaa\nbbb\n\nccc\nddd'`
+       - `wordWrap('the quick brown\nfox', 10)` → `'the quick\nbrown\nfox'`
+       - `wordWrap('a\n   \nb', 5)` → `'a\n\nb'`
+
+    2) 請加一個把比 `width` 長的單字切開的選項。簽章：`wordWrap(text: string, width: number, options?: WordWrapOptions): string`，`interface WordWrapOptions { breakLongWords?: boolean }`(預設值 `false`，`WordWrapOptions` 型別也從 `src/index.ts` export)。
+       - `false`(預設)時，跟現在一樣不切長單字，整個放在一行。
+       - `true` 時，把長單字從頭開始按每 `width` 個字元切成片段，每個片段像普通單字一樣照 greedy 規則排佈。所以最後一個(較短的)片段後面如果還放得下下一個單字，就接在同一行。
+       - `wordWrap('abcdefghij', 4, { breakLongWords: true })` → `'abcd\nefgh\nij'`
+       - `wordWrap('abcdefg hi', 5, { breakLongWords: true })` → `'abcde\nfg hi'`
+
+    輸入空字串回傳 `''`，`width` 不是正整數時跟現在一樣丟 `TextkitError`。
+
+- task: c-l1-04
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    請給 taskboard 加上截止日期功能。
+
+    1. 在建立任務的輸入(`NewTaskInput`)裡加一個選用欄位 `dueDate?: string | null`(`'YYYY-MM-DD'` 格式的日期字串)。`Task` 也加上 `dueDate: string | null` 欄位，沒有指定或為 `null` 時存成 `null`。
+    2. 驗證：給了 `dueDate` 但不是字串，或者不是 `YYYY-MM-DD` 格式(年 4 位、月/日 2 位)，或者是不存在的日期(`'2023-02-29'`、`'2024-13-01'`、`'2024-04-31'` 等)時，照既有驗證錯誤的方式丟 `ValidationError`，並在 `details` 裡放入剛好是 `'dueDate must be a valid date in YYYY-MM-DD format'` 的字串。這樣 `handlers.createTask` 就會跟原本一樣回傳 400 `{ error: 'Validation failed', details: [...] }`。(像 `'2024-02-29'` 這種閏年日期是有效的)
+    3. 新增 `TaskService.listOverdueTasks(today: string): Task[]`。`today` 也是 `'YYYY-MM-DD'`。只回傳有 `dueDate`、`dueDate < today`、而且 status 不是 `done`/`cancelled` 的任務(截止日期是今天的不算逾期)。按 `dueDate` 由小到大排序，相同則按建立順序。`today` 不是有效日期時丟 `ValidationError`，details 為 `['today must be a valid date in YYYY-MM-DD format']`。
+    4. 新增處理器 `handlers.listOverdueTasks(req)`：接收 `req.query.today`，回傳 200 `{ items: Task[] }`，`today` 缺少或不對時回傳 400(上面的 ValidationError 直接走既有的錯誤對應)。
+
+- task: c-l1-05
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    confkit 的 `deepMerge(...layers)` 有幾個 bug，請修一下。簽章(`deepMerge(...layers: ConfigObject[]): ConfigObject`)和基本行為(後面的圖層優先，巢狀物件按鍵合併，陣列整個取代)維持不變。
+
+    1. 輸入被改掉了。`const a = { db: { host: 'a', port: 1 } }; deepMerge(a, { db: { port: 2 } })` 之後，`a.db.port` 變成了 2。任何輸入圖層都不能被修改，結果物件也不能跟輸入共用巢狀物件/陣列的參考(改結果不應該影響輸入)。
+    2. 後面圖層的值是 `undefined` 時，不要覆寫前面圖層的值，而是忽略它。`null` 是明確的值，所以跟現在一樣覆寫。例：`deepMerge({ port: 8080 }, { port: undefined })` → `{ port: 8080 }`，`deepMerge({ port: 8080 }, { port: null })` → `{ port: null }`。
+    3. 陣列跟現在一樣整個取代，但結果裡放的必須是副本。
+    4. 安全：圖層裡如果有 `__proto__`、`constructor`、`prototype` 這些鍵(不管在最上層還是巢狀物件裡，例如 `JSON.parse('{"__proto__": {"polluted": true}}')`)，就忽略這些鍵，避免發生 prototype pollution，結果裡也不能把這些鍵當成 own property 放進去。
+
+- task: c-l2-01
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    請給 taskboard 的任務列表加上過濾和分頁。現在 `handlers.listTasks` 把所有任務放在 `{ items }` 裡全部回傳。請按層分開來做(過濾本身放在 repo，驗證和預設值放在 service，查詢字串的解析放在 handler)。
+
+    ## Service
+    新增 `TaskService.queryTasks(query?: TaskQuery): TaskPage`(原有的 `listTasks()` 跟現在一樣，仍然回傳完整陣列)。
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];       // 與其中任意一個相等 (OR)
+      assigneeId?: string | null;  // 字串表示該負責人，null 表示只要未指派的任務，省略表示不過濾
+      priority?: Priority;
+      search?: string;             // title 部分比對，忽略大小寫
+      page?: number;               // 從 1 開始，預設 1
+      pageSize?: number;           // 預設 20，最大 100
+    }
+    interface TaskPage {
+      items: Task[];
+      page: number;
+      pageSize: number;
+      total: number;       // 符合過濾條件的總數 (分頁之前)
+      totalPages: number;  // Math.ceil(total / pageSize)，total 為 0 時是 0
+    }
+    ```
+    - 有多個條件時是 AND。
+    - 按建立順序排序(先建立的任務在前)。
+    - page 超過最後一頁時不報錯，而是 `items: []`(total、totalPages 是正常值)。
+    - 值不對時丟 `ValidationError`(details 裡至少有 1 個說明字串)：status 裡有未知的值、未知的 priority、page 不是大於等於 1 的整數、pageSize 不是 1~100 之間的整數。
+    - `TaskQuery`、`TaskPage` 型別從 `src/index.ts` export。
+
+    ## Handler
+    `handlers.listTasks(req)` 解析 `req.query`(值全是字串)後傳給 `queryTasks`，回傳 200，body 是 `TaskPage`。
+    - `status`：逗號分隔的列表(`'todo,in_progress'`)
+    - `assigneeId`：使用者 id，或者 `'none'` 表示只要未指派的
+    - `priority`
+    - `q`：title 的搜尋詞
+    - `page`、`pageSize`：數字字串。不是整數的值(`'abc'`、`'1.5'`)或超出範圍的值回傳 400。
+
+    沒有查詢參數時回傳 `{ items: <前 20 個>, page: 1, pageSize: 20, total, totalPages }`。查詢不對時照既有的錯誤對應回傳 400 `{ error: 'Validation failed', details: [...] }`。
+
+- task: c-l2-02
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    請給 taskboard 加上任務的變更歷史(audit trail)。要能按任務查到是誰、在什麼時候、改了什麼。
+
+    ## 事件模型
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed';
+    interface AuditEvent {
+      id: string;               // 每個事件唯一的值
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;   // 操作的使用者 id，不知道就是 null
+      at: string;               // ISO 8601。和這次變更存下來的任務的 updatedAt 相同 (task.created 則是 createdAt)
+      changes: Record<string, { from: unknown; to: unknown }>;
+    }
+    ```
+    - `task.created`：`changes` 是 `{}`
+    - `task.assigned`：`{ assigneeId: { from: <之前的負責人或 null>, to: <新的負責人或 null> } }`(取消指派也是這個事件)
+    - `task.status_changed`：`{ status: { from: <之前的狀態>, to: <新的狀態> } }`
+    - 失敗的操作(驗證錯誤、404、409 等)不記錄。
+    - 把已經指派給某人的任務再次指派給同一個人，沒有任何變化，所以也不留事件。
+    - `AuditEvent`、`AuditEventType` 型別從 `src/index.ts` export。
+
+    ## Service (`TaskService`)
+    - 給會產生變更的方法加上最後一個選用參數 `actorId?: string | null`(省略則為 null)：`createTask(input, actorId?)`、`assignTask(taskId, userId, actorId?)`、`changeStatus(taskId, status, actorId?)`、`startTask(taskId, actorId?)`、`completeTask(taskId, actorId?)`、`cancelTask(taskId, actorId?)`。
+    - 新增 `getTaskHistory(taskId: string): AuditEvent[]` — 按發生順序回傳該任務的事件。任務不存在時跟原本一樣丟 `NotFoundError`(`Task not found: <id>`)。
+    - 事件的儲存做成和任務 repo 分開的 in-memory audit log，並在 `createApp` 裡接上。時間使用透過 `createApp({ now })` 注入的同一個 clock。
+
+    ## Handlers
+    - 原有的 `createTask`、`assignTask`、`updateStatus` 處理器把 `req.userId` 當成 actorId 傳下去(沒有就是 null)。
+    - 新處理器 `handlers.getTaskHistory(req)`：把 `req.params.id` 的歷史以 200 `{ items: AuditEvent[] }` 回傳，任務不存在時回傳 404 `{ error: 'Task not found: <id>' }`。
+
+- task: c-l2-03
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    請給 confkit 加上以 schema 為基礎的驗證 + 型別轉換功能。環境變數進來時全是字串，所以 `port` 一直是字串 `'8080'`，必填值缺少也要到執行時才會冒出來。
+
+    ## 1. `validateConfig(config, schema)` (從 `src/index.ts` export)
+    ```ts
+    type FieldSchema =
+      | { type: 'string'; required?: boolean; default?: string; enum?: string[] }
+      | { type: 'number'; required?: boolean; default?: number; integer?: boolean; min?: number; max?: number }
+      | { type: 'boolean'; required?: boolean; default?: boolean }
+      | { type: 'duration'; required?: boolean; default?: string | number }
+      | { type: 'object'; properties: Schema };
+    interface Schema { [key: string]: FieldSchema }
+    interface ConfigIssue { path: string; message: string }  // path 是 'db.port' 這樣的點號寫法
+    type ValidationResult = { ok: true; value: ConfigObject } | { ok: false; issues: ConfigIssue[] };
+    function validateConfig(config: ConfigObject, schema: Schema): ValidationResult;
+    ```
+    (`FieldSchema`、`Schema`、`ConfigIssue`、`ValidationResult` 型別也要 export)
+
+    規則：
+    - 轉換：`number` 欄位接受 number 或數字字串(`'8080'`)，轉成 number。`boolean` 只允許 true/false 或字串 `'true'`/`'false'`(像 `'yes'` 這種其他值算問題)。`duration` 是字串時用既有的 `parseDuration` 轉成 ms 數值，是數字時就直接當成 ms。`string` 只允許字串(不把數字轉成字串)。
+    - 沒有值時(鍵不存在或為 undefined)：有 `default` 就用 default(duration 的 default 也轉成 ms)，`required: true` 就報問題 `'is required'`，兩者都不是就在結果裡省略這個鍵。
+    - `object` 欄位：沒有值時當成空物件來檢查下層欄位(所以下層的 default 會被填上，下層的 required 也會被回報)。值不是物件時只報一個 `'expected object'`，不檢查下層欄位。
+    - 問題的訊息必須剛好是下面這些字串：
+      - 型別不符/轉換失敗：`'expected string'`、`'expected number'`、`'expected boolean'`、`'expected duration'`、`'expected object'`
+      - number：`integer: true` 但不是整數時 `'must be an integer'`，小於 min 時 `'must be >= <min>'`，大於 max 時 `'must be <= <max>'`(例如 `'must be <= 65535'`)
+      - string 違反 enum：`'must be one of: <用 ", " join 起來的 enum 值>'`(例如 `'must be one of: development, production'`)
+      - schema 裡沒有的鍵：`'unknown key'`
+    - 一個欄位最多只報一個問題(檢查順序：型別 → integer → min → max，string 是 型別 → enum)。
+    - 把所有欄位的問題收集完再回傳(不在第一個錯誤處停下)。只要有一個問題就是 `ok: false`。問題陣列的順序無所謂。
+    - 不修改輸入的 config 物件，`value` 是套用了轉換和預設值之後的新物件。
+
+    ## 2. `loadConfig` 的 `schema` 選項
+    在 `LoadOptions` 裡加上 `schema?: Schema`。有給的話，就用 `validateConfig` 驗證合併後的結果，成功則回傳轉換後的 `value`，失敗則 throw `ConfigError`。這個錯誤的 `message` 以 `'Invalid configuration'` 開頭，`issues` 屬性裡必須有 `ConfigIssue[]`。沒有 `schema` 時維持既有行為。
+
+- task: c-l3-01
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    請給 taskboard 加上 **專案 · 成員關係 · 以角色為基礎的權限**。現在任務全都放在同一個籃子裡，誰都可以改任何東西。我們想把任務按專案分組，並在專案內按角色限制能做的事。請沿用既有的分層結構(models / repo / service / handlers / app)。這次會新增儲存庫、服務、處理器，原有的任務部分也要一起改。
+
+    呼叫者用 `Request.userId` 辨識(已有的欄位)。下面的處理器都必須和原有的任務處理器一起放在 `createApp().handlers` 裡。
+
+    ## 1. 模型
+    ```ts
+    type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+    interface Project {
+      id: string;            // 'project-1', 'project-2', ... (每個應用從 1 開始)
+      name: string;          // 去掉首尾空白，1~60 個字元，在專案之間唯一 (忽略大小寫)
+      description: string;   // 預設 ''
+      archived: boolean;     // 預設 false
+      createdBy: string;     // 建立者的使用者 id
+      createdAt: string;     // ISO 8601，使用 AppOptions.now 的時鐘。建立時和 updatedAt 相同
+      updatedAt: string;
+    }
+    interface Membership { projectId: string; userId: string; role: ProjectRole; addedAt: string }
+    ```
+    給 `Task` 加上 `projectId: string | null`。不屬於任何專案的任務是 `null`。
+
+    ## 2. 權限表
+    請從 `src/index.ts` export `can(role: ProjectRole, action: ProjectAction): boolean`。
+
+    | action | owner | admin | member | viewer |
+    |---|---|---|---|---|
+    | `project.read` | O | O | O | O |
+    | `project.update` | O | O | X | X |
+    | `project.archive` | O | X | X | X |
+    | `member.manage` | O | O | X | X |
+    | `task.read` | O | O | O | O |
+    | `task.write` | O | O | O | X |
+
+    ## 3. 通用規則
+    檢查順序如下，在前面的步驟被擋下就回傳那一步的回應。
+    1. 呼叫者：沒有 `userId` 或者是未註冊的使用者時回傳 401 `{ error: 'Authentication required' }`。未啟用(`active: false`)的使用者回傳 403。
+    2. 物件：專案不存在時回傳 404 `{ error: 'Project not found: <id>' }`，任務不存在時跟原本一樣回傳 404 `Task not found: <id>`。
+    3. 成員與角色：不是該專案的成員時回傳 403 `{ error: 'Not a member of project: <id>' }`。是成員但權限表不允許時回傳 403(訊息自訂)。
+    4. 歸檔：對已歸檔的專案做寫入操作(屬於 `project.update`、`member.manage`、`task.write` 的所有操作，以及成員退出)時回傳 409 `{ error: 'Project is archived: <id>' }`。讀取可以。
+    5. 然後才是各個操作的其餘規則。
+
+    輸入驗證失敗(400)跟原本一樣是 `{ error: 'Validation failed', details: [...] }`。400 和其他失敗同時出現時的優先順序不作規定(不會檢查這種情況)。
+    新的錯誤類別 `UnauthorizedError`(401)、`ForbiddenError`(403)請作為 `AppError` 的子類別建立並 export(建構函式的第一個參數是訊息)。
+
+    ## 4. 專案處理器
+    | 處理器 | 請求 | 所需權限 | 成功回應 |
+    |---|---|---|---|
+    | `createProject` | `body: { name, description? }` | 已登入的啟用使用者 | 201 `Project`。建立者成為 `owner` 成員 |
+    | `getProject` | `params.id` | `project.read` | 200 `Project` |
+    | `listProjects` | `query.includeArchived?` | 已登入 | 200 `{ items: Project[] }` 只包含呼叫者是成員的專案，按建立順序。已歸檔的只有 `includeArchived === 'true'` 時才包含 |
+    | `updateProject` | `params.id`, `body: { name?, description? }` | `project.update` | 200 `Project` (更新 `updatedAt`) |
+    | `archiveProject` / `unarchiveProject` | `params.id` | `project.archive` | 200 `Project` |
+    | `listMembers` | `params.id` | `project.read` | 200 `{ items: Membership[] }` 按加入順序 |
+    | `addMember` | `params.id`, `body: { userId, role }` | `member.manage` | 201 `Membership` |
+    | `changeMemberRole` | `params.id`, `params.userId`, `body: { role }` | `member.manage` | 200 `Membership` |
+    | `removeMember` | `params.id`, `params.userId` | `member.manage` 或本人退出 | 200 `{ unassignedTaskIds: string[] }` |
+
+    細則：
+    - 名稱的驗證訊息：`'name is required'`(沒有，或是空字串、只有空白)，`'name must be at most 60 characters'`。`description` 不是字串時回傳 400。名稱已被佔用時回傳 409(改成自己目前的名稱不算衝突，包括只改大小寫的情況)。`updateProject` 裡省略 `name` 時名稱不變。
+    - `addMember`：`role` 不是四種角色之一時回傳 400 `details: ['role must be one of: owner, admin, member, viewer']`，沒有 `userId` 時回傳 400。目標使用者不存在時回傳 404 `User not found: <id>`，未啟用時回傳 409 `User is inactive: <id>`，已經是成員時回傳 409。
+    - `owner` 角色只有 owner 能授予。admin 想授予 `owner`(新增或變更)、想改 owner 成員的角色、想移除 owner，都回傳 403。
+    - 專案裡必須隨時至少有一個 owner。把最後一個 owner 降級，或移除最後一個 owner(包括本人退出)時回傳 409 `{ error: 'Project must keep at least one owner' }`。
+    - `changeMemberRole`、`removeMember` 的目標不是成員時回傳 404。
+    - `removeMember`：不管是什麼角色，都可以移除自己(退出)。被移除的使用者在 **該專案中** 負責的任務變為未指派(`assigneeId: null`，更新 `updatedAt`)，並把這些任務的 id 當成 `unassignedTaskIds` 回傳。其他專案的任務和不屬於任何專案的任務不動。
+    - 歸檔/取消歸檔時，即使已經處於那個狀態也回傳 200。
+
+    ## 5. 任務部分的改動
+    - `createTask`：有 `body.projectId` 時在該專案裡建立(需要 `task.write`)。不是字串時回傳 400。沒有時跟現在一樣是不屬於任何專案的任務(`projectId: null`)。
+    - 屬於專案的任務，`getTask` 需要 `task.read`，`assignTask`、`updateStatus` 需要 `task.write`(適用第 3 節的檢查順序，以任務所屬的專案為準)。
+    - 專案任務的負責人必須是該專案中不是 viewer 的成員。否則回傳 409 `{ error: 'User cannot be assigned in project: <userId>' }`。(使用者不存在的 404、未啟用的 409 仍然是既有規則優先。)
+    - `listTasks`：按建立順序回傳不屬於任何專案的任務 + 呼叫者是成員的專案裡的任務(匿名時只回傳不屬於任何專案的任務)。有 `query.projectId` 時只回傳該專案的任務，而且需要 `task.read`。
+    - **不屬於任何專案的任務必須和現在的行為完全一樣。** 匿名呼叫也可以，既有的測試必須原樣通過。`TaskService` 既有的呼叫形式(`createTask(input)`、`getTask(id)`、`listTasks()`、`assignTask(id, userId)`、`changeStatus(id, status)`)也請保持(呼叫者 id 以選用參數的形式加在後面)。
+
+    ## 6. 收尾
+    - `createApp()` 建立新的儲存庫和服務並接好，在 `handlers` 裡放入上面全部的處理器。
+    - 新的型別、類別和 `can` 從 `src/index.ts` export。
+    - 既有的測試(`npm test`)必須全部通過。
+
+- task: c-l3-02
+  lang: zh-Hant
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    請改一下 confkit 的結構。現在 `loadConfig` 把各層合併一次、回傳一個普通物件就結束了，所以 (1) 不知道某個值來自哪一層，(2) 沒有地方接入 JSON 或命令列參數這種新輸入，(3) 值之間不能互相參照，(4) 執行期間不能重新讀取。我們打算把輸入抽象成 **來源**，並在其上加上 **出處追蹤 · 參照替換 · 用於查詢的 Config 物件 · 重新讀取**。`loadConfig` 保留為跑在新結構之上的一層薄封裝。模組請按職責拆分(各個來源、合併與出處、替換、比較、遮蔽、Config 物件)。
+
+    下面的名字全部從 `src/index.ts` export。錯誤一律使用既有的 `ConfigError`。
+
+    ## 1. 來源
+    ```ts
+    interface ConfigSource { name: string; load(): ConfigObject }
+
+    objectSource(name: string, value: ConfigObject | (() => ConfigObject)): ConfigSource
+    iniSource(name: string, text: string | (() => string)): ConfigSource      // 既有的 parseIni
+    jsonSource(name: string, text: string | (() => string)): ConfigSource
+    envSource(env: Record<string, string | undefined>, prefix = 'APP_', name = 'env'): ConfigSource   // 既有的 fromEnv
+    argvSource(argv: string[], name = 'argv'): ConfigSource
+    ```
+    - 建立來源時什麼都不讀，每次呼叫 `load()` 時重新讀取。傳入函式時，每次 `load()` 都重新呼叫這個函式；`envSource` 每次都重新查看傳入的 env 物件。
+    - `objectSource` 的 `load()` 回傳深拷貝(拿到的一方修改它，原物件也不變)。
+    - `jsonSource`：只接受最上層是物件的 JSON。解析失敗或最上層不是物件(陣列、數字、null)時，在 `load()` 裡丟 `ConfigError`，訊息裡帶上來源的名字。JSON 裡的 `null` 值原樣保留。
+    - `argvSource` 的規則：
+      - `--db.host=localhost`：`=` 後面是值(`--name=` 是空字串，值裡面的 `=` 原樣保留)。
+      - `--port 8080`：沒有 `=`，而且下一個 token 不以 `--` 開頭時，那個 token 就是值(`--offset -5` 是 -5)。
+      - `--debug`：沒有值時是 `true`。
+      - `--no-debug`：`false`。不把下一個 token 當成值取走。
+      - 鍵裡的 `.` 表示巢狀。值按和 INI 值相同的規則轉換(`true`/`false`、數字、用引號包起來就是字串)。
+      - 出現 `--` 之後的內容全部忽略。既不是選項也不是選項值的 token 忽略。
+
+    ## 2. 合併與出處
+    ```ts
+    resolveSources(sources: ConfigSource[]): { value: ConfigObject; origins: Record<string, string> }
+    ```
+    - 按順序 `load()` 後合併。後面的來源勝出，物件之間按鍵合併，其他的值(包括陣列)整個取代(和既有的 `deepMerge` 規則相同)。
+    - `origins` 是結果裡每個 **葉子**(不是物件的值。陣列和 null 也是葉子)路徑對應的、給出該值的來源名。路徑是 `'db.host'` 這樣的點號寫法。物件變成純量，或者純量變成物件時，舊路徑的出處必須消失。
+    - 來源名重複時丟 `ConfigError`(訊息裡包含那個名字)。
+
+    ## 3. 參照替換
+    ```ts
+    interpolate(config: ConfigObject): ConfigObject   // 回傳新物件，不改變輸入
+    ```
+    - 把字串值裡的 `${路徑}` 換成該路徑的值。陣列裡的字串也在範圍內。花括號裡首尾的空白忽略。
+    - 整個字串只有一個參照時(`'${port}'`)，保持被參照值的型別(數字還是數字)。和其他字元混在一起時，當成字串串接。
+    - 被參照的值裡還有參照時，一直展開到底。
+    - `$${` 不做替換，變成字面上的 `${`。
+    - 錯誤(`ConfigError`，`path` 是包含該參照的值的路徑)：
+      - 路徑不存在：訊息裡包含 `unknown reference`
+      - 循環(包括參照自己)：訊息裡包含 `circular reference`
+      - 被參照的值不是字串、數字、布林值(物件、陣列、null)
+
+    ## 4. 比較
+    ```ts
+    interface ConfigChange { path: string; before: ConfigValue | undefined; after: ConfigValue | undefined }
+    diffConfig(before: ConfigObject, after: ConfigObject): ConfigChange[]
+    ```
+    以葉子為單位，把新增(`before: undefined`) · 刪除(`after: undefined`) · 變更按 path 由小到大回傳。陣列內容相同就算相同的值。葉子變成物件時，表現為舊葉子的刪除和新葉子的新增。
+
+    ## 5. Config 物件
+    ```ts
+    createConfig(options: {
+      sources: ConfigSource[];
+      interpolate?: boolean;   // 預設 true
+      secrets?: string[];      // 要遮蔽的路徑模式
+    }): Config
+
+    interface Config {
+      get(path: string): ConfigValue | undefined;
+      has(path: string): boolean;
+      require(path: string): ConfigValue;
+      getString(path: string, fallback?: string): string;
+      getNumber(path: string, fallback?: number): number;
+      getBoolean(path: string, fallback?: boolean): boolean;
+      getDuration(path: string, fallback?: number): number;   // ms
+      origin(path: string): string | undefined;
+      explain(): Array<{ path: string; value: ConfigValue; source: string }>;
+      toObject(options?: { redact?: boolean }): ConfigObject;
+      reload(): ConfigChange[];
+      onChange(listener: (changes: ConfigChange[]) => void): () => void;
+    }
+    ```
+    - `createConfig` 會立刻讀取(來源有錯或替換有錯就在這裡 throw)。值是合併之後又做完替換的值，出處以合併時為準。
+    - `require` 和按型別讀取時如果沒有值，丟 `ConfigError`(訊息裡包含 `missing required config`，並設定 `path`)。按型別讀取時如果給了 `fallback`，**只有在沒有值時** 才回傳它。
+    - 型別不符時丟 `ConfigError`(設定 `path`，訊息裡包含下面的字樣)：
+      - `getString`：只接受字串。`expected string`
+      - `getNumber`：數字或數字字串(`'3'`)。`expected number`
+      - `getBoolean`：布林值或 `'true'`/`'false'`。`expected boolean`
+      - `getDuration`：數字(ms)或既有 `parseDuration` 能讀的字串。`expected duration`
+    - `origin(path)`：葉子路徑的來源名。物件路徑或不存在的路徑回傳 `undefined`。
+    - `explain()`：按 path 由小到大列出所有葉子。`toObject()`：深拷貝。
+    - `secrets`：點號寫法的路徑模式，`*` 對應一個片段(`db.password`、`*.token`、`api.*`)。符合模式的路徑及其下層都是機密。`toObject({ redact: true })` 把機密的值換成 `'***'`(機密路徑是物件時，整個物件變成 `'***'`)，`explain()` 把機密葉子的 `value` 輸出為 `'***'`。`get` 等直接讀取回傳真正的值。
+    - `reload()`：重新讀取所有來源並替換，回傳和之前的值做 `diffConfig` 的結果。只要有一處變更，就用這個陣列把已註冊的監聽器各呼叫一次。沒有變更就不呼叫。重新讀取時出錯就 throw，而且 **原樣保持之前的狀態**，也不呼叫監聽器。
+    - `onChange` 回傳一個取消註冊的函式。
+
+    ## 6. loadConfig
+    - 既有行為維持不變(defaults < sources < env，不做替換)。既有的測試必須通過。
+    - 在 `LoadOptions` 裡加上 `argv?: string[]`(優先順序最高)和 `interpolate?: boolean`(預設 false)。
+    - 內部請用上面的來源和 `createConfig` 來寫。

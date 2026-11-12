@@ -176,9 +176,12 @@ const DEBUG = /디버그|원인|왜 .*(안|실패)|デバッグ|原因|なぜ.*(
 const DESIGN = /설계|아키텍처|設計|アーキテクチャ|设计|架构|架構|\b(?:design|architecture)\b/i;
 const REFACTOR = /리팩터|리팩토|リファクタ|重构|重構|\brefactor/i;
 const FEATURE = /추가|구현|만들어|새 |追加|実装|作って|作成|新しい|新規|添加|新增|增加|实现|實現|實作|创建|創建|新建|\b(?:new|add|implement|create)\b/i;
-// A path or file name in prose. Japanese and Chinese text runs straight into it and uses full-width
-// punctuation and brackets, so kana, Han characters and those marks end a name like a space does.
-const CJK_EDGE = '\\u3040-\\u30ff\\u3400-\\u9fff\\u3000-\\u303f\\uff00-\\uffef';
+// A path or file name in prose. Japanese, Chinese and Korean text runs straight into it: Japanese and
+// Chinese write without spaces and use full-width punctuation and brackets, and a Korean particle attaches
+// directly to the name (`app.ts에서`, `README.md를`). So kana, Han characters, Hangul syllables and those
+// marks end a name like a space does. The particle stays outside the captured path (it is a look-around
+// edge, never consumed), so no character that is part of the path is stripped.
+const CJK_EDGE = '\\u3040-\\u30ff\\u3400-\\u9fff\\uac00-\\ud7a3\\u3000-\\u303f\\uff00-\\uffef';
 const FILE_REF = new RegExp(`(?:^|[\\s\`'"(${CJK_EDGE}])((?:[\\w.-]+\\/)+[\\w.-]+\\.\\w{1,5}|[\\w-]+\\.(?:ts|tsx|js|mjs|py|go|rs|java|kt|rb|php|cs|vue|css|scss|json|ya?ml|md|sql))(?=$|[\\s\`'"),:${CJK_EDGE}])`, 'g');
 // Lists and sections as Japanese and Chinese write them: "・" bullets, "1、" / "（1）" / "①" numbers (often
 // with no space after), "【...】" and "■" section lines. Added to the Markdown forms, not instead of them.
@@ -267,10 +270,18 @@ export function promptFeatures(prompt: string, mentionedFiles?: string[]): Promp
 
 // Thresholds of the stage-1 rules. A written specification: long prose with sections or declared types
 // and many requirement items. A small request: short prose, few items, no sections.
+// SPEC_PROSE and SMALL_PROSE are character counts calibrated on English. CJK writes more content per
+// character and without spaces, so the same request is far fewer characters: on the eval sets the median
+// spec in English is ~1420 characters, in Korean ~640, Japanese ~700, Chinese (Simplified and Traditional)
+// ~540. SCRIPT_LENGTH_WEIGHT scales a prompt's character count back onto the English scale by the detected
+// script (decision 139), so one threshold per rule works for every language instead of a threshold per
+// language. The length is only a gate — the spec and small rules also require their item and section
+// counts — so the weight never turns a short prompt into a specification on its own.
 const SPEC_PROSE = 900;
 const SPEC_ITEMS = 8;
 const SMALL_PROSE = 700;
 const SMALL_ITEMS = 3;
+export const SCRIPT_LENGTH_WEIGHT: Record<string, number> = { latin: 1, ko: 1.8, ja: 2, zh: 2.5 };
 // Files named in the prose. Naming a file is not changing it (tests, helpers and references are named
 // too): on SWE-bench issues that named four or more files, the fix still touched one. So only a long
 // list settles the answer; a shorter one moves the score.
@@ -292,10 +303,18 @@ export function triage(input: TriageInput, presets: Record<Level, TeamPreset> = 
   if (attached) why.push('log attached');
   if (files >= 2) why.push(`${files} files`);
 
+  // prose length on the English scale (decision 139): CJK packs more per character, so weight by script.
+  const effProse = num(f, 'proseChars') * (SCRIPT_LENGTH_WEIGHT[String(f.script)] ?? 1);
   const breadth = num(f, 'breadthWords') > 0;
-  const spec = num(f, 'proseChars') >= SPEC_PROSE && items >= SPEC_ITEMS && (num(f, 'headings') >= 2 || num(f, 'typeDecls') >= 1) && !attached;
+  // A written specification has sections: long prose with >= 2 headings and many requirement items. Declared
+  // types alone (no sections) are not enough — a small change is often written up with an interface block but
+  // no sections, and once CJK length is weighted onto the English scale that length no longer separates it.
+  const spec = effProse >= SPEC_PROSE && items >= SPEC_ITEMS && num(f, 'headings') >= 2 && !attached;
   const l3 = num(f, 'ruleL3') > 0;
   const l2 = num(f, 'ruleL2') > 0;
+  // `small` keeps the raw character count: a small change can be written up at length, and weighting the
+  // lower bound up would push a genuinely small CJK request (a short change with a longish wording) out of
+  // "small" and into stage 2. Only the upper (specification) bound is weighted, where CJK under-reaches.
   const small = num(f, 'proseChars') < SMALL_PROSE && items <= SMALL_ITEMS && num(f, 'headings') === 0 && files < SOME_FILES;
   const everywhere = QUANTIFIER.test(p.prose);
 
@@ -331,7 +350,7 @@ export function triage(input: TriageInput, presets: Record<Level, TeamPreset> = 
   let score = 0.45;
   if (l2) score += 0.1;
   if (everywhere || files >= SOME_FILES) score += 0.1;
-  if (items >= SPEC_ITEMS || num(f, 'proseChars') >= SPEC_PROSE) score += 0.1;
+  if (items >= SPEC_ITEMS || effProse >= SPEC_PROSE) score += 0.1;
   if (num(f, 'headings') >= 2 || num(f, 'typeDecls') >= 1) score += 0.05;
   if (small) score -= 0.1;
   if (attached) score -= 0.1;
