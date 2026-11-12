@@ -54,8 +54,9 @@ environment) is still refused, and with `"Bash(cat *)"` allowed, `cat .env` stil
 
 They can't write outside their subtask's paths (`[scope: ...]`), or to CI configuration, `.claude/`,
 `.git/`, `.mcp.json`, `.husky/`, `CLAUDE.md` and other files that change how the repository or the agent
-runs. They can't read, search for or list credential files (`.env`, `.npmrc`, `~/.ssh`, `~/.aws`, ...) or
-the router's folder (`~/.agentic-router`); `.env.example` and other templates are fine. They can't run
+runs. They can't read, search for or list credential files (`.env`, `.npmrc`, `~/.ssh`, `~/.aws`, the macOS
+keychains, desktop keyrings, ...) or the router's folder (`~/.agentic-router`), under any name the same
+directory has (a home reached through a link counts as the home); `.env.example` and other templates are fine. They can't run
 commands outside the worker allowlist (network tools, shells, interpreters with inline code), print the
 environment or reference secret-looking variables, use shell syntax the guard can't follow (`$'...'`,
 `${VAR}`, command substitution, comments, redirection to files), install packages from anywhere but the
@@ -84,6 +85,7 @@ The refusal message says what to do instead. The common ones:
 | global or out-of-project installs (`npm install -g`, `--prefix`, `pip install --user`, ...) | install into the project |
 | a build/test/install command writing into `.git`, CI config, `.claude` or the router policy | point the output elsewhere |
 | a path under `/proc` or `/dev` (except `/dev/null` and the std streams) | the file's ordinary path |
+| on Windows, an 8.3 short name (`PROGRA~1`), an NTFS stream (`file:name`), a UNC or `\\?\` path, or a name ending in a dot or space | the full long path; a short name is fine only where it is part of the session's own working directory, home or temp folder |
 | a brace expansion over 64 results, or a command line over 20,000 characters | split the command |
 | a recursive grep over a directory with an un-ignored credential file | `rg`, the Grep tool, or name the files |
 | a Bash search whose pattern is exactly a credential file name (`grep ".env" ...`) | the Grep tool, or a longer pattern like `process.env` |

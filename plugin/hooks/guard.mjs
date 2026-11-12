@@ -33,6 +33,12 @@ export const CREDENTIAL_PATHS = [
   '~/.config/gh/**', '~/.kube/**', '~/.gnupg/**', '~/.pgpass', '~/.pypirc', '~/.cargo/credentials*',
   '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json', '**/.env', '**/.env.*',
 ];
+/** Further credential stores, kept here (not mirrored in core): the macOS keychains and the Linux desktop keyrings and password stores. */
+export const GUARD_LOCAL_CREDENTIAL_PATHS = [
+  '~/Library/Keychains/**', '~/Library/Cookies/**', '~/Library/Application Support/com.apple.TCC/**',
+  '~/.local/share/keyrings/**', '~/.password-store/**', '~/.config/op/**', '~/.config/git/credentials', '~/.config/pip/pip.conf', '~/.config/npm/npmrc',
+];
+const ALL_CREDENTIAL_PATHS = [...CREDENTIAL_PATHS, ...GUARD_LOCAL_CREDENTIAL_PATHS];
 // Both root and nested forms: the session cwd can be above the repository root (audit #4).
 export const PROTECTED_WRITE_PATHS = [
   '**/.env', '**/.env.*', '.claude/**', '**/.claude/**', '.github/workflows/**', '**/.github/workflows/**',
@@ -148,9 +154,21 @@ function realpathNearest(abs) {
     }
   }
 }
+/**
+ * macOS keeps user data on a second volume that is also visible as /System/Volumes/Data: a file under
+ * /Users/me is the same file as /System/Volumes/Data/Users/me, and realpath does not fold the two.
+ */
+export function dataVolumePath(p, platform = process.platform) {
+  const m = platform === 'darwin' ? /^\/System\/Volumes\/Data(\/.*)?$/i.exec(String(p)) : null;
+  return m ? (m[1] || '/') : String(p);
+}
+/** Whether names are compared without case: yes on Windows and macOS, no on Linux (decision 96: never looser than the file system for an allow). */
+const FS_NOCASE = process.platform !== 'linux';
+const fsCase = s => (FS_NOCASE ? s.toLowerCase() : s);
+
 /** Lexical + realpath canonical forms (POSIX slashes). Both are checked so `..`, UNC, /c/, and symlinks are all covered. */
 function canonicalForms(p) {
-  let s = stripExtended(String(p));
+  let s = stripExtended(dataVolumePath(String(p)));
   s = uncToDrive(s);
   s = cygToDrive(s);
   s = gitBashToDrive(s);
@@ -250,21 +268,23 @@ export function matchesAny(candidate, patterns, home) {
 /** Matcher for an ABSOLUTE filesystem path: both canonical forms are tested against each pattern. */
 function matchesPath(candidate, patterns, userHome) {
   const forms = canonicalForms(candidate);
-  return patterns.some(p => {
-    const re = globToRegExp(toPosix(expandHome(p, userHome)));
+  // A home that is reached through a link (/home/u -> /data/home/u) has two names, and a path may use either.
+  const homes = userHome ? canonicalForms(userHome) : [undefined];
+  return patterns.some(p => (p.startsWith('~/') ? homes : [userHome]).some(h => {
+    const re = globToRegExp(toPosix(expandHome(p, h)));
     return forms.some(f => re.test(f));
-  });
+  }));
 }
 
 /** Fixed (glob-free) base dir of each `~`-rooted credential pattern — for Grep/Glob containment. */
 function credentialDirs(userHome) {
   const out = [];
-  for (const pat of CREDENTIAL_PATHS) {
+  for (const pat of ALL_CREDENTIAL_PATHS) {
     if (!pat.startsWith('~/')) continue;
     const base = pat.replace(/\/\*.*$/, '');                 // strip the first glob segment onward
-    out.push(toPosix(expandHome(base, userHome)).toLowerCase().replace(/\/+$/, ''));
+    for (const h of canonicalForms(userHome)) out.push(toPosix(expandHome(base, h)).toLowerCase().replace(/\/+$/, ''));
   }
-  return out;
+  return [...new Set(out)];
 }
 /** True if a Grep/Glob rooted at dirPath would touch (be at, under, or above) a credential location. */
 function overlapsCredential(dirPath, userHome) {
@@ -276,10 +296,12 @@ function overlapsCredential(dirPath, userHome) {
 }
 /** True if `p` resolves to `dir` or anything under it. */
 function isUnder(p, dir) {
-  const base = canonicalForms(dir)[0].toLowerCase().replace(/\/+$/, '');
+  // every spelling of the directory (as given, and with links resolved) against every spelling of the path;
+  // without case, since this is used to refuse
+  const bases = canonicalForms(dir).map(b => b.toLowerCase().replace(/\/+$/, ''));
   return canonicalForms(p).some(form => {
     const c = form.toLowerCase().replace(/\/+$/, '');
-    return c === base || c.startsWith(base + '/');
+    return bases.some(base => c === base || c.startsWith(base + '/'));
   });
 }
 
@@ -288,7 +310,7 @@ function isUnder(p, dir) {
 /** `.env.example` and its kin are templates that repositories commit: readable, and writable once granted. */
 const ENV_TEMPLATE_RE = /^\.env\.(?:example|sample|template|dist|defaults?)$/i;
 const ENV_PATTERNS = new Set(['**/.env', '**/.env.*']);
-const HOME_CREDENTIAL_PATHS = CREDENTIAL_PATHS.filter(p => !ENV_PATTERNS.has(p));
+const HOME_CREDENTIAL_PATHS = ALL_CREDENTIAL_PATHS.filter(p => !ENV_PATTERNS.has(p));
 export function isEnvTemplate(p) {
   return ENV_TEMPLATE_RE.test(toPosix(String(p)).split('/').pop() ?? '');
 }
@@ -303,11 +325,21 @@ function credentialHit(abs, userHome) {
  * a device or extended-length prefix, an NTFS stream (":" after the drive letter), an 8.3 short name
  * (GITHUB~1), and a segment ending in a dot or a space (".env." opens ".env").
  */
-export function windowsPathProblem(p, platform = process.platform) {
+export function windowsPathProblem(p, platform = process.platform, bases = []) {
   if (platform !== 'win32') return null;
   const s = String(p);
   if (/^[\\/]{2}[?.][\\/]/.test(s)) return 'a device or extended-length path (\\\\?\\ or \\\\.\\)';
-  const rest = s.replace(/^[A-Za-z]:/, '');
+  // A directory the guard was given (the working directory, the home, the temp directory) may itself be
+  // spelled with a short name: Windows hands out %TEMP% as C:\Users\LONGNA~1\… for a long or non-ASCII
+  // account name. That prefix is not the caller's choice of spelling, so only what follows it is examined.
+  const norm = toPosix(s).replace(/^\/([A-Za-z])\//, '$1:/');   // the Git Bash drive form /c/… is C:/…
+  const lower = norm.toLowerCase();
+  let skip = 0;
+  for (const b of bases) {
+    const base = toPosix(String(b ?? '')).toLowerCase().replace(/\/+$/, '');
+    if (base.length > skip && /^[a-z]:\//.test(base) && (lower === base || lower.startsWith(base + '/'))) skip = base.length;
+  }
+  const rest = skip ? norm.slice(skip) : s.replace(/^[A-Za-z]:/, '');
   if (rest.includes(':')) return 'an NTFS stream name (":" inside the path)';
   for (const seg of rest.split(/[\\/]+/)) {
     if (/^[^\\/]{1,8}~\d{1,3}(?:\.[^\\/.]{0,3})?$/.test(seg)) return `an 8.3 short name (${seg})`;
@@ -316,13 +348,20 @@ export function windowsPathProblem(p, platform = process.platform) {
   return null;
 }
 
-/** True when EVERY canonical form of `p` (as written, and with links resolved) is `dir` or under one of its forms. */
+/**
+ * True when `p`, with links resolved, is `dir` or under it (with links resolved). Used to ALLOW, so names are
+ * compared the way the file system compares them: on Linux "Repo" is not "repo". The spelling of the path does
+ * not matter: a project opened as /tmp/x on macOS is /private/tmp/x, and both name the same files.
+ */
 function allFormsUnder(p, dir) {
-  const bases = canonicalForms(dir).map(b => b.toLowerCase().replace(/\/+$/, ''));
-  return canonicalForms(p).every(form => {
-    const c = form.toLowerCase().replace(/\/+$/, '');
-    return bases.some(b => c === b || c.startsWith(b + '/'));
-  });
+  const real = forms => fsCase(forms[forms.length - 1]).replace(/\/+$/, '');
+  const base = real(canonicalForms(dir)), c = real(canonicalForms(p));
+  return c === base || c.startsWith(base + '/');
+}
+
+/** The directories a call was given by the session or the environment, as they were spelled (for windowsPathProblem). */
+function trustedBases(...dirs) {
+  return [...dirs, os.tmpdir()].filter(d => typeof d === 'string' && d !== '');
 }
 
 /** Names that are a credential store or hold one, as a single path segment (for globs, which cannot be resolved). */
@@ -693,6 +732,7 @@ export function classifyBash(command, opts = {}) {
   const stateHome = opts.routerHome ?? routerHome();
   const baseCwd = opts.cwd ?? process.cwd();
   const allow = [...ROUTER_BASH_ALLOW, ...(Array.isArray(opts.bashAllow) ? opts.bashAllow : [])];
+  const bases = trustedBases(baseCwd, opts.root, userHome, stateHome);
 
   if (String(command).length > MAX_COMMAND_CHARS) return `${DENY_NOT_ALLOWED} (the command line is longer than ${MAX_COMMAND_CHARS} characters, which is more than is checked)`;
   const { commands, refuse } = lexBash(String(command));
@@ -725,7 +765,7 @@ export function classifyBash(command, opts = {}) {
         if (named && (GLOB_CHARS.test(cand) || candidates.length > 1)) return `this command names ${named}, which is not allowed.`;
         if (GLOB_CHARS.test(cand)) continue;                 // a glob without a credential name: nothing to resolve
         if (/[\\/]/.test(cand) || /^\./.test(cand)) {
-          const w = windowsPathProblem(cmd0 === 'git' ? cand.replace(/^(?::(?:[0-3]:)?|[^:\\/]+:)(?![\\/])/, '') : cand);
+          const w = windowsPathProblem(cmd0 === 'git' ? cand.replace(/^(?::(?:[0-3]:)?|[^:\\/]+:)(?![\\/])/, '') : cand, process.platform, bases);
           if (w && !/^[a-z][a-z0-9+.-]*:\/\//i.test(cand)) return `this command has a path argument with ${w}, which is not allowed.`;
         }
         if (/\\/.test(cand) && (/^~/.test(cand) || cand.includes('/'))) return 'this command has a path argument with a backslash escape in a POSIX-style path, which cannot be checked safely; it is not allowed.';
@@ -739,11 +779,12 @@ export function classifyBash(command, opts = {}) {
           // any argument inside a protected place is refused: .git (hooks run at the next commit), CI
           // configuration, .claude, the project's router policy.
           if (!READ_ONLY_COMMANDS.has(cmd0) && opts.root) {
-            const rel = toPosix(path.relative(canonicalForms(opts.root)[0], abs));
-            if (rel && !rel.startsWith('..') && !/^[A-Za-z]:/.test(rel) && !isEnvTemplate(rel)
-              // the path itself, or a directory whose content is protected (--outDir .claude)
-              && [rel, `${rel}/x`].some(r => isProtectedPath(r, ['.git', '**/.git']) || isNeverGrantable(r)))
-              return `this command names ${rel}, a protected path (CI config, .git, .claude, …), and ${cmd0} can write files; it is not allowed.`;
+            for (const { rel, outsideRepo } of relForms(opts.root, abs)) {
+              if (rel && !outsideRepo && !isEnvTemplate(rel)
+                // the path itself, or a directory whose content is protected (--outDir .claude)
+                && [rel, `${rel}/x`].some(r => isProtectedPath(r, ['.git', '**/.git']) || isNeverGrantable(r)))
+                return `this command names ${rel}, a protected path (CI config, .git, .claude, …), and ${cmd0} can write files; it is not allowed.`;
+            }
           }
         }
       }
@@ -765,7 +806,7 @@ export function classifyBash(command, opts = {}) {
       const target = words[1] === undefined ? '~' : words[1];
       const t = stripOuterQuotes(target);
       if (t === '-' || /[$`*?[{]/.test(t) || /^~[^/\\]/.test(t) || /['"]/.test(t)) return 'this command has a cd target that cannot be checked safely; it is not allowed.';
-      const w = windowsPathProblem(t);
+      const w = windowsPathProblem(t, process.platform, bases);
       if (w) return `this command has a cd target with ${w}, which is not allowed.`;
       vcwd = resolvePathArg(t, vcwd, userHome, opts.msys);
       if (credentialHit(vcwd, userHome) || credentialDirs(userHome).some(d => vcwd.toLowerCase() === d || vcwd.toLowerCase().startsWith(d + '/')))
@@ -1111,8 +1152,9 @@ function packageScriptsChanged(root, dir = root) {
   try {
     const file = path.join(dir, 'package.json');
     if (!fs.existsSync(file)) return false;
-    const rel = toPosix(path.relative(root, file));
-    if (rel.startsWith('..')) return false;
+    const inRepo = relForms(root, file)[0];
+    if (!inRepo || inRepo.outsideRepo) return false;
+    const rel = inRepo.rel;
     const wt = JSON.parse(fs.readFileSync(file, 'utf8'));
     const show = spawnSync('git', ['-C', root, 'show', `HEAD:${rel}`], { encoding: 'utf8', timeout: 2000 });
     if (show.status !== 0) return Object.keys(wt.scripts ?? {}).length > 0 && fs.existsSync(path.join(root, '.git'));   // not in HEAD: a new file with scripts
@@ -1139,15 +1181,22 @@ export const UNSCOPED_PROTECTED_PATHS = [
 function relForms(root, p) {
   const roots = canonicalForms(root);
   const forms = canonicalForms(p);
-  const pairs = [[roots[0], forms[0]], [roots[roots.length - 1], forms[forms.length - 1]]];
-  const seen = new Set();
   const out = [];
-  for (const [r, f] of pairs) {
+  const add = (r, f) => {
     const relRaw = path.relative(r, f);
     const rel = toPosix(relRaw);
-    if (seen.has(rel)) continue;
-    seen.add(rel);
+    if (out.some(x => x.rel === rel)) return;
     out.push({ rel, outsideRepo: rel === '' ? false : (rel.startsWith('..') || path.isAbsolute(relRaw) || /^[A-Za-z]:/.test(rel)) });
+  };
+  // Where the write lands: the path with links resolved, against the repository with links resolved.
+  add(roots[roots.length - 1], forms[forms.length - 1]);
+  // The path as written, against whichever spelling of the repository it uses (the project may be open
+  // through a link: /tmp/x is /private/tmp/x on macOS). Written through some other link into the
+  // repository, it has no repo-relative spelling of its own; the resolved form above is what counts then.
+  if (forms[0] !== forms[forms.length - 1]) {
+    const lex = fsCase(forms[0]);
+    const r = roots.find(b => lex === fsCase(b) || lex.startsWith(fsCase(b).replace(/\/+$/, '') + '/'));
+    if (r) add(r, forms[0]);
   }
   return out;
 }
@@ -1188,6 +1237,7 @@ export function evaluate(hookInput, opts = {}) {
   const cwd = typeof hookInput.cwd === 'string' ? hookInput.cwd : process.cwd();
   const root = gitRoot(cwd);
   const proxyBinDir = path.join(root, 'packages', 'proxy', 'bin');   // subagents may not run the proxy (decision 130)
+  const bases = trustedBases(cwd, root, userHome, stateHome);
 
   if (tool === 'Bash') {
     const command = input.command || '';
@@ -1207,7 +1257,7 @@ export function evaluate(hookInput, opts = {}) {
     for (const p of targets) {
       const m = msysPathHint(p, opts.msys);
       if (m) return { deny: m };
-      const w = windowsPathProblem(p);
+      const w = windowsPathProblem(p, process.platform, bases);
       if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
     }
     if (tool === 'Grep' || tool === 'Glob') {
@@ -1263,7 +1313,7 @@ export function evaluate(hookInput, opts = {}) {
     for (const p of targets) {
       const m = msysPathHint(p, opts.msys);
       if (m) return { deny: m };
-      const w = windowsPathProblem(p);
+      const w = windowsPathProblem(p, process.platform, bases);
       if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
       if (credentialHit(p, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be written.` };

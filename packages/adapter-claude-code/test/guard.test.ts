@@ -154,10 +154,15 @@ test('D7 (decision 102): a router worker PowerShell call is always denied', () =
 });
 
 // audit E-env #2: credential reads that bash would perform but the literal string hid
+/** The home directory as a POSIX-style absolute path a shell command can use: /c/Users/x in Git Bash, the path itself elsewhere. */
+function shellHome(H: string): string {
+  const p = H.replace(/\\/g, '/');
+  return /^[A-Za-z]:\//.test(p) ? '/' + p[0]!.toLowerCase() + p.slice(2) : p;
+}
 test('Bash credential reads via variables, globs, quotes, ~user, cygdrive are denied', () => {
   const H = os.homedir();
   const opts = { userHome: H, cwd: path.join(H, 'proj') };
-  const M = '/' + H.replace(/\\/g, '/')[0].toLowerCase() + H.replace(/\\/g, '/').slice(2);
+  const M = shellHome(H);
   const U = path.basename(H);
   const vectors = [
     'cat ~/.ssh/id_rsa', `cat ${M}/.ssh/id_rsa`, 'cat $HOME/.ssh/id_rsa', 'cat ${HOME}/.ssh/id_rsa',
@@ -170,8 +175,19 @@ test('Bash credential reads via variables, globs, quotes, ~user, cygdrive are de
 });
 test('cd to a literal home dir then a relative credential read is caught (vcwd tracking)', () => {
   const H = os.homedir();
-  const M = '/' + H.replace(/\\/g, '/')[0].toLowerCase() + H.replace(/\\/g, '/').slice(2);
-  assert.ok(guard.classifyBash(`cd ${M} && cat .ssh/id_rsa`, { userHome: H, cwd: path.join(H, 'proj') }));
+  const opts = { userHome: H, cwd: path.join(H, 'proj') };
+  for (const home of new Set([shellHome(H), H.replace(/\\/g, '/')])) {
+    assert.ok(guard.classifyBash(`cd ${home} && cat .ssh/id_rsa`, opts), `cd ${home} && cat .ssh/id_rsa`);
+    assert.ok(guard.classifyBash(`cd ${home}/.ssh && cat id_rsa`, opts), `cd ${home}/.ssh && cat id_rsa`);
+    assert.ok(guard.classifyBash(`cd ${home}/proj && cat ../.ssh/id_rsa`, opts), 'back up from the project');
+  }
+  // the POSIX form with a made-up home, on every platform that reads it as one
+  if (process.platform !== 'win32') {
+    const o = { userHome: '/home/user', cwd: '/home/user/proj' };
+    for (const c of ['cd /home/user && cat .ssh/id_rsa', 'cd /home/user/.ssh && cat id_rsa', 'cd .. && cat .ssh/id_rsa', 'cat /home/user/.ssh/id_rsa', 'cat /home/user/proj/../.aws/credentials'])
+      assert.ok(guard.classifyBash(c, o), c);
+    assert.equal(guard.classifyBash('cd /home/user/proj && cat src/a.ts', o), null);
+  }
 });
 test('ordinary commands with shell operators INSIDE quotes are allowed (audit #10)', () => {
   const ok = [
@@ -345,7 +361,7 @@ test('pairing:"order" that disagrees with the transcript tag uses the tag\'s sco
   } finally { for (const d of [root, stateHome, proj]) fs.rmSync(d, { recursive: true, force: true }); }
 });
 
-test('scope glob dialect: a plain dir, trailing slash, and /** all mean the subtree (case-insensitive)', () => {
+test('scope glob dialect: a plain dir, trailing slash, and /** all mean the subtree; case as the file system has it', () => {
   const root = initRepo();
   const stateHome = tmp('ar-state-');
   try {
@@ -360,7 +376,14 @@ test('scope glob dialect: a plain dir, trailing slash, and /** all mean the subt
     assert.ok(!write(['src/pagination'], 'src/pagination/a.ts')?.deny, 'plain dir = subtree');
     assert.ok(!write(['src/pagination/'], 'src/pagination/a.ts')?.deny, 'trailing slash');
     assert.ok(!write(['src/pagination/**'], 'src/pagination/a.ts')?.deny, 'glob');
-    assert.ok(!write(['src/API/**'], 'src/api/a.ts')?.deny, 'case-insensitive');
+    // A scope allows, so it is never looser than the file system: on Linux "API" and "api" are two directories;
+    // on Windows and macOS they are one.
+    if (process.platform === 'linux') assert.match(write(['src/API/**'], 'src/api/a.ts')!.deny, /outside your allowed paths/, 'case-sensitive on Linux');
+    else assert.ok(write(['src/API/**'], 'src/api/a.ts')!.allow, 'case-insensitive on Windows and macOS');
+    assert.ok(write(['src/API/**'], 'src/API/a.ts')!.allow, 'the same case, everywhere');
+    assert.equal(guard.inScope('src/api/a.ts', ['src/API/**'], 'linux'), false);
+    assert.equal(guard.inScope('src/api/a.ts', ['src/API/**'], 'darwin'), true);
+    assert.equal(guard.inScope('src/api/a.ts', ['src/API/**'], 'win32'), true);
     assert.ok(write(['src/pagination'], 'src/other/a.ts')!.deny, 'sibling out of scope');
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); }
 });

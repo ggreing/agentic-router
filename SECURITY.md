@@ -69,6 +69,11 @@ through git itself (`git grep`, `git show HEAD`, `git log -p`), and workers may 
 guard refuses paths that name a credential file, but no path check can cover content that git prints from
 its own store. Keep secrets out of the repository; if one was committed, treat it as exposed and rotate it.
 
+**Letter case.** On Windows and macOS the guard compares names without case, as those file systems do. A
+macOS volume formatted case-sensitive (not the default) is compared without case all the same, so a
+worker's write scope there is slightly wider than it looks: `src/` also admits `SRC/`. Refusals ignore
+case on every system.
+
 **Writes depend on the daemon.** A worker without a scope record cannot write (fail-closed). This means
 a stopped or crashed daemon blocks worker edits rather than leaving them unchecked.
 

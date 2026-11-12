@@ -207,7 +207,8 @@ test('decision 149: purge --all deletes rotated logs, the limits cache of sessio
     assert.ok(!fs.existsSync(path.join(root, 'dashboard-open.html')));
     if (linked) assert.ok(fs.existsSync(path.join(elsewhere, 'keep.jsonl')), 'nothing deleted through the link');
   } finally {
-    if (linked) fs.rmdirSync(h.spoolDir);   // removes the link itself, not what it points to
+    // removes the link itself, not what it points to: a symlink is unlinked, a Windows junction is a directory
+    if (linked) { try { fs.unlinkSync(h.spoolDir); } catch { fs.rmdirSync(h.spoolDir); } }
     rmrf(root); rmrf(elsewhere);
   }
 });
