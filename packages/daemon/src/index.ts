@@ -12,6 +12,7 @@ import { Ledger } from './ledger.ts';
 import { fileLogger, type Logger } from './log.ts';
 import { Router, type VerifySettings } from './router.ts';
 import { createHttpServer } from './server.ts';
+import { ProxyUsage } from './proxyusage.ts';
 import { replaySpool, type ReplayResult } from './spool.ts';
 
 export interface StartOptions {
@@ -79,7 +80,8 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     });
     const replay = await replaySpool(home.spoolDir, adapter, router, logger, opts.now);
     let close: () => Promise<void> = async () => {};
-    const srv = createHttpServer({ router, adapter, token, logger, version: DAEMON_VERSION, onShutdown: () => void close().catch(() => {}) });
+    const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
+    const srv = createHttpServer({ router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, onShutdown: () => void close().catch(() => {}) });
     server = srv;
     await new Promise<void>((resolve, reject) => {
       srv.once('error', reject);

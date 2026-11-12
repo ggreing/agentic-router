@@ -86,24 +86,27 @@ export const claudeAuthStatus: CommandRunner = () => new Promise(resolve => {
     (err, stdout) => resolve({ code: err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : null) : 0, stdout: stdout ?? '' }));
 });
 
+/** authMethod values of `claude auth status --json` that are not a saved login (observed on 2.1.322). */
+export const NOT_A_LOGIN = new Set(['none', 'api_key', 'api_key_helper']);
+
 /**
  * Whether Claude Code has a saved claude.ai or Console login. A gateway credential next to a saved login
  * makes Claude Code warn about an auth conflict, so API mode asks for `claude auth logout` (or /logout)
- * first. Only the login method is looked at; account fields are never printed.
+ * first. Only `loggedIn` and `authMethod` are looked at; account fields are never read out.
+ *   {"loggedIn": false, "authMethod": "none"}                  no login
+ *   {"loggedIn": true,  "authMethod": "api_key"}               ANTHROPIC_API_KEY
+ *   {"loggedIn": true,  "authMethod": "api_key_helper"}        an apiKeyHelper (the router's, once set)
+ *   {"loggedIn": true,  "authMethod": <anything else>}         counted as a saved login (conservative)
+ * Output that does not parse, or has no loggedIn, is 'unknown' (init warns and continues).
  */
 export async function detectLogin(run: CommandRunner = claudeAuthStatus): Promise<{ state: LoginState; method?: string }> {
   let r: { code: number | null; stdout: string };
   try { r = await run(); } catch { return { state: 'unknown' }; }
   let o: Record<string, unknown>;
   try { o = JSON.parse(r.stdout) as Record<string, unknown>; } catch { return { state: 'unknown' }; }
-  if (!o || typeof o !== 'object') return { state: 'unknown' };
-  const logged = o.loggedIn ?? o.logged_in ?? o.isLoggedIn ?? o.authenticated;
-  const methodRaw = o.authMethod ?? o.auth_method ?? o.loginMethod ?? o.method ?? o.source;
-  const method = typeof methodRaw === 'string' ? methodRaw : undefined;
-  if (logged === false) return { state: 'none', ...(method ? { method } : {}) };
-  // a claude.ai / Console (OAuth) login first: "oauth_token" also looks like a token variable
-  if (logged === true && method && /claude\.?ai|oauth|subscription|console/i.test(method)) return { state: 'saved_login', method };
-  if (method && /api[_ -]?key|helper|auth[_ -]?token|bearer|gateway|environment|env/i.test(method)) return { state: 'none', method };
-  if (logged === true && (!method || /login|account/i.test(method))) return { state: 'saved_login', ...(method ? { method } : {}) };
-  return { state: 'unknown', ...(method ? { method } : {}) };
+  if (!o || typeof o !== 'object' || typeof o.loggedIn !== 'boolean') return { state: 'unknown' };
+  const method = typeof o.authMethod === 'string' ? o.authMethod : undefined;
+  if (!o.loggedIn) return { state: 'none', ...(method ? { method } : {}) };
+  if (method && NOT_A_LOGIN.has(method)) return { state: 'none', method };
+  return { state: 'saved_login', ...(method ? { method } : {}) };
 }

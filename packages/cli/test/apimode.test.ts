@@ -67,14 +67,19 @@ test('proxy settings: base URL, hint headers and the local-token helper; credent
   assert.equal(proxyBaseUrl(1), 'http://127.0.0.1:1');
 });
 
-test('saved login detection from `claude auth status --json` (account fields never used)', async () => {
-  const run = (stdout: string) => async () => ({ code: 0, stdout });
-  assert.equal((await detectLogin(run('{"loggedIn":true,"authMethod":"claude.ai","email":"x@y"}'))).state, 'saved_login');
-  assert.equal((await detectLogin(run('{"loggedIn":true,"authMethod":"oauth_token"}'))).state, 'saved_login');
-  assert.equal((await detectLogin(run('{"loggedIn":true,"authMethod":"apiKeyHelper"}'))).state, 'none');
-  assert.equal((await detectLogin(run('{"loggedIn":true,"authMethod":"api_key"}'))).state, 'none');
-  assert.equal((await detectLogin(run('{"loggedIn":false}'))).state, 'none');
+test('saved login detection from `claude auth status --json` (the shapes Claude Code 2.1.322 prints)', async () => {
+  const run = (o: unknown) => async () => ({ code: 0, stdout: typeof o === 'string' ? o : JSON.stringify(o) });
+  // observed with an empty CLAUDE_CONFIG_DIR
+  assert.deepEqual(await detectLogin(run({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty', loginExpiresAt: null })), { state: 'none', method: 'none' });
+  assert.deepEqual(await detectLogin(run({ loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty', apiKeySource: 'ANTHROPIC_API_KEY' })), { state: 'none', method: 'api_key' });
+  assert.deepEqual(await detectLogin(run({ loggedIn: true, authMethod: 'api_key_helper', apiProvider: 'firstParty', apiKeySource: 'apiKeyHelper' })), { state: 'none', method: 'api_key_helper' });
+  // any other method while logged in counts as a saved login (claude.ai was deliberately not observed)
+  for (const m of ['claude.ai', 'oauth', 'console', 'something_new']) {
+    assert.deepEqual(await detectLogin(run({ loggedIn: true, authMethod: m, email: 'never@read' })), { state: 'saved_login', method: m }, m);
+  }
+  assert.equal((await detectLogin(run({ loggedIn: true }))).state, 'saved_login');
   assert.equal((await detectLogin(run('not json'))).state, 'unknown');
+  assert.equal((await detectLogin(run({ authMethod: 'api_key' }))).state, 'unknown');      // no loggedIn
   assert.equal((await detectLogin(async () => { throw new Error('no claude'); })).state, 'unknown');
 });
 

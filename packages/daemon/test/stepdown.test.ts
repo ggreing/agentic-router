@@ -197,7 +197,7 @@ test('a v8 ledger gains the step-down columns', () => {
     l.db.exec("INSERT INTO slots (request_id, role, slot, step, up_count, updated_at, fail_streak, lead_raises) VALUES ('r', 'coder', 0, 's2', 1, 't', 1, 1)");
     l.close();
     const again = new Ledger(file);
-    assert.equal(SCHEMA_VERSION, 9);
+    assert.equal(Number((again.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version), SCHEMA_VERSION);
     assert.deepEqual(again.getSlots('r'), [{ role: 'coder', slot: 0, step: 's2', upCount: 1, failStreak: 1, leadRaises: 1, easyStreak: 0, lastEasy: false, lockStep: null, lockLeft: 0, downCount: 0 }]);
     again.setSlotAdjust('r', 'coder', 0, { step: 's1', upCount: 0, easyStreak: 0, lastEasy: true, lockStep: null, lockLeft: 0, downCount: 1 }, 't2');
     assert.deepEqual((x => [x.step, x.upCount, x.downCount, x.lastEasy, x.failStreak, x.leadRaises])(again.getSlots('r')[0]!), ['s1', 0, 1, true, 1, 1]);

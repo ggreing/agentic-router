@@ -8,7 +8,7 @@ import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
   Level, RequestRecord, Role, SignalKind, Step, SubtaskRecord, SubtaskStatus, TeamPreset, TriageResult, Verdict,
-  VerifySignal,
+  UsageRow, VerifySignal,
 } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
 
@@ -568,6 +568,7 @@ export class Ledger {
     // v8 -> v9: step-down state per slot (decision 135)
     for (const c of ['easy_streak', 'last_easy', 'lock_left', 'down_count']) if (!slotCols.includes(c)) this.db.exec(`ALTER TABLE slots ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`);
     if (!slotCols.includes('lock_step')) this.db.exec('ALTER TABLE slots ADD COLUMN lock_step TEXT');
+    // v9 -> v10: proxy_rows (decision 130) is created by SCHEMA; request totals are recounted from the cost rows
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -1086,7 +1087,7 @@ export class Ledger {
           requestId: a.requestId, subtaskId: a.subtaskId, agentId: a.agentId, source: 'proxy', modelId: row.model, calls: 1,
           inputTokens: row.usage.input, outputTokens: row.usage.output, cacheWriteTokens: row.usage.cacheWrite, cacheReadTokens: row.usage.cacheRead,
           usd: row.usd, createdAt: at,
-          note: !row.priced ? 'estimated: a model without a price, at the most expensive rates' : row.state === 'partial' ? 'partial: the stream did not finish' : null,
+          ...(!row.priced ? { note: 'estimated: a model without a price, at the most expensive rates' } : row.state === 'partial' ? { note: 'partial: the stream did not finish' } : {}),
         });
       }
       return true;
@@ -1098,8 +1099,9 @@ export class Ledger {
     const opened = this.requestByPromptId(sessionId, promptId);
     if (opened) return opened;
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(promptId)) return undefined;
+    // the event payload is the compact JSON of the hook input: an exact substring match, no LIKE wildcards
     const e = this.db.prepare(`SELECT request_id AS r FROM events WHERE session_id = ? AND type = 'prompt_submit' AND request_id IS NOT NULL
-        AND payload LIKE ? ORDER BY id DESC LIMIT 1`).get(sessionId, `%"prompt_id":"${promptId}"%`) as Row | undefined;
+        AND instr(payload, ?) > 0 ORDER BY id DESC LIMIT 1`).get(sessionId, JSON.stringify({ prompt_id: promptId }).slice(1, -1)) as Row | undefined;
     return e ? this.getRequest(s(e.r)) : undefined;
   }
 
@@ -1131,7 +1133,7 @@ export class Ledger {
     return n(r.p) > 0 ? { usd: n(r.pu), partlyEstimated: n(r.pe) > 0 } : { usd: n(r.tu), partlyEstimated: n(r.te) > 0 };
   }
 
-  /** Records one cost row; transcript/estimate rows add to usedUsd, lead rows to leadCostUsd, agent_result rows to nothing. */
+  /** Records one cost row; the request's usedUsd / leadCostUsd are recounted (agent_result rows count for neither). */
   addCost(c: CostInput): void {
     this.tx(() => this.#insertCost(c));
   }

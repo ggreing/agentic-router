@@ -7,10 +7,13 @@
 // - The hook response is what relay.mjs prints unchanged: text/plain for pre_compact, JSON otherwise.
 // - POST /router/v1/tools/call takes one router MCP tool call from the plugin's server and always answers
 //   200 with { ok, ... }: a refused call is a tool result for the lead, not a transport error.
+// - API-key mode proxy (decision 130): POST /router/v1/usage takes usage rows ({ accepted, duplicates,
+//   rejected }); GET /router/v1/budget?session_id=&prompt_id= answers { requestId, budgetUsd, spentUsd } or 404.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { ClientAdapter } from './adapter.ts';
 import { errorText, type Logger } from './log.ts';
+import type { ProxyUsage } from './proxyusage.ts';
 import type { Router } from './router.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -20,6 +23,8 @@ export const API = {
   tools: '/router/v1/tools/call',
   health: '/router/v1/health',
   shutdown: '/router/v1/shutdown',
+  usage: '/router/v1/usage',
+  budget: '/router/v1/budget',
 } as const;
 
 export interface ServerDeps {
@@ -31,6 +36,8 @@ export interface ServerDeps {
   maxBodyBytes?: number;
   /** Called once the shutdown response has been sent. */
   onShutdown?: () => void;
+  /** API-key mode proxy rows and budget answers (decision 130). */
+  proxyUsage?: ProxyUsage;
 }
 
 class HttpError extends Error {
@@ -80,7 +87,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
       return send(res, 200, { ok: true, version: d.version });
     }
-    if (route !== API.status && route !== API.hook && route !== API.shutdown && route !== API.tools) throw new HttpError(404, 'not found');
+    if (route !== API.status && route !== API.hook && route !== API.shutdown && route !== API.tools && route !== API.usage && route !== API.budget) throw new HttpError(404, 'not found');
     if (!authOk(req.headers.authorization)) throw new HttpError(401, 'unauthorized');
 
     if (route === API.shutdown) {
@@ -97,9 +104,29 @@ export function createHttpServer(d: ServerDeps): http.Server {
       return send(res, 200, d.router.status(sessionId || undefined));
     }
 
+    // ------------------------------------------------------------------ API-key mode proxy (decision 130)
+    if (route === API.budget) {
+      if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
+      const sessionId = url.searchParams.get('session_id') ?? '';
+      const promptId = url.searchParams.get('prompt_id') ?? '';
+      if (!sessionId || !promptId) throw new HttpError(400, 'session_id and prompt_id are required');
+      const answer = d.proxyUsage?.budget(sessionId, promptId);
+      if (!answer) throw new HttpError(404, 'no request for this prompt');
+      return send(res, 200, answer);
+    }
+
     if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
     const body = await readJson(req, maxBody);
     if (route === API.tools) return send(res, 200, await d.router.tool(body));
+    if (route === API.usage) {
+      if (!d.proxyUsage) throw new HttpError(404, 'not found');
+      try {
+        return send(res, 200, d.proxyUsage.ingest(body));
+      } catch (e) {
+        if (e instanceof RangeError) throw new HttpError(400, e.message);
+        throw e;
+      }
+    }
     let ev;
     try {
       ev = d.adapter.toRouterEvent(body);

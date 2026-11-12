@@ -20,6 +20,7 @@ import { errorText, nullLogger, type Logger } from './log.ts';
 import { cleanVerifyEnv, verifyEnv, withoutEnvValues } from './env.ts';
 import { eventPayload, tailText } from './payload.ts';
 import { PresetResolver } from './presets.ts';
+import { crossCheck, type CrossCheck } from './proxyusage.ts';
 import { requestChanges, takeRequestSnapshot, type ChangeStats, type RequestSnapshot } from './record.ts';
 import { BASH_NOT_FOUND, type Shell } from './shell.ts';
 import { checkAgentCall, isAgentTool, managedRole, parseScope, parseTag, scopeFileBody, startStep, stepOf } from './policy.ts';
@@ -374,7 +375,8 @@ export class Router {
     if (!r) return;
     const subs = this.ledger.listSubtasks(requestId);
     const costs = this.ledger.listCosts(requestId);
-    const subCost = (id: string) => round6(costs.filter(c => c.subtask_id === id && (c.source === 'transcript' || c.source === 'estimate') && c.usd !== null)
+    const proxy = this.#proxyCosts(requestId);   // decision 130: proxy rows are the cost source when there are any
+    const subCost = (id: string) => round6(costs.filter(c => c.subtask_id === id && proxy.counts(String(c.source)) && c.usd !== null)
       .reduce((a, c) => a + Number(c.usd), 0));
     // the rules' own judgement: not a manual /router level and not the T6 re-plan
     type Judged = TriageResult & { kind?: string; rule?: string; teamScore?: number; l3Signs?: boolean; features?: Record<string, unknown> };
@@ -417,8 +419,9 @@ export class Router {
         ? { calls: lead.calls, model: lead.leadModel, models: lead.models, usd: round6(r.leadCostUsd), matchedBy: lead.matchedBy }
         : { calls: null, model: null, models: [], usd: null, reason: lead.reason },
       costs: {
-        subtaskUsd: round6(r.usedUsd), leadUsd: lead.ok ? round6(r.leadCostUsd) : null, totalUsd: round6(r.usedUsd + r.leadCostUsd),
+        subtaskUsd: round6(r.usedUsd), leadUsd: lead.ok || proxy.source === 'proxy' ? round6(r.leadCostUsd) : null, totalUsd: round6(r.usedUsd + r.leadCostUsd),
         estimated: flags.estimated, unknown: flags.unknown, budgetExceeded: r.usedUsd > r.budgetUsd,
+        source: proxy.source, ...(proxy.crossCheck.length ? { crossCheck: proxy.crossCheck } : {}),
       },
     };
     this.ledger.upsertRecord({
@@ -840,10 +843,7 @@ export class Router {
     const tree = agent.snapshot?.isolated === false ? 'working tree' : agent.snapshot?.isolated ? 'worktree' : undefined;
     const where = [files !== undefined ? `${files} file(s)` : undefined, tree].filter(Boolean).join(', ');
     const state = this.ledger.agentCostState(agentId);
-    const own = this.ledger.listCosts(agent.requestId)
-      .filter(c => c.agent_id === agentId && (c.source === 'transcript' || c.source === 'estimate') && c.usd !== null);
-    const usd = own.reduce((a, c) => a + Number(c.usd), 0);
-    const partly = own.some(c => c.source === 'estimate');
+    const { usd, partlyEstimated: partly } = this.ledger.agentCostUsd(agentId);   // proxy rows first (decision 130)
     const cost = state === 'actual' ? (partly ? `cost ~$${usd.toFixed(4)} (partly estimated)` : `cost $${usd.toFixed(4)}`)
       : state === 'estimate' ? `cost ~$${usd.toFixed(4)} (estimated)` : state === 'unknown' ? 'cost unknown' : '';
     const tail = `${where ? ` (${where})` : ''}${cost ? `; ${cost}` : ''}`;
@@ -1554,6 +1554,18 @@ export class Router {
         ...(!active && ordinary ? { note: 'the subtask is finished: only the protected paths were granted; set its other paths with the [scope: ...] line when you dispatch it again' } : {}),
       },
     };
+  }
+
+  // ------------------------------------------------------------------ proxy cost source (decision 130)
+  //
+  // In API-key mode the proxy's usage rows (POST /router/v1/usage, proxyusage.ts) are recorded as cost rows of
+  // source 'proxy'; once a request has any, the ledger counts them for usedUsd and leadCostUsd and the
+  // transcript rows stay as the cross-check. Here: which rows a subtask's cost is made of, and the cross-check
+  // written into the request record.
+
+  #proxyCosts(requestId: string): { source: 'proxy' | 'transcript'; counts: (source: string) => boolean; crossCheck: CrossCheck[] } {
+    if (!this.ledger.hasProxyCosts(requestId)) return { source: 'transcript', counts: s => s === 'transcript' || s === 'estimate', crossCheck: [] };
+    return { source: 'proxy', counts: s => s === 'proxy', crossCheck: crossCheck(this.ledger, this.#log, requestId) };
   }
 
   // ------------------------------------------------------------------ step-down (spec 3.5, decision 135)
