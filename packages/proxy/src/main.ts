@@ -3,6 +3,7 @@
 // router home, loads the key from the OS keychain into memory, binds 127.0.0.1:<proxyPort>, and on SIGINT /
 // SIGTERM lets in-flight streams finish (up to 30 s) and flushes usage rows before it exits.
 import { checkTlsEnv, loadSettings } from './config.ts';
+import { upstreamProxy } from './egress.ts';
 import { Masker, errorText, fileLogger } from './log.ts';
 import { proxyPaths, routerHome } from './paths.ts';
 import { createProxy } from './server.ts';
@@ -18,13 +19,16 @@ async function main(): Promise<void> {
     const warnings: string[] = [];
     const settings = loadSettings(paths.config, warnings);
     for (const w of warnings) log.warn(w);
+    // a corporate proxy for the upstream (HTTPS_PROXY and the like); one it cannot use stops the start (EgressError)
+    const egress = upstreamProxy(process.env);
+    for (const s of egress?.secrets ?? []) masker.add(s);
     LocalTokens.ensure(paths.proxyToken);
     const tokens = new LocalTokens(paths.proxyToken, { onChange: (added, removed) => { masker.add(added); masker.remove(removed); } });
     const key = await loadKey();
     masker.add(key.get());
-    const proxy = createProxy({ paths, settings, key, tokens, log });
+    const proxy = createProxy({ paths, settings, key, tokens, log, ...(egress ? { egress } : {}) });
     const port = await proxy.listen(settings.port);
-    log.info('proxy listening', { port, upstream: settings.upstream.origin, key: key.masked });
+    log.info('proxy listening', { port, upstream: settings.upstream.origin, via: egress ? `${egress.shown} (${egress.from})` : 'direct', key: key.masked });
     void proxy.reporter.replay();
     let stopping = false;
     const stop = (signal: string) => {

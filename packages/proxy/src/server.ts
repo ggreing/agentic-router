@@ -3,15 +3,18 @@
 //   GET  /proxy/v1/health    local token: upstream origin, uptime, version, exchanges in flight
 //   /v1/*                    local token, then forwarded unchanged (messages, count_tokens, models)
 // Any Origin header or a Host other than this loopback address and port is refused (browser requests, DNS
-// rebinding). A POST /v1/messages is checked against the budget caps before it is sent; one exchange gives
-// one usage row.
+// rebinding). A POST /v1/messages is read (bounded by the API's request limit), held against the budget caps at
+// its worst case (reserve.ts) and only then sent, byte for byte; one exchange gives one usage row. The upstream
+// connection goes through a corporate HTTP(S) proxy when one is configured (egress.ts).
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { Budget, daemonBudgetSource, type BudgetSource } from './budget.ts';
 import type { ProxySettings } from './config.ts';
+import { agentProxyEnv, type UpstreamProxy } from './egress.ts';
 import { forward, localError } from './forward.ts';
+import { MAX_REQUEST_BYTES, requestShape, reservationFor } from './reserve.ts';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyPaths } from './paths.ts';
 import type { LocalTokens } from './token.ts';
@@ -29,8 +32,11 @@ export const BUDGET_BLOCK_ERROR_TYPE = 'rate_limit_error';
 /** In-flight streams get this long to finish when the proxy stops. */
 export const DRAIN_MS = 30_000;
 
-/** A6: worst-case amount reserved for one POST /v1/messages at check time, settled to the actual after. */
-export const RESERVE_USD = 0.5;
+/**
+ * A6: what a 2xx that could not be fully priced (an unparsed body, a partial stream) is charged at least, never
+ * $0; no more than the request's own hold (reserve.ts sizes the hold from the request).
+ */
+export const UNPRICED_MIN_USD = 0.5;
 /** A6: only these (method, canonical path) go upstream; everything else /v1/* is refused. */
 export const ALLOWED_ROUTES: Record<string, 'messages' | 'count_tokens' | 'models'> = {
   'POST /v1/messages': 'messages',
@@ -67,6 +73,31 @@ export interface ProxyOptions {
   /** Where the daemon is (default: config.json daemonPort and the token file, read at each use). */
   daemon?: () => DaemonTarget | undefined;
   reporter?: Partial<Omit<ReporterOptions, 'paths' | 'daemon' | 'log'>>;
+  /** The corporate proxy for the upstream connection (main.ts: upstreamProxy(process.env)); none: direct. */
+  egress?: UpstreamProxy;
+  /** Tests only: a certificate the upstream connection also trusts (a local TLS upstream). */
+  testUpstreamCa?: string;
+  /** Tests only: a smaller body limit than the API's (MAX_REQUEST_BYTES). */
+  maxRequestBytes?: number;
+}
+
+/** The whole request body, or why not: 'too_large' (more than `limit`; the rest is not kept) or 'aborted'. */
+function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | 'too_large' | 'aborted'> {
+  return new Promise(resolve => {
+    const chunks: Buffer[] = [];
+    let n = 0;
+    let done = false;
+    const finish = (v: Buffer | 'too_large' | 'aborted') => { if (!done) { done = true; resolve(v); } };
+    req.on('data', (c: Buffer) => {
+      if (done) return;
+      n += c.length;
+      if (n > limit) { chunks.length = 0; finish('too_large'); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => finish(Buffer.concat(chunks, n)));
+    req.on('close', () => { if (!req.complete) finish('aborted'); });
+    req.on('error', () => finish('aborted'));
+  });
 }
 
 export interface Proxy {
@@ -106,9 +137,16 @@ export function createProxy(o: ProxyOptions): Proxy {
     source: o.budgetSource ?? daemonBudgetSource(daemon), now,
   });
   try { fs.chmodSync(o.paths.db, 0o600); } catch { /* Windows, or not created yet */ }
+  // HTTPS upstream: through the corporate proxy when one is set (a CONNECT tunnel; TLS verified end to end). The
+  // plain-http upstream is the loopback test fake and never goes through a proxy.
   const agent: http.Agent = o.settings.upstream.protocol === 'https:'
-    ? new https.Agent({ keepAlive: true, maxSockets: 64 })
+    ? new https.Agent({
+      keepAlive: true, maxSockets: 64,
+      ...(o.egress ? { proxyEnv: agentProxyEnv(o.egress) } : {}),
+      ...(o.testUpstreamCa ? { ca: o.testUpstreamCa } : {}),
+    })
     : new http.Agent({ keepAlive: true, maxSockets: 64 });
+  const maxBody = o.maxRequestBytes ?? MAX_REQUEST_BYTES;
   let inflight = 0;
   let listenPort = 0;
 
@@ -145,7 +183,7 @@ export function createProxy(o: ProxyOptions): Proxy {
     if (route === '/proxy/v1/health') {
       req.resume();
       if (!auth) { localError(res, 401, 'authentication_error', 'agentic-router proxy: invalid local token'); return; }
-      const body = JSON.stringify({ ok: true, version: PROXY_VERSION, upstream: o.settings.upstream.origin, uptimeMs: Date.now() - started, inflight });
+      const body = JSON.stringify({ ok: true, version: PROXY_VERSION, upstream: o.settings.upstream.origin, via: o.egress?.shown ?? null, uptimeMs: Date.now() - started, inflight });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(body);
       return;
@@ -158,22 +196,37 @@ export function createProxy(o: ProxyOptions): Proxy {
     const att = attribution(req.headers);
     const messages = kind === 'messages';
     let reservationId: string | undefined;
+    let held = 0;
+    let body: Buffer | undefined;
     if (messages) {
-      const r = await budget.check({ tokenId: auth.id, sessionId: att.sessionId, promptId: att.promptId, reserveUsd: RESERVE_USD });
+      // the body is read once, bounded by the API's own limit, to size the hold; it is forwarded as these bytes
+      const tooLarge = () => {
+        localError(res, 413, 'request_too_large', `agentic-router proxy: the request body is over ${maxBody} bytes, more than the API accepts`, false);
+        res.once('finish', () => req.destroy());
+      };
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > maxBody) { tooLarge(); return; }
+      const read = await readBody(req, maxBody);
+      if (read === 'aborted') return;   // the client went away before sending it all: nothing is sent or held
+      if (read === 'too_large') { tooLarge(); return; }
+      body = read;
+      const enc = req.headers['content-encoding'];
+      const reservation = reservationFor(requestShape(body, typeof enc === 'string' ? enc : undefined, maxBody));
+      const r = await budget.check({ tokenId: auth.id, sessionId: att.sessionId, promptId: att.promptId, reserveUsd: reservation.usd, reserveBasis: reservation.basis });
       if ('block' in r) {
-        drainLimited(req);
-        o.log.warn('request blocked by a budget cap', { cap: r.block.kind, sessionId: att.sessionId, promptId: att.promptId });
+        o.log.warn('request blocked by a budget cap', { cap: r.block.kind, held: reservation.usd, pricedAs: reservation.pricedAs, sessionId: att.sessionId, promptId: att.promptId });
         localError(res, BUDGET_BLOCK_STATUS, BUDGET_BLOCK_ERROR_TYPE, r.block.message, false);
         return;
       }
       reservationId = r.reservationId;
+      held = reservation.usd;
     }
 
     inflight++;
     const startedAt = now().toISOString();
     const t0 = Date.now();
     try {
-      const out = await forward(req, res, { upstream: o.settings.upstream, agent, key: o.key.get, headersTimeoutMs: o.settings.headersTimeoutMs, tap: messages, restrictEncoding: messages });
+      const out = await forward(req, res, { upstream: o.settings.upstream, agent, key: o.key.get, headersTimeoutMs: o.settings.headersTimeoutMs, tap: messages, restrictEncoding: messages, ...(body ? { body } : {}) });
       if (!messages) return;
       const tap = out.tap;
       const state: RowState = tap?.sawStop && out.status < 400 ? 'complete' : tap?.sawStart ? 'partial' : 'error';
@@ -184,13 +237,13 @@ export function createProxy(o: ProxyOptions): Proxy {
         usage: tokensOf(tap ?? { sawStart: false, sawStop: false }), usd: cost.usd, priced: cost.priced, state, httpStatus: out.status,
         tokenId: auth.id, startedAt, endedAt: now().toISOString(),
       };
-      // A6: settle the reservation with the actual cost; a 2xx we could not fully price (unparsed body,
-      // partial stream) is charged at least the reserve, never $0; a 4xx/5xx refunds the reservation.
-      const settleUsd = out.status >= 400 ? 0 : (state === 'complete' && cost.priced ? cost.usd : Math.max(cost.usd, RESERVE_USD));
+      // A6: settle the hold with the actual cost; a 2xx we could not fully price (unparsed body, partial stream)
+      // is charged at least UNPRICED_MIN_USD (no more than its hold), never $0; a 4xx/5xx releases the hold.
+      const settleUsd = out.status >= 400 ? 0 : (state === 'complete' && cost.priced ? cost.usd : Math.max(cost.usd, Math.min(UNPRICED_MIN_USD, held)));
       budget.settle(reservationId!, settleUsd);
       reporter.add(row);
       o.log.info('exchange', {
-        status: out.status, state, model, usd: row.usd, charged: settleUsd, ms: Date.now() - t0, sessionId: att.sessionId, agentId: att.agentId,
+        status: out.status, state, model, usd: row.usd, held, charged: settleUsd, ms: Date.now() - t0, sessionId: att.sessionId, agentId: att.agentId,
         ...(out.clientAborted ? { clientAborted: true } : {}), ...(out.upstreamBroken ? { upstreamBroken: true } : {}),
         ...(cost.priced ? {} : { unpriced: true }),
       });

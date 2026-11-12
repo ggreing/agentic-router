@@ -6,12 +6,14 @@
 //      added since the daemon answered. Without an answer only the daily caps apply (fail open for the
 //      request budget, closed for the caps).
 // Daily totals live in proxy.db (node:sqlite); a day is the local calendar day.
-// Overshoot is bounded by the responses already in flight when a cap is reached.
+// A POST /v1/messages holds its worst case (reserve.ts) against the daily caps from the check to the end of its
+// response, and starts only when that hold fits in what is left: a cap is passed only by what the request body
+// cannot show (content the API fetches itself), not by requests in flight.
 import type { BudgetAnswer } from '@agentic-router/core';
 import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import type { DaemonTarget } from './usage.ts';
+import { LOOPBACK_AGENT, type DaemonTarget } from './usage.ts';
 
 export type BlockKind = 'token_daily' | 'daily' | 'request';
 export interface Block { kind: BlockKind; message: string }
@@ -25,6 +27,8 @@ const CACHE_MS = 2000;
 
 export const localDay = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const usd = (x: number) => `$${x.toFixed(2)}`;
+/** Small amounts keep their cents' fractions, so a hold of $0.004 does not read as $0.00. */
+const money = (x: number) => (x > 0 && x < 1 ? `$${x.toFixed(4)}` : usd(x));
 
 /** The daemon's request budget for a prompt (wave 2 route); undefined when it has none or does not answer. */
 export function daemonBudgetSource(target: () => DaemonTarget | undefined, timeoutMs = 500): BudgetSource {
@@ -33,7 +37,7 @@ export function daemonBudgetSource(target: () => DaemonTarget | undefined, timeo
     if (!t) { resolve(undefined); return; }
     const q = `?session_id=${encodeURIComponent(sessionId)}&prompt_id=${encodeURIComponent(promptId)}`;
     const req = http.request({
-      host: '127.0.0.1', port: t.port, method: 'GET', path: `${BUDGET_PATH}${q}`, timeout: timeoutMs,
+      host: '127.0.0.1', port: t.port, method: 'GET', path: `${BUDGET_PATH}${q}`, timeout: timeoutMs, agent: LOOPBACK_AGENT,
       headers: { authorization: `Bearer ${t.token}`, host: `127.0.0.1:${t.port}` },
     }, res => {
       const chunks: Buffer[] = [];
@@ -87,18 +91,28 @@ export class Budget {
    * reservation id to settle() after the response, or a Block. The reservation is released if the request
    * budget blocks. `spent()` already includes outstanding reservations.
    */
-  async check(a: { tokenId: string; sessionId: string | null; promptId: string | null; reserveUsd: number }): Promise<{ block: Block } | { reservationId: string }> {
+  async check(a: { tokenId: string; sessionId: string | null; promptId: string | null; reserveUsd: number; reserveBasis?: string }): Promise<{ block: Block } | { reservationId: string }> {
     // synchronous critical section — no await before the reserve, so concurrent checks see each other's holds
     const s = this.spent(a.tokenId);
+    const reserved = a.reserveUsd > 0 ? a.reserveUsd : 0;
     if (s.token >= this.#tokenCap) {
       return { block: { kind: 'token_daily', message: `agentic-router: the daily cap for this local token is reached (${usd(s.token)} of ${usd(this.#tokenCap)}). It resets at local midnight; change proxy.tokenDailyCapUsd in config.json to raise it.` } };
     }
     if (s.day >= this.#dailyCap) {
       return { block: { kind: 'daily', message: `agentic-router: the daily API budget is reached (${usd(s.day)} of ${usd(this.#dailyCap)}). It resets at local midnight; change proxy.dailyCapUsd in config.json to raise it.` } };
     }
+    // the request's own worst case must fit in what is left (in-flight holds included): a request is never started
+    // that could take a cap past its limit on its own
+    const doesNotFit = (kind: 'token_daily' | 'daily', capName: string, cap: number, spent: number, setting: string): Block => ({
+      kind,
+      message: `agentic-router: this request is held at up to ${money(reserved)} (its worst case${a.reserveBasis ? `: ${a.reserveBasis}` : ''}), `
+        + `more than the ${money(Math.max(0, cap - spent))} left of ${capName} (${usd(spent)} of ${usd(cap)} used or held). `
+        + `A lower max_tokens or a shorter conversation needs less; ${setting} in config.json raises the cap, and it resets at local midnight.`,
+    });
+    if (s.token + reserved > this.#tokenCap) return { block: doesNotFit('token_daily', 'the daily cap for this local token', this.#tokenCap, s.token, 'proxy.tokenDailyCapUsd') };
+    if (s.day + reserved > this.#dailyCap) return { block: doesNotFit('daily', 'the daily API budget', this.#dailyCap, s.day, 'proxy.dailyCapUsd') };
     const reservationId = randomUUID();
     const day = localDay(this.#now());
-    const reserved = a.reserveUsd > 0 ? a.reserveUsd : 0;
     this.#addDaily(day, a.tokenId, reserved);
     this.#pending.set(reservationId, { tokenId: a.tokenId, sessionId: a.sessionId, promptId: a.promptId, reserved, day });
     // request budget (async): if it blocks, release the reservation

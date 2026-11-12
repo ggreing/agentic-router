@@ -111,6 +111,9 @@ export async function startProxy(upstreamPort: number, o: Partial<Omit<ProxyOpti
     reporter: { batchMs: 20, ...o.reporter },
     ...(o.budgetSource ? { budgetSource: o.budgetSource } : {}),
     ...(o.now ? { now: o.now } : {}),
+    ...(o.egress ? { egress: o.egress } : {}),
+    ...(o.testUpstreamCa ? { testUpstreamCa: o.testUpstreamCa } : {}),
+    ...(o.maxRequestBytes ? { maxRequestBytes: o.maxRequestBytes } : {}),
   });
   const port = await proxy.listen(0);
   return { proxy, port, home, paths, tokens, masker, close: async () => { await proxy.close(); rmrf(home); } };

@@ -121,7 +121,7 @@ export async function setMode(mode: ApiMode, f: Record<string, string | boolean>
   const change = planApiSettings(d.settingsFile, mode, cfg.proxyPort);
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();
-  writeConfig({ ...cfg, apiMode: mode });
+  writeConfig({ ...(readConfig() ?? cfg), apiMode: mode });
   const live = (d.reload ?? realReload)();
   d.out(mode === 'direct'
     ? `Direct mode: new Claude Code sessions talk to the API themselves with the key from the keychain (no proxy, no budget blocking). ${live ? 'The supervisor stops the proxy now. ' : ''}Restart running Claude Code sessions.`
@@ -142,7 +142,7 @@ export async function modeSubscription(f: Record<string, string | boolean>, d: A
   if (!cfg.apiMode && !change) { d.out('Already in subscription mode: nothing to change.'); return 0; }
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();
-  const { apiMode: _gone, ...rest } = cfg;
+  const { apiMode: _gone, ...rest } = readConfig() ?? cfg;
   writeConfig(rest);
   const live = (d.reload ?? realReload)();
   d.out(`Subscription mode: new Claude Code sessions use the claude.ai login. If you logged out for API-key mode, log in again (/login in Claude Code). ${live ? 'The supervisor stops the proxy now. ' : ''}`
@@ -166,7 +166,7 @@ export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): 
   if (cfg.apiMode === 'proxy' && !change) { d.out('Already in API-key mode through the proxy: nothing to change.'); return 0; }
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();
-  writeConfig({ ...cfg, apiMode: 'proxy' });
+  writeConfig({ ...(readConfig() ?? cfg), apiMode: 'proxy' });
   const live = (d.reload ?? realReload)();
   d.out(`API-key mode (proxy): new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `agentic-router start` to run it;'} then restart running Claude Code sessions.`);
   return 0;

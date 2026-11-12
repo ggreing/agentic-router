@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { redact } from '@agentic-router/core';
-import { backupNote, readJsonFile, writeBackup, writeJsonAtomic, type PlannedChange } from './setup.ts';
+import { NO_PROXY_VARS, PROXY_VARS, noProxyCovers, shownProxyUrl, splitNoProxy } from '@agentic-router/proxy';
+import { backupNote, readConfig, readJsonFile, writeBackup, writeConfig, writeJsonAtomic, type PlannedChange } from './setup.ts';
 
 export type ApiMode = 'proxy' | 'direct';
 
@@ -35,8 +36,93 @@ export function isRouterHelper(command: unknown): boolean {
 }
 export const isOurBaseUrl = (v: unknown): boolean => typeof v === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
 
+// ------------------------------------------------------------------ Claude Code behind a corporate proxy
+//
+// Claude Code sends its HTTP requests through the first of https_proxy, HTTPS_PROXY, http_proxy, HTTP_PROXY that is
+// set, unless NO_PROXY names the host (only its WebSocket connections skip loopback on their own; network-config
+// docs). In proxy mode its base URL is http://127.0.0.1:<port>, so with a corporate proxy set it would send those
+// requests, the local token in them, in plain text to that proxy, which cannot reach this machine's loopback anyway.
+// When a proxy is set (in the settings' env block or the shell), API-key mode therefore puts 127.0.0.1 and localhost
+// on the NO_PROXY Claude Code reads. A settings value replaces the shell's, so a shell NO_PROXY is carried over with
+// the two entries added; what was added is recorded in config.json (noProxyAdded) and taken out again by
+// `mode direct`, `mode subscription` and uninstall.
+
+/** What API-key mode added to a NO_PROXY variable in Claude Code's settings. */
+export interface NoProxyAdded { name: string; created: boolean; base: string; added: string[] }
+
+const CLAUDE_LOOPBACK = ['127.0.0.1', 'localhost'];
+const settingOrShell = (name: string, settingsEnv: Record<string, unknown>, shellEnv: NodeJS.ProcessEnv): string | undefined =>
+  typeof settingsEnv[name] === 'string' ? settingsEnv[name] as string : shellEnv[name];
+
+/** The proxy Claude Code would use, from its settings or the shell (credentials hidden in `shown`). */
+export function claudeCodeProxy(settingsEnv: Record<string, unknown>, shellEnv: NodeJS.ProcessEnv): { name: string; shown: string } | undefined {
+  for (const name of PROXY_VARS) {
+    const v = settingOrShell(name, settingsEnv, shellEnv);
+    if (typeof v === 'string' && v.trim()) return { name, shown: shownProxyUrl(v.trim()) };
+  }
+  return undefined;
+}
+
+/** The NO_PROXY variables Claude Code may read whose lists still let requests for 127.0.0.1:<port> go to the proxy. */
+export function uncoveredNoProxy(settingsEnv: Record<string, unknown>, shellEnv: NodeJS.ProcessEnv, port: number): string[] {
+  const set = NO_PROXY_VARS.filter(n => typeof settingOrShell(n, settingsEnv, shellEnv) === 'string');
+  if (!set.length) return ['NO_PROXY'];
+  return set.filter(n => !noProxyCovers(splitNoProxy(settingOrShell(n, settingsEnv, shellEnv)), '127.0.0.1', port));
+}
+
+/** Adds the loopback entries Claude Code needs (proxy mode with a proxy set); mutates env, returns notes and records. */
+export function addLoopbackNoProxy(env: Record<string, unknown>, shellEnv: NodeJS.ProcessEnv, port: number): { notes: string[]; records: NoProxyAdded[] } {
+  const proxy = claudeCodeProxy(env, shellEnv);
+  if (!proxy) return { notes: [], records: [] };
+  const notes: string[] = [];
+  const records: NoProxyAdded[] = [];
+  for (const name of uncoveredNoProxy(env, shellEnv, port)) {
+    const base = (settingOrShell(name, env, shellEnv) ?? '').trim();
+    const entries = splitNoProxy(base);
+    const added = CLAUDE_LOOPBACK.filter(e => !entries.includes(e));
+    if (!added.length) continue;
+    const inSettings = typeof env[name] === 'string';   // else the base (if any) is the shell's, now carried over
+    const sep = !base || base.includes(',') || !/\s/.test(base) ? ',' : ' ';
+    env[name] = base ? `${base}${sep}${added.join(sep)}` : added.join(',');
+    records.push({ name, created: !inSettings, base, added });
+    notes.push(`env.${name} = "${String(env[name])}" (${proxy.name} is ${proxy.shown}: without this, Claude Code would send its requests for the local proxy, local token included, to that proxy${base && !inSettings ? `; your shell's ${name} is carried over, since the settings value replaces it` : ''})`);
+  }
+  return { notes, records };
+}
+
+/** Takes out what API-key mode added to NO_PROXY (the records in config.json); mutates env, returns notes. */
+export function removeLoopbackNoProxy(env: Record<string, unknown>, records: readonly NoProxyAdded[] | undefined): string[] {
+  const notes: string[] = [];
+  for (const r of records ?? []) {
+    const v = env[r.name];
+    if (typeof v !== 'string') continue;
+    const entries = splitNoProxy(v);
+    const rest = entries.filter(e => !r.added.includes(e));
+    if (rest.length === entries.length) continue;
+    if (r.created && rest.join(',') === splitNoProxy(r.base).join(',')) { delete env[r.name]; notes.push(`env.${r.name}: remove (added by API-key mode)`); continue; }
+    const sep = v.includes(',') || !/\s/.test(v.trim()) ? ',' : ' ';
+    if (rest.length) env[r.name] = rest.join(sep); else delete env[r.name];
+    notes.push(`env.${r.name}: take out ${r.added.join(', ')} (added by API-key mode)`);
+  }
+  return notes;
+}
+
+/** config.json's record of what was added, merged (first record of a variable wins its created/base); null clears it. */
+export function recordNoProxy(records: NoProxyAdded[] | null): void {
+  const cfg = readConfig();
+  if (!cfg) return;
+  if (records === null) { const { noProxyAdded: _gone, ...rest } = cfg; writeConfig(rest); return; }
+  if (!records.length) return;
+  const byName = new Map((cfg.noProxyAdded ?? []).map(r => [r.name, { ...r }]));
+  for (const r of records) {
+    const prev = byName.get(r.name);
+    byName.set(r.name, prev ? { ...prev, added: [...new Set([...prev.added, ...r.added])] } : r);
+  }
+  writeConfig({ ...cfg, noProxyAdded: [...byName.values()] });
+}
+
 /** What Claude Code's user settings should hold in a mode, as a planned change (null: already so). */
-export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: number, pkgDir = proxyPackageDir()): PlannedChange | null {
+export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: number, pkgDir = proxyPackageDir(), shellEnv: NodeJS.ProcessEnv = process.env): PlannedChange | null {
   const settings = readJsonFile<Record<string, any>>(settingsFile, {});
   const env: Record<string, unknown> = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
   const helper = mode === 'proxy' ? localTokenHelper(pkgDir) : keyHelper(pkgDir);
@@ -61,6 +147,11 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
     if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove (talk to the API directly)'); }
     if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
   }
+  // Claude Code behind a corporate proxy: loopback on its NO_PROXY in proxy mode, taken out again in direct mode
+  const recorded = readConfig()?.noProxyAdded;
+  let records: NoProxyAdded[] | null = [];
+  if (mode === 'proxy') { const np = addLoopbackNoProxy(env, shellEnv, proxyPort); notes.push(...np.notes); records = np.records; }
+  else if (recorded?.length) { notes.push(...removeLoopbackNoProxy(env, recorded)); records = null; }
   const unchanged = prevHelper === helper && notes.length === 0;
   if (unchanged) return null;
   return {
@@ -71,6 +162,7 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
       const next: Record<string, any> = { ...settings, apiKeyHelper: helper };
       if (Object.keys(env).length) next.env = env; else delete next.env;
       writeJsonAtomic(settingsFile, next);
+      recordNoProxy(records);
     },
   };
 }
@@ -89,6 +181,8 @@ export function planSubscriptionSettings(settingsFile: string): PlannedChange | 
   if (ours) notes.push('apiKeyHelper: remove the router\'s helper');
   if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove (back to the claude.ai login)'); }
   if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
+  const recorded = readConfig()?.noProxyAdded;
+  if (recorded?.length) notes.push(...removeLoopbackNoProxy(env, recorded));
   if (!notes.length) return null;
   const backup = settingsFile + '.agentic-router.bak';
   if (ours && fs.existsSync(backup)) {
@@ -103,6 +197,7 @@ export function planSubscriptionSettings(settingsFile: string): PlannedChange | 
       if (ours) delete next.apiKeyHelper;
       if (Object.keys(env).length) next.env = env; else delete next.env;
       writeJsonAtomic(settingsFile, next);
+      if (recorded?.length) recordNoProxy(null);
     },
   };
 }

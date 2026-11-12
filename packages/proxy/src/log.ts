@@ -11,6 +11,8 @@ export interface Logger {
 }
 
 const PATTERNS = [/sk-ant-[A-Za-z0-9_-]{8,}/g, /\b(bearer)\s+[A-Za-z0-9+/=._~-]{12,}/gi];
+/** Credentials in a URL (a corporate proxy's user:password@): the scheme and host stay, the userinfo goes. */
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]{0,20}:\/\/)[^\s/@"]{1,256}@/gi;
 
 export class Masker {
   readonly #secrets = new Set<string>();
@@ -29,6 +31,7 @@ export class Masker {
       if (esc !== s) out = out.split(esc).join('[REDACTED]');
     }
     for (const re of PATTERNS) out = out.replace(re, m => (/^bearer/i.test(m) ? 'Bearer [REDACTED]' : '[REDACTED]'));
+    out = out.replace(URL_USERINFO, (_m, scheme: string) => `${scheme}[REDACTED]@`);
     return out;
   }
 }

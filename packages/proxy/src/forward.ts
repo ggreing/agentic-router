@@ -1,7 +1,8 @@
 // One exchange with the upstream, unmodified (decision 9: observe only).
 //   request   method, path and query as received; every header in its original order and spelling except the
 //             hop-by-hop set and the client's credential headers (Authorization, x-api-key), which are replaced
-//             by x-api-key with the vault key; the body is piped, never parsed or held.
+//             by x-api-key with the vault key; the body goes on byte for byte (piped, or for a messages request
+//             the bounded copy server.ts read to size its reservation; never re-encoded).
 //   response  status, headers (minus hop-by-hop) and body bytes as the upstream sent them, flushed chunk by
 //             chunk (SSE ping events included: Claude Code's idle watchdog relies on them). A copy of the bytes
 //             goes to the usage tap.
@@ -35,6 +36,8 @@ export interface ForwardOptions {
   tap: boolean;
   /** A6: force Accept-Encoding to identity so the usage tap always reads the body (no unparsed 2xx). */
   restrictEncoding?: boolean;
+  /** The request body already read (a messages request, for its reservation): sent as these exact bytes. */
+  body?: Buffer;
 }
 
 export interface ForwardOutcome {
@@ -147,7 +150,10 @@ export function forward(req: http.IncomingMessage, res: http.ServerResponse, o: 
       settle();
     });
 
-    req.pipe(up);
-    req.on('error', () => up.destroy());
+    if (o.body) up.end(o.body);   // the bytes as received, read once for the reservation
+    else {
+      req.pipe(up);
+      req.on('error', () => up.destroy());
+    }
   });
 }

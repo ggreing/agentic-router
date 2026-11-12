@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { redact, routerHome } from '@agentic-router/core';
-import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper } from './apimode.ts';
+import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper, recordNoProxy, removeLoopbackNoProxy } from './apimode.ts';
 import { SettingsParseError, backupFile, isRouterStatusLine, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
 export interface UninstallDeps {
@@ -51,9 +51,11 @@ export function planUserSettings(settingsFile: string, config: CliConfig | null,
   const env: Record<string, unknown> = s.env && typeof s.env === 'object' ? { ...s.env } : {};
   if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove'); }
   if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
+  const noProxy = config?.noProxyAdded;
+  if (noProxy?.length) notes.push(...removeLoopbackNoProxy(env, noProxy));
   if (!notes.length) return null;
   if (Object.keys(env).length) next.env = env; else delete next.env;
-  return { file: settingsFile, summary: notes.join('; '), apply() { writeJsonAtomic(settingsFile, next); } };
+  return { file: settingsFile, summary: notes.join('; '), apply() { writeJsonAtomic(settingsFile, next); if (noProxy?.length) recordNoProxy(null); } };
 }
 
 /** The project: worktree.baseRef while it is still the "head" init set, and the .gitignore line init added. */

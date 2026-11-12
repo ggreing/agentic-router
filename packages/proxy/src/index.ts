@@ -10,3 +10,8 @@ export { VAULT_ACCOUNT, VAULT_SERVICE, VaultError, deleteKey, keyStatus, loadKey
 export { Budget, BUDGET_PATH, type Block, type RequestBudget } from './budget.ts';
 export { USAGE_PATH, UsageReporter, type UsageRow } from './usage.ts';
 export { Masker, fileLogger, nullLogger, type Logger } from './log.ts';
+export {
+  EgressError, LOOPBACK_NO_PROXY, NO_PROXY_VARS, PROXY_VARS, nodeHasProxySupport, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy,
+  type UpstreamProxy,
+} from './egress.ts';
+export { MAX_REQUEST_BYTES, MAX_TOKENS_FALLBACK, requestShape, reservationFor, type RequestShape, type Reservation } from './reserve.ts';

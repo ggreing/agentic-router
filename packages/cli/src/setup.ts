@@ -13,6 +13,8 @@ export const COMMON_DEV_PORTS = new Set([3000, 3001, 4200, 5000, 5173, 5432, 637
 export interface CliConfig extends RouterConfig {
   budgetsUsd: Record<Level, number>;
   wrappedStatusLine?: { type: 'command'; command: string; padding?: number };
+  /** What API-key mode added to NO_PROXY in Claude Code's settings (apimode.ts), so it can be taken out again. */
+  noProxyAdded?: Array<{ name: string; created: boolean; base: string; added: string[] }>;
 }
 
 export function isFree(port: number): Promise<boolean> {

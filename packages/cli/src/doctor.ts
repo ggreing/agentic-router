@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
-import { keyStatus, type VaultErrorCode } from '@agentic-router/proxy';
-import { HINT_HEADERS_ENV, isRouterHelper, proxyBaseUrl } from './apimode.ts';
+import { keyStatus, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy, type VaultErrorCode } from '@agentic-router/proxy';
+import { HINT_HEADERS_ENV, claudeCodeProxy, isRouterHelper, proxyBaseUrl, uncoveredNoProxy } from './apimode.ts';
 import { SettingsParseError, backupCredentials, backupFile, defaultClaudeSettings, promptStorageSummary, readConfig, readJsonFile, type CliConfig } from './setup.ts';
 import { health, localRequest } from './daemonctl.ts';
 import { proxyHealth, readSuperviseStatus, type SuperviseStatus } from './supervise.ts';
@@ -62,6 +62,14 @@ export function environmentChecks(env: NodeJS.ProcessEnv = process.env, platform
   if (rh && !path.isAbsolute(rh)) out.push({ name: 'AGENTIC_ROUTER_HOME', ok: false, blocking: false, detail: `relative value "${rh}" is ignored; using ${routerHome()}` });
   if (env.CLAUDE_CONFIG_DIR) out.push({ name: 'CLAUDE_CONFIG_DIR', ok: path.isAbsolute(env.CLAUDE_CONFIG_DIR), blocking: false,
     detail: path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? `status line goes to ${path.join(env.CLAUDE_CONFIG_DIR, 'settings.json')}; the guard protects this folder` : 'not an absolute path: ignored' });
+  // NODE_USE_ENV_PROXY gives Node's global agent the environment's proxy: then the hooks' and this CLI's calls to
+  // the daemon on 127.0.0.1 (daemon token included) go to http_proxy unless NO_PROXY names loopback
+  const envProxy = env.NODE_USE_ENV_PROXY === '1' || /(^|\s)--use-env-proxy(\s|$)/.test(env.NODE_OPTIONS ?? '');
+  const httpProxy = env.http_proxy?.trim() || env.HTTP_PROXY?.trim();
+  if (envProxy && httpProxy && !noProxyCovers(splitNoProxy(env.no_proxy ?? env.NO_PROXY), '127.0.0.1')) {
+    out.push({ name: 'NODE_USE_ENV_PROXY', ok: false, blocking: false,
+      detail: `Node sends plain-http requests through ${shownProxyUrl(httpProxy)}, so the plugin's hooks and the CLI could not reach the daemon on 127.0.0.1: add 127.0.0.1,localhost to NO_PROXY` });
+  }
   return out;
 }
 
@@ -130,7 +138,7 @@ export interface ApiCheckInput {
   settingsFile: string;
   projectDir: string;
   keyStatus(): Promise<'present' | VaultErrorCode>;
-  proxyHealth(port: number): Promise<{ ok: boolean; upstream?: string; inflight?: number } | null>;
+  proxyHealth(port: number): Promise<{ ok: boolean; upstream?: string; via?: string | null; inflight?: number } | null>;
   supervise: SuperviseStatus | null;
 }
 
@@ -144,9 +152,11 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
     detail: versionAtLeast(i.claudeVersion, MIN_CLAUDE_API) ? 'sends the gateway hint headers' : `need >= ${MIN_CLAUDE_API.join('.')} for the prompt and request-class headers (have ${i.claudeVersion || 'none'})` });
   // the user settings the mode needs
   const problems: string[] = [];
+  let settingsEnv: Record<string, unknown> = {};
   try {
     const s = readJsonFile<Record<string, any>>(i.settingsFile, {});
     const env = s.env && typeof s.env === 'object' ? s.env as Record<string, unknown> : {};
+    settingsEnv = env;
     const helper = String(s.apiKeyHelper ?? '');
     if (mode === 'proxy') {
       if (!(isRouterHelper(helper) && helper.includes('local-token'))) problems.push('apiKeyHelper is not the router\'s local-token helper');
@@ -160,6 +170,24 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
   } catch (e) { problems.push(e instanceof SettingsParseError ? e.message : String(e)); }
   out.push({ name: `Claude Code settings (${mode})`, ok: problems.length === 0, blocking: true,
     detail: problems.length ? `${problems.join('; ')} (run agentic-router mode ${mode})` : i.settingsFile });
+  // a corporate proxy, both ways: Claude Code must not send its requests for 127.0.0.1 to it (network-config), and
+  // the router's proxy reaches the API through it (egress)
+  const corp = claudeCodeProxy(settingsEnv, i.env);
+  if (mode === 'proxy' && corp) {
+    const missing = uncoveredNoProxy(settingsEnv, i.env, i.cfg.proxyPort ?? 0);
+    out.push({ name: 'Claude Code and your proxy', ok: !missing.length, blocking: true,
+      detail: missing.length
+        ? `${corp.name} is ${corp.shown}, and ${missing.join(' / ')} does not name 127.0.0.1: Claude Code would send its requests for the local proxy, local token included, to that proxy. Run agentic-router mode api (it adds 127.0.0.1 and localhost to NO_PROXY in Claude Code's settings)`
+        : `${corp.name} is ${corp.shown}; NO_PROXY keeps Claude Code's requests for the local proxy off it` });
+  }
+  if (mode === 'proxy') {
+    try {
+      const e = upstreamProxy(i.env);
+      if (e) out.push({ name: 'API through your proxy', ok: true, blocking: false, detail: `the router's proxy reaches the API through ${e.shown} (${e.from}, from this shell's environment when the proxy starts); TLS to the API is verified end to end` });
+    } catch (e) {
+      out.push({ name: 'API through your proxy', ok: false, blocking: true, detail: `${(e as Error).message}; the router's proxy does not start until this is fixed` });
+    }
+  }
   // a project's own settings override the user's
   for (const f of [path.join(i.projectDir, '.claude', 'settings.json'), path.join(i.projectDir, '.claude', 'settings.local.json')]) {
     let s: Record<string, any>;
@@ -183,7 +211,7 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
   if (mode === 'proxy' && i.cfg.proxyPort) {
     const h = await i.proxyHealth(i.cfg.proxyPort);
     out.push({ name: 'proxy', ok: !!h?.ok, blocking: false,
-      detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (agentic-router start), or switch with agentic-router mode direct` });
+      detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}${h.via ? ` via ${h.via}` : ''}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (agentic-router start), or switch with agentic-router mode direct` });
   }
   const degraded = Object.entries(i.supervise?.children ?? {}).filter(([, c]) => c.state === 'degraded').map(([n, c]) => `${n} (${c.restarts} restarts)`);
   if (degraded.length) out.push({ name: 'supervisor', ok: false, blocking: false, detail: `keeps failing: ${degraded.join(', ')}; see the logs in ${paths.logsDir()}` });

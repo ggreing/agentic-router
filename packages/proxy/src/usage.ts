@@ -73,12 +73,18 @@ export interface ReporterOptions {
 
 export const USAGE_PATH = '/router/v1/usage';
 
+/**
+ * For calls to the daemon on loopback: an agent of its own, so NODE_USE_ENV_PROXY (which gives Node's global
+ * agent the environment's proxy) can never send them, with the daemon token, to a corporate proxy.
+ */
+export const LOOPBACK_AGENT = new http.Agent({ keepAlive: false });
+
 /** POSTs JSON to the daemon on loopback; resolves the status code (0: no answer). */
 export function postDaemon(target: DaemonTarget, p: string, body: unknown, timeoutMs: number): Promise<number> {
   return new Promise(resolve => {
     const data = Buffer.from(JSON.stringify(body));
     const req = http.request({
-      host: '127.0.0.1', port: target.port, method: 'POST', path: p, timeout: timeoutMs,
+      host: '127.0.0.1', port: target.port, method: 'POST', path: p, timeout: timeoutMs, agent: LOOPBACK_AGENT,
       headers: { authorization: `Bearer ${target.token}`, 'content-type': 'application/json', 'content-length': data.length, host: `127.0.0.1:${target.port}` },
     }, res => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); res.on('error', () => resolve(0)); });
     req.on('timeout', () => req.destroy());
