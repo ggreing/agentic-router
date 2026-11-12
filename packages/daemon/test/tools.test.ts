@@ -54,6 +54,7 @@ function session(d: TestDaemon, sid: string, cwd: string) {
   const pass = async (tag: string, agent: string, model = 'haiku', effort = 'low', role = 'coder'): Promise<void> => {
     assert.deepEqual(await post(call(tag, role, model, effort)), {}, `dispatch ${tag}`);
     await post(start(agent, role));
+    if (role === 'coder' || role === 'ui-designer') write(cwd, `src/${tag}-${agent}.ts`, `${tag}\n`);   // a writer that did its work (decision 145)
     assert.deepEqual(await post(stop(agent, role)), {});
   };
   /** The lead asks the user (marker at the end of its turn) and the user answers. */

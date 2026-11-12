@@ -6,8 +6,8 @@
 // against the holdout (the same kind of request handled lead-direct on purpose). While it is released: the
 // probes (delegated on purpose), against the requests handled lead-direct because of the release. The two
 // pairs are kept apart, so what was measured before a release does not decide the way back. Left out of all:
-// forced and manual levels, requests the lead re-planned, requests with a partly unknown cost, and requests
-// without changes (acceptance n/a).
+// forced and manual levels, requests the lead re-planned, requests with a partly unknown cost, requests the
+// lead took over after delegating (decision 145), and requests without changes (acceptance n/a).
 import {
   DEFAULT_AUTO_RELEASE, DEFAULT_DELEGATE_FROM, RELEASE_RULE, costPerAccepted, countsAsAccepted, decideRelease, effectiveDelegateFrom, holdoutRate,
   releasedFrom, type Acceptance, type Arm, type AutoReleaseMode, type LeadModelClass, type Level, type ReleaseDecision,
@@ -69,7 +69,8 @@ export function releaseArms(ledger: Ledger, nowIso: string, rule: typeof RELEASE
     const p = rec.plan ?? {};
     const acceptance = (r.acceptance ?? null) as Acceptance | null;
     if (!p.level || !RELEASE_LEVELS.includes(p.level) || !p.leadClass) continue;
-    if (p.forcedFrom || p.manualLevel || p.replannedFrom || rec.costs?.unknown) continue;
+    // decision 145: a request the lead took over after delegating credits a delegation that did not happen
+    if (p.forcedFrom || p.manualLevel || p.replannedFrom || rec.costs?.unknown || rec.outcome === 'lead_takeover') continue;
     if (acceptance === null || acceptance === 'n/a') continue;
     const direct = p.leadDirect === true;
     const which: keyof Arms | undefined = direct

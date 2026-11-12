@@ -7,7 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatStatus } from '../../../plugin/statusline.mjs';
-import { makeHome, postHook, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
+import { makeHome, postHook, request, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
 
 const SCRIPT = fileURLToPath(new URL('../../../plugin/statusline.mjs', import.meta.url));
 const L2_PROMPT = 'Add a pagination module and refactor the API layer across multiple files';
@@ -99,7 +99,7 @@ test('[Router] OFF when the daemon is down, the token is wrong, or it does not a
     setConfig(home, { daemonPort: (hang.address() as net.AddressInfo).port });
     const r = await run(home, { session_id: 'x' });
     assert.equal(r.out, '[Router] OFF\n');
-    assert.ok(r.ms < 4000, `took ${r.ms} ms`);
+    assert.ok(r.ms < 15_000, `took ${r.ms} ms`);   // it gave up (1 s timeout) instead of hanging; the rest is a node cold start, slow under load
     // garbage stdin, no config
     fs.rmSync(path.join(home, 'config.json'));
     assert.equal((await run(home, 'not json')).out, '[Router] OFF\n');
@@ -115,7 +115,7 @@ test('a wrapped status line that is this script itself runs one level deep, not 
   const r = await run(d.home, { session_id: 'sl-3' });
   const line = '[Router] L2 | architect s3 · coder×2 s1 · reviewer s3 · tester s1 | $0.00';
   assert.equal(r.out, `${line} | ${line}\n`);
-  assert.ok(r.ms < 4000, `took ${r.ms} ms`);
+  assert.ok(r.ms < 15_000, `took ${r.ms} ms`);   // one level deep, not recursive; the rest is node cold starts, slow under load
   // started as a wrapped command: router segment only, nothing wrapped
   assert.equal((await run(d.home, { session_id: 'sl-3' }, { AGENTIC_ROUTER_STATUSLINE: '1' })).out, `${line}\n`);
 }));
@@ -148,16 +148,40 @@ test('decision 144: the status line\'s model.id reaches the daemon, so the sessi
   // no status line yet: the hooks name no model, the first prompt has no transcript
   assert.equal((await postHook(d.port, { session_id: 'blind', cwd: d.home, hook_event_name: 'UserPromptSubmit', prompt: L1 })).status, 200);
   assert.deepEqual([req('blind').m, req('blind').c], [null, 'other']);
-  // the status line renders before the first prompt (interactive sessions) and posts model.id, without rate_limits
-  await run(d.home, { session_id: 'seen', model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet' } });
+  // 1. what the status line sends: it renders before the first prompt (interactive sessions) and posts model.id,
+  // also without rate_limits. Caught by a stub that records the body on arrival: the status line's own 500 ms
+  // post timeout is no part of this check (an in-process daemon under a loaded full suite can be slower).
+  const posted = await new Promise<Record<string, unknown>>(resolve => {
+    const stub = net.createServer(s => {
+      let buf = '';
+      s.on('data', c => {
+        buf += c;
+        const at = buf.indexOf('\r\n\r\n');
+        if (!buf.startsWith('POST /router/v1/limits') || at < 0) return;
+        const len = Number(/content-length: (\d+)/i.exec(buf)?.[1] ?? '0');
+        if (buf.length - at - 4 < len) return;
+        resolve(JSON.parse(buf.slice(at + 4, at + 4 + len)) as Record<string, unknown>);
+        s.end('HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}');
+        stub.close();
+      });
+    });
+    stub.listen(0, '127.0.0.1', () => {
+      const home = makeHome({ daemonPort: (stub.address() as net.AddressInfo).port });
+      void run(home, { session_id: 'seen', model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet' } }).finally(() => rmrf(home));
+    });
+  });
+  assert.deepEqual([posted.sessionId, posted.model, posted.rateLimits], ['seen', 'claude-sonnet-5-5', undefined]);
+  // 2. what the daemon does with it: the session's model, used by the first prompt that has no transcript yet
+  const token = fs.readFileSync(path.join(d.home, 'token'), 'utf8').trim();
+  const limits = (body: unknown) => request(d.port, {
+    method: 'POST', path: '/router/v1/limits', body: JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+  });
+  assert.deepEqual((await limits(posted)).body, { stored: false, model: true });
   assert.equal(d.ledger.sessionLeadModel('seen'), 'claude-sonnet-5-5');
   assert.equal((await postHook(d.port, { session_id: 'seen', cwd: d.home, hook_event_name: 'UserPromptSubmit', prompt: L1 })).status, 200);
   const r = req('seen');
   assert.deepEqual([r.m, r.c], ['claude-sonnet-5-5', 'sonnet']);
   if (r.level === 'L1') assert.equal(JSON.parse(r.team).leadDirect, undefined, 'a Sonnet lead delegates L1');
   // a bad model id is not stored
-  assert.deepEqual((await (await import('./helpers.ts')).request(d.port, {
-    method: 'POST', path: '/router/v1/limits', body: JSON.stringify({ sessionId: 'odd', model: 'not a model id' }),
-    headers: { authorization: `Bearer ${fs.readFileSync(path.join(d.home, 'token'), 'utf8').trim()}`, 'content-type': 'application/json' },
-  })).body, { stored: false, model: false });
+  assert.deepEqual((await limits({ sessionId: 'odd', model: 'not a model id' })).body, { stored: false, model: false });
 }));

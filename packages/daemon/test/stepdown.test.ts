@@ -9,7 +9,7 @@ import { ROUTER_TOOL_PREFIX } from '@agentic-router/core';
 import { Ledger, SCHEMA_VERSION } from '../src/ledger.ts';
 import type { StatusView } from '../src/router.ts';
 import { TOOL_USE_ID_META } from '../src/tools.ts';
-import { TOKEN, getStatus, makeRepo, postHook, request, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
+import { TOKEN, getStatus, makeRepo, postHook, request, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
 
 const L1_PROMPT = 'Fix the bug where parse() fails on empty input in src/parse.ts';
 const L2_PROMPT = 'Refactor the validation module across multiple files and add an audit log';
@@ -47,6 +47,7 @@ function session(d: TestDaemon, sid: string, cwd: string) {
     const agent = `ag${++seq}`;
     assert.deepEqual(await post(call(tag, role, model, effort)), {}, `dispatch ${tag}`);
     await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `agentic-router:${role}` });
+    if (role === 'coder' || role === 'ui-designer') write(cwd, `src/${tag}-${agent}.ts`, `${tag}\n`);   // a writer that did its work (decision 145)
     assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `agentic-router:${role}`, stop_hook_active: false }), {});
   };
   const easy = (subtaskId: string, bySubtaskId = 'RV') => tool('router_report_result', { subtaskId, verdict: 'accept', by: 'reviewer', bySubtaskId, margin: 'easy' });

@@ -96,6 +96,7 @@ const AGENT_INPUT = ['subagent_type', 'model', 'effort', 'isolation', 'run_in_ba
 const AGENT_RESPONSE = ['status', 'agentId', 'agentType', 'resolvedModel', 'isAsync', 'totalTokens', 'totalDurationMs', 'totalToolUseCount',
   'worktreePath', 'worktreeBranch', 'outputFile', 'usage'];
 const ROUTER_TOOL = /^mcp__plugin_agentic-router_router__/;
+const EDIT_TOOL_PATH = { Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
 // the dispatch lines the router parses (daemon policy.ts): the tag that starts line 1, the scope that is line 2
 const TAG_LINE = /^\s*\[subtask:\s*([A-Za-z0-9_.-]{1,64})\s*\]/;
 const SCOPE_LINE = /^\s*\[scope:[^\]]*\]\s*$/;
@@ -159,6 +160,11 @@ export function minimalHookInput(raw) {
       if (tag || scope) t.prompt = scope ? `${tag ? `[subtask:${tag}]` : ''}\n${scope}` : `[subtask:${tag}]`;
       out.tool_input = t;
     } else if (ROUTER_TOOL.test(tool)) out.tool_input = raw.tool_input;
+    else if (EDIT_TOOL_PATH[tool]) {   // decision 145: the lead's own edits, by path only (never the content)
+      const k = EDIT_TOOL_PATH[tool];
+      const p = raw.tool_input[k];
+      out.tool_input = typeof p === 'string' && PATH_LIKE.test(p) ? { [k]: p } : {};
+    }
     else out.tool_input = {};
   }
   if (isRecord(raw.tool_response) && tool === 'Agent') {
@@ -261,6 +267,12 @@ export async function relay(raw, { home = routerHome(), write = s => process.std
   let input;
   try { input = JSON.parse(raw); } catch {
     write(fallbackOutput(EVENT));           // unparseable: pass through, nothing to spool
+    return;
+  }
+  // Decision 145: an edit tool's PostToolUse is relayed for the lead only (a takeover after delegating);
+  // a subagent's edit (it has an agent_id) is answered at once, without the daemon.
+  if (isRecord(input) && EDIT_TOOL_PATH[input.tool_name] && input.hook_event_name === 'PostToolUse' && input.agent_id) {
+    write('{}');
     return;
   }
 

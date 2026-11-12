@@ -41,6 +41,7 @@ const AGENT_INPUT = ['subagent_type', 'model', 'effort', 'isolation', 'run_in_ba
 const AGENT_RESPONSE = ['status', 'agentId', 'agentType', 'resolvedModel', 'isAsync', 'totalTokens', 'totalDurationMs', 'totalToolUseCount',
   'worktreePath', 'worktreeBranch', 'outputFile', 'usage'] as const;
 const ROUTER_TOOL = /^mcp__plugin_agentic-router_router__/;
+const EDIT_TOOL_PATH: Readonly<Record<string, string>> = { Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
 // the dispatch lines the router parses (policy.ts): the tag that starts line 1, the scope that is line 2
 const TAG_LINE = /^\s*\[subtask:\s*([A-Za-z0-9_.-]{1,64})\s*\]/;
 const SCOPE_LINE = /^\s*\[scope:[^\]]*\]\s*$/;
@@ -111,6 +112,11 @@ export function minimalPayload(raw: unknown): unknown {
       if (tag || scope) t.prompt = scope ? `${tag ? `[subtask:${tag}]` : ''}\n${scope}` : `[subtask:${tag}]`;
       out.tool_input = t;
     } else if (ROUTER_TOOL.test(tool)) out.tool_input = raw.tool_input;   // router tool arguments: ids, enums and globs only (core/tools.ts)
+    else if (EDIT_TOOL_PATH[tool]) {   // decision 145: the lead's own edits, by path only (never the content)
+      const k = EDIT_TOOL_PATH[tool];
+      const p = (raw.tool_input as Obj)[k];
+      out.tool_input = typeof p === 'string' && PATH_LIKE.test(p) ? { [k]: p } : {};
+    }
     else out.tool_input = {};
   }
   if (isObj(raw.tool_response) && tool === 'Agent') {

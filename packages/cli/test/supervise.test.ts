@@ -26,7 +26,10 @@ test('a child that keeps failing is restarted with backoff and marked degraded a
   const sup = new Supervisor({ specs: [nodeChild('flaky', 'process.exit(3)')], statusFile: status, backoffMs: [20, 40, 60, 80], degradedAfter: 3 });
   sup.start();
   try {
-    for (let i = 0; i < 100 && sup.states().flaky!.restarts < 3; i++) await sleep(20);
+    // each restart is a node cold start: under a full parallel suite that alone can take a second or more, so the
+    // wait is a deadline that ends as soon as the third restart is in, not a fixed count of short polls
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && sup.states().flaky!.restarts < 3) await sleep(20);
     const s = sup.states().flaky!;
     assert.ok(s.restarts >= 3);
     assert.equal(s.state, 'degraded');
@@ -56,7 +59,8 @@ test('stop asks the children in reverse order (the proxy before the daemon), and
   const t0 = Date.now();
   await sup.stop();
   assert.deepEqual(order, ['stuck', 'proxy', 'daemon']);
-  assert.ok(Date.now() - t0 < 6000);
+  // bounded: two graceful waits (2 s each), the stuck one killed after 0.3 s plus its exit wait; well under this even under load
+  assert.ok(Date.now() - t0 < 20_000);
   for (const pid of pids) assert.throws(() => process.kill(pid, 0), 'child is gone');
   assert.deepEqual(Object.values(sup.states()).map(s => s.state), ['stopped', 'stopped', 'stopped']);
 });

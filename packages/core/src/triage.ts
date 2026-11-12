@@ -373,9 +373,9 @@ const orList = (xs: string[]): string => xs.length <= 1 ? xs.join('') : `${xs.sl
 
 const PROMPT_SHAPE ='   The prompt\'s first line is "[subtask:<ID>]", the second "[scope: <comma-separated globs this subtask may write>]", then the spec (goal, files, acceptance check).';
 
-// The router's MCP tools are deferred by tool search (decision P7), so the brief names them or the lead
-// never finds them. Optional: the hooks are the system of record and work without any tool call.
-const ROUTER_TOOLS_LINE = 'Router tools (optional MCP tools; deferred, so call them by name): router_get_plan (re-read this plan after a compaction or resume); router_report_triage (your own size judgement before the first subtask); router_report_result (accept or reject a finished subtask; when a reviewer or tester judged it, pass on their verdict and their margin, easy or normal); router_request_escalation (verify passed but the result is wrong); router_request_scope (change a running subtask\'s paths).';
+// The router's MCP tools are not named here (decision 145): a line at the end of the first brief was read a turn
+// before it mattered and was never acted on. The daemon names the one tool that applies on the task
+// notification, and reads a reviewer's or tester's verdict from its report itself.
 
 /**
  * Brief for the lead: level, team with per-role start step (model alias + effort), budget, and the
@@ -413,7 +413,6 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
           `To switch, call the Agent tool once per subtask with exactly these parameters (team preset ${l2.id}); the router re-plans this request as ${l2.level} at your first call, and from then on you delegate as the lead-orchestrator skill describes:`,
           ...agentCalls(l2),
           PROMPT_SHAPE,
-          ROUTER_TOOLS_LINE,
         ].join('\n');
       }
       // Decision 113: the lead may also pick the L3 team; the router reads the level from the first call.
@@ -426,7 +425,6 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
         `${l3.level} team (team preset ${l3.id}); make your first call the ${signal[0]}:`,
         ...agentCalls(l3),
         PROMPT_SHAPE,
-        ROUTER_TOOLS_LINE,
       ].join('\n');
     }
     return [
@@ -462,6 +460,5 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
       : '   Do not pass isolation: the subagent edits the working tree directly.',
     '3. Agent calls finish in the background: wait for every subtask\'s <task-notification>. The router has already run build, typecheck, lint and tests for each subtask and adds the result to that notification; do not re-run them. Check with git diff --stat that the changes are in the working tree, then answer the user. For verify blocks, step changes and HITL, follow the lead-orchestrator skill.',
     ...raise,
-    ROUTER_TOOLS_LINE,
   ].join('\n');
 }

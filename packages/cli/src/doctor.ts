@@ -223,6 +223,14 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   }
   checks.push(...environmentChecks(env));
   if (cfg) checks.push({ name: 'prompt text', ok: true, blocking: false, detail: promptStorageSummary(cfg.recordPrompts) });   // decision 142
+  // audit C6: the dashboard is served from its build; the router works without it (loaded here only, so other
+  // commands do not load the daemon)
+  try {
+    const { DEFAULT_DASHBOARD_DIST } = await import('@agentic-router/daemon');
+    const built = fs.existsSync(path.join(DEFAULT_DASHBOARD_DIST, 'index.html'));
+    checks.push({ name: 'dashboard assets', ok: built, blocking: false,
+      detail: built ? 'built' : 'not built: run `npm run build:dashboard` (the dashboard serves a build page until then)' });
+  } catch { /* the daemon package is not installed next to the CLI */ }
   // decision 142: the current repository's policy counts only once accepted
   try { checks.push(policyCheck(await loadGuard(cfg?.pluginDir), process.cwd())); } catch { /* no plugin here */ }
   // decision 142: a settings backup made before it may hold a credential in plain text

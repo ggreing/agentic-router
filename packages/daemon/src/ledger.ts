@@ -16,7 +16,7 @@ import { LIMITS_SCHEMA } from './limits.ts';
 import { scrubProse, scrubStoredPrompts } from './data.ts';
 import { storedPromptKind } from './payload.ts';
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -27,7 +27,8 @@ export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
  * - unverified: the stop was replayed from the spool after an outage; verify never ran (decision 89)
  * And one the lead reports: rejected = the result is wrong whatever verify said (router_report_result); status 'failed'.
  */
-export type SubtaskVerdict = Verdict | 'held' | 'unverified' | 'rejected';
+/** no_changes (decision 145): a writer (coder, ui-designer) that changed no file in its scope; neither pass nor miss. */
+export type SubtaskVerdict = Verdict | 'held' | 'unverified' | 'rejected' | 'no_changes';
 
 /** The latest judgement reported for a subtask's result (router_report_result, decision 127). */
 export interface SubtaskReview {
@@ -53,7 +54,8 @@ export interface ConfirmationRow {
  * lead without subtasks, the expected outcome; delegated = subtasks ran; no_delegation = a team preset
  * finished without any subtask.
  */
-export type RequestOutcome = 'direct' | 'delegated' | 'no_delegation';
+/** lead_takeover (decision 145): subtasks ran, and the lead also edited files itself after the first dispatch. */
+export type RequestOutcome = 'direct' | 'delegated' | 'no_delegation' | 'lead_takeover';
 export type Pairing = 'order' | 'confirmed' | 'unmatched' | 'unmanaged';
 
 export interface RequestRow extends RequestRecord {
@@ -74,6 +76,9 @@ export interface RequestRow extends RequestRecord {
   forcedFrom: Level | null;
   /** T6: the triage of a lead-direct request before the lead's first router Agent call re-planned it at L2. */
   replannedFrom: TriageResult | null;
+  /** Decision 145: edit calls the lead made itself after the request's first dispatch, and the distinct files. */
+  leadEdits: number;
+  leadEditFiles: number;
   /** Decision 117: the lead's model when the request opened (null: not known) and its class. */
   leadModel: string | null;
   leadClass: string | null;
@@ -218,7 +223,9 @@ CREATE TABLE IF NOT EXISTS requests (
   lead_triage    TEXT,
   end_state      TEXT,
   accept_state   TEXT,
-  holdout        TEXT
+  holdout        TEXT,
+  lead_edits     INTEGER NOT NULL DEFAULT 0,
+  lead_edit_files TEXT
 );
 CREATE INDEX IF NOT EXISTS requests_by_session ON requests(session_id, created_at);
 
@@ -459,6 +466,7 @@ function toRequest(r: Row): RequestRow {
     outcome: sn(r.outcome) as RequestOutcome | null,
     presetSource: sn(r.preset_source), forcedFrom: sn(r.forced_from) as Level | null,
     leadModel: sn(r.lead_model), leadClass: sn(r.lead_class), holdout: sn(r.holdout) as Holdout | null,
+    leadEdits: n(r.lead_edits), leadEditFiles: r.lead_edit_files ? (json<unknown[]>(r.lead_edit_files) ?? []).length : 0,
     replannedFrom: r.replanned_from === null || r.replanned_from === undefined ? null : json<TriageResult>(r.replanned_from),
   };
 }
@@ -632,6 +640,9 @@ export class Ledger {
     this.db.exec(LIMITS_SCHEMA);
     // v11 -> v12: acceptance (decision 137) and auto-release (decision 138); release_state is created by SCHEMA
     for (const c of ['end_state', 'accept_state', 'holdout']) if (!reqCols.includes(c)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${c} TEXT`);
+    // v13 -> v14 (decision 145): the lead's own edits after it delegated
+    if (!reqCols.includes('lead_edits')) this.db.exec('ALTER TABLE requests ADD COLUMN lead_edits INTEGER NOT NULL DEFAULT 0');
+    if (!reqCols.includes('lead_edit_files')) this.db.exec('ALTER TABLE requests ADD COLUMN lead_edit_files TEXT');
     const recCols = (this.db.prepare('PRAGMA table_info(request_records)').all() as Row[]).map(r => s(r.name));
     for (const c of ['acceptance', 'accept_signals']) if (!recCols.includes(c)) this.db.exec(`ALTER TABLE request_records ADD COLUMN ${c} TEXT`);
     // v12 -> v13 (decisions 141-142): stored events are in the minimal form unless recordPrompts is on; verify
@@ -716,6 +727,17 @@ export class Ledger {
   latestRequestAny(): RequestRow | undefined {
     const r = this.db.prepare('SELECT * FROM requests ORDER BY created_at DESC, rowid DESC LIMIT 1').get() as Row | undefined;
     return r && toRequest(r);
+  }
+
+  /** Decision 145: one edit the lead made itself after the request's first dispatch (distinct files kept, at most 200). */
+  addLeadEdit(requestId: string, file: string | null): void {
+    this.tx(() => {
+      const r = this.db.prepare('SELECT lead_edit_files AS f FROM requests WHERE id = ?').get(requestId) as Row | undefined;
+      if (!r) return;
+      const files = r.f ? json<string[]>(r.f) : [];
+      if (file && !files.includes(file) && files.length < 200) files.push(file);
+      this.db.prepare('UPDATE requests SET lead_edits = lead_edits + 1, lead_edit_files = ? WHERE id = ?').run(JSON.stringify(files), requestId);
+    });
   }
 
   setOutcome(id: string, outcome: RequestOutcome): void {

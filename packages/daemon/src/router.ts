@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ACCEPTANCE_RULE_VERSION, ACCEPT_WINDOW_PROMPTS, MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, dissatisfactionRule, holdoutDraw, isReask, promptSimilarity, afterEasyPass, afterOtherResult, afterRaise, atDispatch, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
+  ACCEPTANCE_RULE_VERSION, ACCEPT_WINDOW_PROMPTS, MAX_STEP_UPS, PRICING_PER_MTOK, ROUTER_TOOL_PREFIX, RouterToolCall, dissatisfactionRule, holdoutDraw, isReask, promptSimilarity, afterEasyPass, afterOtherResult, afterRaise, atDispatch, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
   leadModelClass, normalizeLeadTriage, readRoleFile, redact, routerToolDef, routerToolErrorText, routerToolName, stepIndex, stepUp, triage,
   type LeadModelClass, type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
   type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
@@ -22,6 +22,7 @@ import { eventPayload, minimalPayload, storedPromptKind, tailText } from './payl
 import { PresetResolver } from './presets.ts';
 import { crossCheck, type CrossCheck } from './proxyusage.ts';
 import { checkEndState, requestChanges, requestEndState, takeRequestSnapshot, type ChangeStats, type RequestEndState, type RequestSnapshot } from './record.ts';
+import { parseReportVerdict, reportAsksForScope, type ReportVerdict } from './review.ts';
 import { PromptMemory, acceptanceBlob, addSignal, newAcceptState, storedAcceptance } from './accept.ts';
 import { LEAD_CLASSES, RELEASE_LEVELS, applyRelease, releaseChange, routingHoldoutRate, routingMode, routingView, type RoutingView } from './routing.ts';
 import { BASH_NOT_FOUND, type Shell } from './shell.ts';
@@ -101,6 +102,8 @@ export class Router {
   readonly #secrets: string[];
   /** Decision 142: each agent's forwarded verify variables, for its lifetime; the ledger keeps the names only. */
   readonly #agentEnv = new Map<string, Record<string, string>>();
+  /** Agents whose report asked for paths outside their scope (decision 145); read once for the lead's line, in memory only. */
+  readonly #scopeAsked = new Set<string>();
   readonly #now: () => Date;
   readonly #queue = new SessionQueue();
   readonly #abort = new AbortController();
@@ -422,7 +425,7 @@ export class Router {
     const closedAt = r.closedAt ?? at;
     const durationMs = Math.max(0, Date.parse(closedAt) - Date.parse(r.createdAt));
     const flags = this.ledger.costFlags(requestId);
-    const outcome = r.outcome ?? (subs.length ? 'delegated' : r.team.leadDirect ? 'direct' : 'no_delegation');
+    const outcome = r.outcome ?? (subs.length ? (r.leadEdits ? 'lead_takeover' : 'delegated') : r.team.leadDirect ? 'direct' : 'no_delegation');
     const notifications = prompts.filter(p => p.notification).length;
     const acceptance = this.#acceptAtClose(requestId, changes, subs.length);   // decision 137
     const record = {
@@ -441,6 +444,8 @@ export class Router {
       },
       acceptance: acceptanceBlob(acceptance, ACCEPTANCE_RULE_VERSION),
       outcome,
+      // decision 145: the lead's own edits after it delegated (why the outcome is lead_takeover)
+      ...(r.leadEdits ? { leadEdits: { calls: r.leadEdits, files: r.leadEditFiles } } : {}),
       changes,
       time: { durationMs, activeMs: Math.max(0, durationMs - extras.awaitingMs), awaitingMs: extras.awaitingMs },
       turns: { prompts: prompts.length, notifications, continuations: Math.max(0, prompts.length - 1 - notifications) },
@@ -778,6 +783,13 @@ export class Router {
     const cwd = ev.cwd ?? agent?.cwd ?? undefined;
     // Replayed after an outage: the agent is long gone, nothing to verify or block.
     const plan = !ev.spooled && agent && sub && cwd ? this.#planVerify(agent, sub, cwd) : undefined;
+    // Decision 145: what the report says is read now, from the hook input, as tokens; its text is not kept.
+    const judge = !ev.spooled && !!sub && isJudgeRole(sub.role);
+    const reported = judge ? parseReportVerdict(ev.lastAssistantMessage) : undefined;
+    if (!ev.spooled && sub && !judge && reportAsksForScope(ev.lastAssistantMessage)) {
+      if (this.#scopeAsked.size >= 500) this.#scopeAsked.clear();
+      this.#scopeAsked.add(agentId);
+    } else this.#scopeAsked.delete(agentId);
     if (ev.spooled && agent) this.ledger.updateAgent(agentId, { stoppedAt: this.#at() });
     if (agent && ev.agentTranscriptPath) this.ledger.updateAgent(agentId, { transcriptPath: ev.agentTranscriptPath });
     return {
@@ -788,7 +800,11 @@ export class Router {
         const usage = await readTranscriptUsage(ev.agentTranscriptPath);
         return () => {
           this.#recordTranscriptCost(ev, agentId, requestId, agent?.subtaskId ?? null, usage, managed);
-          if (signals && plan) return this.#finishStop(ev, agentId, signals, plan);
+          if (signals && plan) {
+            const decision = this.#finishStop(ev, agentId, signals, plan);
+            if (judge) this.#applyReportVerdict(agentId, reported);
+            return decision;
+          }
           if (ev.spooled && managed) this.#markUnverified(agentId);
           return NONE;
         };
@@ -891,7 +907,8 @@ export class Router {
     switch (sub.status) {
       case 'passed':
         // Decision 87: tell the lead not to spend a turn re-running what the router already ran.
-        return `${head}: verify passed — ${checks || 'no checks configured'}${tail} (already verified by the router; no need to re-run).`;
+        return `${head}: verify passed — ${checks || 'no checks configured'}${tail} (already verified by the router; no need to re-run).`
+          + this.#passedNote(agent.requestId, sub, agentId);
       case 'failed':
         if (sub.verdict === 'rejected') {
           return `${head}: its result was reported as wrong (review by ${sub.review?.by ?? 'the lead'})${tail}.` + this.#raisedNote(sub) + ' Decide: dispatch a new attempt with what was wrong, or report to the user.';
@@ -915,6 +932,10 @@ export class Router {
             return `${head}: verify could not run in this environment (${env.join('; ')}); this is not counted as a failure, check the result yourself before relying on it${tail}.`;
           }
           return `${head}: verify did not run (router was offline); check the result yourself before relying on it${tail}.`;
+        }
+        if (sub.verdict === 'no_changes') {   // decision 145
+          return `${head}: the ${sub.role} changed no file in its scope; verify ran on an unchanged tree, so this is not a pass${tail}.`
+            + ' Read its report: if the work is missing, dispatch a new attempt or reject it with router_report_result, and do not make the change yourself; if nothing needed changing, say so to the user.';
         }
         if (sub.verdict === 'rejected') {
           return `${head}: its result was reported as wrong and the slot has no raise left (${MAX_STEP_UPS} step-ups or the top step)${tail}. Ask the user how to continue (spec 3.5).`;
@@ -1022,7 +1043,10 @@ export class Router {
       }
       if (!failed.length) {
         this.ledger.updateAgent(agentId, { stopCount: attempt, stoppedAt: at });
-        this.ledger.updateSubtask(agent.requestId, sub.id, { status: 'passed', verdict: 'meet' }, at);
+        // decision 145: a writer that changed no file in its scope did not do the work; neither pass nor miss
+        const noChanges = WRITER_ROLES.has(sub.role) && changedInScope(signals) === 0;
+        this.ledger.updateSubtask(agent.requestId, sub.id, noChanges ? { status: 'hitl', verdict: 'no_changes' } : { status: 'passed', verdict: 'meet' }, at);
+        if (noChanges) this.#log.info('writer subtask changed nothing in its scope', { agentId, subtaskId: sub.id, role: sub.role });
         return NONE;
       }
       const fails = agent.failCount + 1;
@@ -1052,7 +1076,21 @@ export class Router {
 
   // ------------------------------------------------------------------ post_tool_use (Agent)
 
+  /**
+   * Decision 145: an edit the lead made itself (no agent id) after the request's first dispatch. The request
+   * then closes as 'lead_takeover', not 'delegated', and stays out of the auto-release arms.
+   */
+  #leadEdit(ev: RouterEvent, ctx: Ctx): RouterDecision {
+    const req = this.ledger.latestRequest(ev.sessionId);
+    ctx.requestId = req?.id ?? null;
+    if (!req || req.status === 'closed' || !this.ledger.listSubtasks(req.id).length) return NONE;
+    const input = obj(ev.toolInput);
+    this.ledger.addLeadEdit(req.id, str(input.file_path) ?? str(input.notebook_path) ?? null);
+    return NONE;
+  }
+
   #postToolUse(ev: RouterEvent, ctx: Ctx): RouterDecision {
+    if (!ev.agentId && EDIT_TOOLS.has(ev.toolName ?? '')) return this.#leadEdit(ev, ctx);   // decision 145
     if (ev.agentId || !isAgentTool(ev.toolName)) {
       ctx.requestId = this.ledger.latestRequest(ev.sessionId)?.id ?? null;
       return NONE;
@@ -1143,7 +1181,7 @@ export class Router {
     if (next === 'closed') {
       // Decision 87: a lead-direct request (L0) that ends without subtasks finished as planned.
       const delegated = this.ledger.listSubtasks(latest.id).length > 0;
-      this.ledger.setOutcome(latest.id, delegated ? 'delegated' : latest.team.leadDirect ? 'direct' : 'no_delegation');
+      this.ledger.setOutcome(latest.id, delegated ? (latest.leadEdits ? 'lead_takeover' : 'delegated') : latest.team.leadDirect ? 'direct' : 'no_delegation');   // decision 145
       this.#recordClose(latest.id, ev);
     }
     return NONE;
@@ -1430,6 +1468,68 @@ export class Router {
     if (after && after.step !== sub.step) return { raisedTo: after.step, atLimit: false };
     this.ledger.setSlotCounters(req.id, sub.role, sub.slot, sub.step, { failStreak: 0 }, at);
     return { atLimit: true };
+  }
+
+  // ------------------------------------------------------------------ the review read from the report (decision 145)
+  //
+  // A reviewer or tester begins its report with "Verdict: accept|reject" and "Margin: easy|normal". The lead
+  // was asked to pass these on with router_report_result and did not (integration round 5), and copying two
+  // tokens through the lead costs lead tokens for nothing. So the daemon applies them itself when the judge's
+  // own subtask has finished, exactly as that tool call would: to the writer subtasks of the same request
+  // that had passed before the judge was dispatched. A reject with more than one such writer is not applied
+  // (the report line does not say which one); the lead is told to report it.
+
+  /** The writer subtasks a judge's verdict is about: passed, and finished before the judge started. */
+  #judgedWriters(requestId: string, judge: SubtaskRow): SubtaskRow[] {
+    return this.ledger.listSubtasks(requestId).filter(s => s.id !== judge.id && REVIEWED_ROLES.includes(s.role)
+      && s.status === 'passed' && s.updatedAt <= judge.createdAt);
+  }
+
+  #applyReportVerdict(agentId: string, reported: ReportVerdict | undefined): void {
+    try {
+      const agent = this.ledger.getAgent(agentId);
+      if (!agent?.requestId || !agent.subtaskId || !reported) return;
+      const req = this.ledger.getRequest(agent.requestId);
+      const judge = this.ledger.getSubtask(agent.requestId, agent.subtaskId);
+      if (!req || !judge || !isJudgeRole(judge.role) || judge.status !== 'passed') return;   // its verdict counts once it finished itself
+      const writers = this.#judgedWriters(req.id, judge);
+      if (!writers.length || (reported.verdict === 'reject' && writers.length > 1)) return;
+      for (const w of writers) {
+        if (w.review?.bySubtaskId === judge.id && w.review.verdict === reported.verdict) continue;   // the judge stopped twice
+        const res = this.#toolReportResult(req, {
+          subtaskId: w.id, verdict: reported.verdict, by: judge.role as 'reviewer' | 'tester', bySubtaskId: judge.id,
+          ...(reported.margin ? { margin: reported.margin } : {}),
+        });
+        this.#log.info('review read from the report', { requestId: req.id, subtaskId: w.id, by: judge.id, verdict: reported.verdict, margin: reported.margin ?? null, ok: res.ok });
+      }
+    } catch (e) {
+      this.#log.error('review from the report not applied', { agentId, error: errorText(e) });
+    }
+  }
+
+  /**
+   * What the lead's line about a passed subtask adds (decision 145): for a judge, what was recorded from its
+   * report; for a writer, the one tool that matters at this moment, by its full name.
+   */
+  #passedNote(requestId: string, sub: SubtaskRow, agentId: string): string {
+    const tool = (name: string) => `${ROUTER_TOOL_PREFIX}${name} (load it with ToolSearch first)`;
+    if (isJudgeRole(sub.role)) {
+      const judged = this.ledger.listSubtasks(requestId).filter(s => s.review?.bySubtaskId === sub.id);
+      if (judged.length) {
+        const r = judged[0]!.review!;
+        const ids = judged.map(s => s.id).join(', ');
+        if (r.verdict === 'accept') return ` Its verdict was recorded from its report: accept${r.margin ? ` (margin ${r.margin})` : ''} for subtask ${ids}.`;
+        const w = this.ledger.getSubtask(requestId, judged[0]!.id)!;
+        return ` Its verdict was recorded from its report: reject for subtask ${ids}.` + this.#raisedNote(w) + ' Dispatch that subtask again with what was wrong, or report to the user.';
+      }
+      const open = this.#judgedWriters(requestId, sub);
+      if (!open.length) return '';
+      return ` No verdict was recorded from its report (${open.length > 1 ? `it judged ${open.length} subtasks: ${open.map(s => s.id).join(', ')}` : 'no single "Verdict:" line'}): report it with ${tool('router_report_result')}.`;
+    }
+    if (!REVIEWED_ROLES.includes(sub.role)) return '';
+    const asked = this.#scopeAsked.delete(agentId);
+    return ` If the result is wrong although verify passed, do not fix it yourself: call ${tool('router_request_escalation')} for this subtask, then dispatch it again.`
+      + (asked ? ` Its report asks for paths outside its scope: to grant them, call ${tool('router_request_scope')}.` : '');
   }
 
   /** router_report_result: the judgement of a finished subtask by the lead, or by a reviewer or tester subtask. */
@@ -1872,6 +1972,8 @@ export class Router {
       this.#triageContext(r.triage, r.team, undefined, r.leadModel),
       `[agentic-router] ledger (${why}): request ${r.id}, spent $${r.usedUsd.toFixed(4)} of $${r.budgetUsd}.`,
       subs.length ? `subtasks: ${subs.join('; ')}.` : 'no subtasks dispatched yet.',
+      // decision 145: after a compaction or resume the lead's own copy of the plan may be gone; the router's is not
+      ...(r.team.leadDirect ? [] : [`The router keeps this plan. To read it again (each slot's current model, effort and step, the subtasks and their verify results), call ${ROUTER_TOOL_PREFIX}router_get_plan (load it with ToolSearch first).`]),
     ].join('\n');
   }
 
@@ -1940,6 +2042,9 @@ export function outputRateEstimate(modelId: string, tokens: number): number | nu
   const long = p.longPromptOver !== undefined && p.longPromptOutput !== undefined && tokens > p.longPromptOver;
   return round6(tokens * (long ? p.longPromptOutput! : p.output) / 1e6);
 }
+/** Roles whose report carries a verdict on other subtasks, and the writer roles such a verdict is about (decision 145). */
+const isJudgeRole = (role: string): boolean => role === 'reviewer' || role === 'tester';
+const REVIEWED_ROLES: readonly string[] = ['coder', 'ui-designer'];
 /** How long a Stop waits for the request's turn-end state before it is answered (the hook's own limit is 10 s). */
 const TURN_END_WAIT_MS = 4000;
 const MAX_COMPACT_SUBTASKS = 20;
@@ -1966,6 +2071,14 @@ function scopeBody(allowed: string[], unscoped: boolean, granted: readonly strin
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 /** Audit #14: the fallback for pricing an unknown model's tokens when the subagent's step is not known. */
 const MOST_EXPENSIVE_MODEL = Object.entries(PRICING_PER_MTOK).sort((a, b) => b[1].output - a[1].output)[0]![0];
+
+/** Decision 145: the roles whose work is changing files in their scope. */
+const WRITER_ROLES: ReadonlySet<string> = new Set(['coder', 'ui-designer']);
+/** The number of files the scope check counted as the subagent's ("N file(s) changed during the subtask"); undefined without one. */
+function changedInScope(signals: VerifySignal[]): number | undefined {
+  const m = signals.map(x => (x.kind === 'scope' && x.ok ? /(\d+) file\(s\) changed during the subtask/.exec(x.detail ?? '') : null)).find(Boolean);
+  return m ? Number(m[1]) : undefined;
+}
 
 function blockReason(subtaskId: string, failed: VerifySignal[], shared: boolean): string {
   const lines = failed.map(f => `- ${f.kind}: ${(f.detail ?? 'failed').split('\n').join('\n  ')}`);
