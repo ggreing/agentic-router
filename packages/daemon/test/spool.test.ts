@@ -4,6 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadSpike, makeHome, makeRepo, retarget, rmrf, rows, startTestDaemon } from './helpers.ts';
 
+// receivedAt values relative to now: replay drops events older than 24 h (decision 100), so fixed dates
+// would turn these tests into a time bomb
+const BASE = Date.now() - 60 * 60 * 1000;
+const at = (sec: number) => new Date(BASE + sec * 1000).toISOString();
+const stamp = (sec: number) => at(sec).replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '-');
+
 test('spool is replayed in name order before the daemon listens; replayed events are recorded only', async () => {
   const repo = makeRepo();
   const home = makeHome();
@@ -15,15 +21,15 @@ test('spool is replayed in name order before the daemon listens; replayed events
     fs.mkdirSync(spool, { recursive: true });
     const line = (input: unknown, receivedAt: string) => JSON.stringify({ receivedAt, input });
     // an interrupted earlier replay goes first
-    fs.writeFileSync(path.join(spool, '2026-11-10T09-00-00Z-1.jsonl.replaying'),
-      line({ session_id: 'older', hook_event_name: 'SessionStart', cwd: repo, source: 'startup' }, '2026-11-10T09:00:00.000Z') + '\n');
-    fs.writeFileSync(path.join(spool, '2026-11-10T10-00-00Z-2.jsonl'), [
-      line(take('SessionStart'), '2026-11-10T10:00:00.000Z'),
-      line(take('UserPromptSubmit'), '2026-11-10T10:00:01.000Z'),
-      line(take('PreToolUse'), '2026-11-10T10:00:02.000Z'),
-      line(take('SubagentStart'), '2026-11-10T10:00:03.000Z'),
+    fs.writeFileSync(path.join(spool, `${stamp(-1800)}-1.jsonl.replaying`),
+      line({ session_id: 'older', hook_event_name: 'SessionStart', cwd: repo, source: 'startup' }, at(-1800)) + '\n');
+    fs.writeFileSync(path.join(spool, `${stamp(0)}-2.jsonl`), [
+      line(take('SessionStart'), at(0)),
+      line(take('UserPromptSubmit'), at(1)),
+      line(take('PreToolUse'), at(2)),
+      line(take('SubagentStart'), at(3)),
       '{"this is": not json',
-      line(take('SubagentStop'), '2026-11-10T10:00:04.000Z'),
+      line(take('SubagentStop'), at(4)),
       JSON.stringify(take('Stop')),                                        // a bare hook input line
     ].join('\n') + '\n');
     fs.writeFileSync(path.join(spool, 'notes.txt'), 'not a spool file');
@@ -37,7 +43,7 @@ test('spool is replayed in name order before the daemon listens; replayed events
       assert.equal(evs[0]!.session_id, 'older');
       assert.deepEqual(evs.map(e => e.type), ['session_start', 'session_start', 'prompt_submit', 'pre_tool_use', 'subagent_start', 'subagent_stop', 'stop']);
       assert.ok(evs.every(e => e.spooled === 1));
-      assert.equal(evs[2]!.received_at, '2026-11-10T10:00:01.000Z');
+      assert.equal(evs[2]!.received_at, at(1));
       // the ledger is consistent (request, subtask paired), but nothing was verified or blocked
       assert.deepEqual(rows(d, 'SELECT status FROM requests'), [{ status: 'closed' }]);
       // decision 89: the replayed stop of a router subagent is recorded as unverified, for the lead to check
@@ -57,7 +63,7 @@ test('a spooled Agent call that breaks the rules is recorded, not denied after t
   try {
     const spool = path.join(home, 'spool');
     fs.mkdirSync(spool, { recursive: true });
-    fs.writeFileSync(path.join(spool, 'a.jsonl'), JSON.stringify({ receivedAt: '2026-11-10T10:00:00.000Z', input: {
+    fs.writeFileSync(path.join(spool, 'a.jsonl'), JSON.stringify({ receivedAt: at(0), input: {
       session_id: 's', hook_event_name: 'PreToolUse', cwd: home, tool_name: 'Agent',
       tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'opus', effort: 'xhigh' },
     } }) + '\n');
