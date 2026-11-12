@@ -1,0 +1,21 @@
+{
+  "name": "@agentic-router/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Read-only local web dashboard for the agentic router (served by the daemon at /dashboard).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "node scripts/vue-tsc-shim.cjs --noEmit",
+    "build": "node scripts/vue-tsc-shim.cjs --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.10",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vue": "3.5.44",
+    "vue-tsc": "3.3.13"
+  }
+}

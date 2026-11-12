@@ -1,0 +1,73 @@
+[
+  {
+    "name": "router_get_plan",
+    "description": "Read the router's current plan for this session: level, team roles with model/effort/step, and the latest subtasks. Read-only; never opens a request. Use after compaction or resume, or before a re-dispatch.",
+    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+  },
+  {
+    "name": "router_report_triage",
+    "description": "Report the lead's own size judgement for the current request. Recorded for calibration; may re-plan upward only, before the first subtask is dispatched.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["direct", "team"] },
+        "level": { "type": "string", "enum": ["L0", "L1", "L2", "L3"] },
+        "files": { "type": "integer", "minimum": 0, "maximum": 999 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["kind", "level", "files", "confidence"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "router_report_result",
+    "description": "Report a review verdict on a finished subtask (adds the review signal). A reject counts as one failure of the slot; two in a row raise it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subtaskId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "verdict": { "type": "string", "enum": ["accept", "reject"] },
+        "by": { "type": "string", "enum": ["lead", "reviewer", "tester"] },
+        "bySubtaskId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "margin": { "type": "string", "enum": ["easy", "normal"] },
+        "issues": { "type": "integer", "minimum": 0, "maximum": 99 },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["wrong_behavior", "incomplete", "regression", "out_of_scope", "style"] },
+          "maxItems": 5
+        }
+      },
+      "required": ["subtaskId", "verdict", "by"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "router_request_escalation",
+    "description": "Ask the router to raise a finished subtask's slot one step when verify passed but the result is wrong. Shares the 3-raise-per-slot limit; a tier crossing or a second lead-only raise needs a user turn.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subtaskId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "reason": { "type": "string", "enum": ["wrong_result", "review_reject", "repeated_error", "verify_gap"] },
+        "userConfirmed": { "type": "boolean" }
+      },
+      "required": ["subtaskId", "reason"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "router_request_scope",
+    "description": "Widen or narrow a pending/running subtask's write scope. Ordinary globs apply live; protected paths need a user turn; .git, .agentic-router and credential paths are never grantable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subtaskId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "add": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 }, "maxItems": 20 },
+        "remove": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 }, "maxItems": 20 },
+        "userConfirmed": { "type": "boolean" }
+      },
+      "required": ["subtaskId"],
+      "additionalProperties": false
+    }
+  }
+]
