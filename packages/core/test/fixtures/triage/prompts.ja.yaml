@@ -1,0 +1,745 @@
+# Triage evaluation prompts in Japanese (decision 139): the 30 tasks of prompts.yaml, both wordings.
+#
+# A translation of prompts.yaml, task by task: same task ids, labels and splits; `from` is the language of
+# the original. Code, identifiers, paths and log lines are kept as they are. Written by hand as a developer
+# would type them, not tuned to the stage-1 keywords. Used to compare stage 1 across languages; the limits
+# stated in prompts.yaml apply here too.
+
+- task: t01
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    interpolate のエラーメッセージに vlaue という誤字がある。直して
+  spec: |
+    textkit の `interpolate` で、値のない placeholder に出会ったときに投げるエラーメッセージに誤字があります。
+
+    ## 再現手順
+    1. `interpolate('Hi {{name}}', {})` を呼ぶ
+    2. `TextkitError` が投げられる
+    3. `message` を出力する
+
+    ## 実際
+    `Missing vlaue for placeholder "name"`
+
+    ## 期待
+    `Missing value for placeholder "name"`
+
+    ユーザーの画面にそのまま表示される文言なので、リリース前に直す必要があります。メッセージ文字列だけ変えれば十分で、`strict: false` のときに placeholder をそのまま残す動作や、エラークラス、エラーコードには触れないでください。同じ誤字がほかのファイルにないことは確認済みです。
+
+- task: t02
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    リクエストのデフォルトタイムアウトを 30 秒から 60 秒に上げて
+  spec: |
+    HTTP リクエストのデフォルトタイムアウトが、レポート系のエンドポイントには短すぎます。回線の遅いお客様がたびたび引っかかっています。
+
+    やってほしいこと:
+    - `src/http/defaults.ts` の `DEFAULT_TIMEOUT_MS` を `30_000` から `60_000` にする。
+    - クライアントのほかの部分は変えない。呼び出しごとの上書きは引き続き優先され、リトライも今のまま。
+    - この定数が定義されているのはその 1 か所だけで、呼び出し側は import して使っている。
+
+    参考までに背景です。今月の `/reports/export` の p99 は 41 秒前後で、前回のリリース以降、サポートチームにはそのページの「request timed out」に関するチケットが 11 件届いています。エンドポイントごとに設定できるようにする案も話し合いましたが、今回は見送りました。設定項目は増やさず、デフォルト値だけ変えてください。
+
+- task: t03
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 0, dirs: 0 }
+  short: |
+    この正規表現は何にマッチするの？ `^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$`
+  spec: |
+    コードレビュー中に下の正規表現を見かけたのですが、正確に何にマッチするのか説明していただけますか？
+
+    ```ts
+    const FILE_REF = /^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$/;
+    ```
+
+    私の理解は次のとおりです。
+    - スラッシュで区切られたパスの要素が 1 つ以上あり
+    - 最後の要素に拡張子が付いていなければならない
+
+    知りたい点:
+    1. `src/a.ts` は通るのに `a.ts` はなぜ通らないのですか？
+    2. 拡張子が `{1,5}` に制限されている理由はありますか？ `.jsonl` は通りますか？
+    3. Windows のパス(`src\a.ts`)にはマッチしますか？
+    4. `[\w.-]` の中で `.` をエスケープしなくてよいのはなぜですか？
+
+    コードを変える必要はなく、説明だけお願いします。
+
+- task: t04
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    src/server/app.ts の未使用 import を片付けて。lint に怒られてる
+  spec: |
+    main で `npm run lint` が失敗します。エラー扱いの警告が 3 件で、すべて `src/server/app.ts` です。
+
+    ```
+    src/server/app.ts
+      3:10  error  'readFileSync' is defined but never used   no-unused-vars
+      4:8   error  'path' is defined but never used            no-unused-vars
+      9:15  error  'RequestContext' is defined but never used  no-unused-vars
+    ```
+
+    先週削除した静的ファイルハンドラーの残りです。この 3 つの import だけを削除し、ほかには手を付けないでください。`path` がファイルの下のほうで別名で使われていないことは確認しました。lint の設定には触れず、ファイルの再フォーマットもしないでください。差分は削除 3 行(2 つが同じ行にあるならそれ以下)になるはずです。
+
+- task: t05
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    README のインストールコマンドが npm i confkitt と間違って書かれてる。confkit に修正
+  spec: |
+    README のインストール手順で、パッケージ名が間違って書かれています。
+
+    - 場所: `README.md` の「インストール」節の最初のコードブロック
+    - 現在: `npm i confkitt`
+    - 正しい値: `npm i confkit`
+
+    新規ユーザーがそのままコピーして貼り付けたら 404 になった、という問い合わせが 2 回ありました。同じ節の下のほうにある `pnpm add confkit`、`yarn add confkit` の行は正しいので、そのままで構いません。英語版 README(`README.en.md`)にはこの誤字はありません。ドキュメントだけの変更なので、テストやバージョンの変更は不要です。
+
+- task: t06
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    アップロードのログに「MB」と出ているけど数値は KB。メッセージを直して
+  spec: |
+    本番ログを読んでいて気づいた小さな点です。アップロードハンドラーは、受け付けたファイルごとにサイズを次のように記録しています。
+
+    ```
+    upload accepted: report-2026-10.pdf (48213 MB)
+    ```
+
+    この数値は `file.size / 1024` なので、メガバイトではなくキロバイトです。48 GB の PDF だったら大したものですが。
+
+    メッセージ中の単位を「KB」に変えてください。計算はそのままにしてください。この行を解析しているダッシュボードは数値を読んで単位は無視するので、数値を変えるとダッシュボードが壊れますが、単位の文字を変えるのは安全です。該当行は `src/upload/handler.ts` の、「accepted」の場合を処理する関数にあります。このログ呼び出しは 1 か所だけです。
+
+- task: t07
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    parseDate が 2024-02-29 を不正な日付として拒否するバグを直して
+  spec: |
+    `parseDate` がうるう年の 2 月 29 日を拒否するバグです。
+
+    ## 再現
+    ```ts
+    parseDate('2024-02-29') // ValidationError: invalid day for month
+    parseDate('2023-02-29') // ValidationError (これは正しい動作)
+    parseDate('2000-02-29') // ValidationError (誤り。2000 年はうるう年)
+    parseDate('1900-02-29') // ValidationError (正しい。1900 年はうるう年ではない)
+    ```
+
+    ## 原因と思われる箇所
+    `src/date/parse.ts` の `daysInMonth` が 2 月に対して常に 28 を返しています。
+
+    ## 期待する動作
+    - 4 で割り切れればうるう年、ただし 100 で割り切れれば平年、ただし 400 で割り切れればうるう年
+    - それ以外の月と形式の検証は今のまま
+
+    `test/date/parse.test.ts` に上の 4 つのケースを追加してください。ほかの関数(`formatDate`、`addDays`)には触れなくて構いません。
+
+- task: t08
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    `sync` コマンドに --dry-run フラグを追加して。アップロードはせず、アップロードする予定のものを表示する
+  spec: |
+    CLI への機能要望です: `mytool sync --dry-run`。
+
+    現在の `sync` はローカルフォルダーをたどり、各ファイルをリモートの一覧と比べて、変更のあったものをアップロードします。実行前に何が起きるかを確認できるようにしたいです。
+
+    動作:
+    - `--dry-run`(真偽値、既定は false)は `sync` コマンドだけが受け付ける。
+    - このフラグを付けると、アップロード呼び出しの手前までは通常どおり処理し、アップロードする予定のファイルごとに `would upload <relative path> (<size> bytes)` の形式で 1 行ずつ出力して、最後に `N file(s) would be uploaded` を出力する。
+    - ネットワークへの書き込みは行わない。リモートの一覧を読むのは構わない。
+    - 一覧の取得に成功したら、今と同じく終了コードは 0。
+    - `--help` にこのフラグが 1 行の説明付きで表示される。
+
+    コマンドは `src/commands/sync.ts` にあり、アップロード自体は末尾近くの `uploader.put()` の呼び出し 1 か所です。`test/commands/sync.test.ts` の既存テストの隣に、フラグを指定したときに何もアップロードされないことを確かめるテストを足してください。
+
+- task: t09
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    一覧 API の pageSize の上限を 100 にして。超えたら 400
+  spec: |
+    一覧取得 API に `pageSize` の上限がないため、`?pageSize=100000` のようなリクエストがそのまま通ってしまいます。昨日はこのリクエスト 1 件で応答に 9 秒かかりました。
+
+    お願いしたいこと:
+    1. `pageSize` が 100 を超えたら 400 で応答し、本文は既存の検証エラーと同じ形式(`{ error: 'validation', details: ['pageSize must be <= 100'] }`)にしてください。
+    2. `pageSize` が 1 未満、または整数でない場合は今と同じく 400 です(実装済み)。
+    3. 省略した場合の既定の 20 はそのままです。
+
+    検証は `src/handlers/listTasks.ts` のクエリ解析の部分にあります。サービスやリポジトリの層は変えなくて構いません。`test/handlers/listTasks.test.ts` に 101 と 100 の 2 ケースを追加してください。
+
+- task: t10
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 1, dirs: 1 }
+  short: |
+    注文に出荷情報がないと renderInvoice が "Cannot read properties of undefined (reading 'lines')" でクラッシュする。直してください
+  spec: |
+    本番でクラッシュが発生しています。火曜日のデプロイ以降です。まだ出荷されていない注文の請求書を描画すると例外が投げられます。
+
+    ```
+    TypeError: Cannot read properties of undefined (reading 'lines')
+        at shipmentTotal (/app/src/billing/totals.ts:48:27)
+        at renderInvoice (/app/src/billing/invoice.ts:112:19)
+        at InvoiceController.show (/app/src/http/controllers/invoice.ts:31:22)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at next (/app/node_modules/express/lib/router/route.js:144:13)
+        at Route.dispatch (/app/node_modules/express/lib/router/route.js:114:3)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at /app/node_modules/express/lib/router/index.js:284:15
+        at Function.process_params (/app/node_modules/express/lib/router/index.js:346:12)
+        at next (/app/node_modules/express/lib/router/index.js:280:10)
+    ```
+
+    環境: Node 24.3、アプリのバージョン 5.18.2、Postgres 16。`shipment` が null の注文すべてで起きており、閲覧される請求書の約 4% にあたります。
+
+    期待する動作: 出荷情報のない注文は、送料合計 0、出荷明細なしで描画される。`shipmentTotal` が、出荷情報がない場合を空として扱うべきだと考えています。出荷情報のない注文に対する回帰テストを追加してください。
+
+- task: t11
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    CSV エクスポートで、値にダブルクォートがあるとファイルが壊れる。エスケープ処理して
+  spec: |
+    CSV エクスポートのバグ報告です。タイトルにダブルクォートが入ったタスクがあると、Excel で列がずれます。
+
+    例: タイトルが `"긴급" 배포 점검` のタスクをエクスポートすると、現在はこう出力されます。
+
+    ```
+    id,title,status
+    t-12,""긴급" 배포 점검",todo
+    ```
+
+    期待する出力(RFC 4180):
+
+    ```
+    id,title,status
+    t-12,"""긴급"" 배포 점검",todo
+    ```
+
+    ルールを整理すると:
+    - 値にダブルクォート、カンマ、改行のどれか 1 つでも含まれていれば、値全体をダブルクォートで囲みます。
+    - 値の中のダブルクォートは 2 つ重ねて書きます。
+    - それ以外の値は今までどおりそのまま書きます。
+
+    `src/export/csv.ts` の `escapeCell` だけ直せば済むと思います。`test/export/csv.test.ts` に、ダブルクォート、カンマ、改行を含む値の 3 ケースを追加してください。
+
+- task: t12
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    fetchJson を、5xx とネットワークエラーのときに指数バックオフで最大 3 回までリトライするようにして
+  spec: |
+    `src/net/fetchJson.ts` の `fetchJson` は、最初の失敗で諦めてしまいます。リトライするようにしたいです。
+
+    ルール:
+    1. ネットワークエラーと HTTP 500〜599 のときにリトライする。4xx では決してリトライしない。
+    2. 試行は合計で最大 3 回(つまりリトライは 2 回)。
+    3. 2 回目の試行の前に 200 ms、3 回目の前に 400 ms 待つ。
+    4. すべての試行が失敗したら、最後のエラーをそのまま投げる。
+    5. 呼び出し側が渡した `AbortSignal` は待機をただちに止め、中断理由で reject する。
+    6. 呼び出し側は `{ retries: 0 }` で無効にできる。既定は 2。
+
+    変更後のシグネチャ:
+
+    ```ts
+    export interface FetchJsonOptions { retries?: number; signal?: AbortSignal }
+    export function fetchJson<T>(url: string, options?: FetchJsonOptions): Promise<T>;
+    ```
+
+    既存の呼び出し側はオプションを渡しておらず、そのまま動き続ける必要があります。テストは `test/net/fetchJson.test.ts` に置いてください。このファイルには使える偽サーバーのヘルパーがすでにあります。テストが実際に待たないよう、フェイクタイマーを使ってください。
+
+- task: t13
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 3, dirs: 2 }
+  short: |
+    キャッシュに TTL オプションを追加して。設定で秒単位で受け取り、既定は無期限
+  spec: |
+    メモリキャッシュに有効期限を入れたいです。
+
+    - 設定: `cache.ttlSeconds`(数値、任意)。省略するか 0 なら、今までどおり期限なし。
+    - `Cache.set(key, value)` で入れた項目は、入れた時刻から `ttlSeconds` が過ぎると `get` で `undefined` を返し、内部からも消します。
+    - `Cache.has(key)` も同じ基準です。
+    - 負の値や数値でない値は、設定を読むときに既存の検証エラーと同じやり方で拒否します。
+
+    手を入れるのは `src/cache/cache.ts`、設定スキーマのある `src/config/schema.ts`、それと `test/cache/cache.test.ts` くらいです。時刻は `Date.now()` ではなく、コンストラクターに注入する `now()` 関数を使って、テストで時計を進められるようにしてください(`Clock` 型はすでに `src/util/clock.ts` にあります)。
+
+- task: t14
+  lang: ja
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 1 }
+  short: |
+    test/report/weekly.test.ts が CI では失敗するのにローカルでは通る。タイムゾーンのせいだと思う。テストを直してもらえる？
+  spec: |
+    不安定なテストがあります。`test/report/weekly.test.ts` の `weekly report groups tasks by ISO week` は、ソウルにあるどのノート PC でも通りますが、UTC で動いている CI では失敗します。
+
+    ```
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+
+    + '2026-W45'
+    - '2026-W46'
+        at TestContext.<anonymous> (test/report/weekly.test.ts:41:10)
+    ```
+
+    これまでに分かったこと:
+    - フィクスチャは日付を `new Date(2026, 10, 9, 0, 30)` で作っており、これはローカル時刻です。
+    - UTC ではその時点はまだ 8 日の日曜日で、第 45 週に属します。
+    - 本番コード(`src/report/weekly.ts`)は `timeZone` 引数を受け取っており、私の見るかぎり正しいです。
+
+    したがって、間違っているのはコードではなくテストだと考えています。フィクスチャをマシンのタイムゾーンに依存しないようにしてください(オフセットを明示した ISO 文字列から日付を作り、関数に `timeZone: 'Asia/Seoul'` を渡す)。`test/report/helpers.ts` の共有ヘルパーも同じやり方で日付を作っているなら、そちらも直してください。`src/report/weekly.ts` は、実際に誤りだと分かった場合を除いて変えないでください。誤りを見つけたら、変える前に知らせてください。
+
+- task: t15
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    deepMerge に配列を連結するオプション(arrays: 'concat')を入れて。既定は今までどおり置き換え
+  spec: |
+    confkit の `deepMerge` に、配列のマージ方法を選ぶオプションを追加してください。関数 1 つとそのテストだけが変わる作業です。
+
+    ```ts
+    interface MergeOptions { arrays?: 'replace' | 'concat' | 'unique' }
+    function deepMerge(layers: ConfigObject[], options?: MergeOptions): ConfigObject;
+    ```
+
+    ルール:
+    1. `arrays` を省略すると `'replace'` で、現在の動作と同じです(後のレイヤーの配列で丸ごと置き換え)。
+    2. `'concat'` なら、同じキーの配列をレイヤーの順に連結します。
+    3. `'unique'` は `'concat'` と同じですが、プリミティブ値の重複を取り除き、最初に現れた順序を保ちます。
+    4. オブジェクトを含む配列での `'unique'` は、参照ではなく `JSON.stringify` の結果で比較します。
+    5. 片方が配列で、もう片方が配列でない場合は、オプションに関係なく後の値が勝ちます。
+    6. ネストしたオブジェクトの中の配列にも同じルールが適用されます。
+    7. 入力のレイヤーは、どんな場合でも変更しません。
+    8. 結果は入力と配列の参照を共有しません。
+    9. 未知の `arrays` の値には `ConfigError` を投げます。
+
+    既存の呼び出し側は `deepMerge(a, b, c)` のように可変長引数を使っています。今回はシグネチャを上のように変えるのではなく、既存の形を保ったまま、最後の引数が `MergeOptions` の形ならオプションとして解釈するようにしてください。実装は `src/merge.ts`、テストは `test/merge.test.ts` です。
+
+- task: t16
+  lang: ja
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    タスクにコメント機能を入れて
+  spec: |
+    taskboard にタスクへのコメント機能を追加してください。リポジトリ、サービス、ハンドラーの各層に、それぞれに合うように分けて実装します。
+
+    ## モデル
+    ```ts
+    interface Comment {
+      id: string;
+      taskId: string;
+      authorId: string;
+      body: string;        // 1〜2000 文字、前後の空白を除いた長さ
+      createdAt: string;   // ISO 8601
+      editedAt: string | null;
+    }
+    ```
+
+    ## リポジトリ (`CommentRepo`)
+    - `add(comment)`, `listByTask(taskId)`, `get(id)`, `update(id, patch)`, `remove(id)`
+    - `listByTask` は `createdAt` の昇順
+
+    ## サービス (`CommentService`)
+    - 存在しないタスクにコメントすると `NotFoundError`
+    - `body` の検証失敗は `ValidationError`(details に `'body'`)
+    - 編集・削除できるのは投稿者だけで、そうでなければ `ForbiddenError`
+    - 編集したら `editedAt` を埋めます
+    - タスクが削除されたら、そのタスクのコメントも一緒に消します(`TaskService.deleteTask` から呼ぶ)
+
+    ## ハンドラー
+    - `POST /tasks/:id/comments`, `GET /tasks/:id/comments`, `PATCH /comments/:id`, `DELETE /comments/:id`
+    - エラーの対応付けは既存のハンドラーと同じ: Validation 400、Forbidden 403、NotFound 404
+
+    ## テスト
+    - サービスとハンドラーそれぞれの正常系・異常系、タスク削除時の連鎖削除
+
+- task: t17
+  lang: ja
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 6, dirs: 4 }
+  short: |
+    タスク一覧のエンドポイントに、フィルタリング、ソート、ページネーションが必要
+  spec: |
+    タスク一覧にフィルタリング、ソート、ページネーションを追加してください。現在の `GET /tasks` はすべてのタスクを `{ items }` で返します。作業は層ごとに分けます。フィルタリングそのものはリポジトリに、検証と既定値はサービスに、クエリ文字列の解析はハンドラーに置きます。
+
+    ## サービス
+    `TaskService.queryTasks(query?: TaskQuery): TaskPage` を追加し、`listTasks()` は全件の配列を返すままにします。
+
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];        // any of these
+      assigneeId?: string | null;   // null = unassigned only
+      text?: string;                // case-insensitive match in title
+      sort?: 'createdAt' | 'priority' | 'dueDate';
+      order?: 'asc' | 'desc';
+      page?: number;                // 1-based, default 1
+      pageSize?: number;            // default 20, max 100
+    }
+    interface TaskPage { items: Task[]; total: number; page: number; pageSize: number }
+    ```
+
+    ## リポジトリ
+    - `TaskRepo.find(filter, sort, range)` は、該当ページと、ページ分割前の総件数を返す。
+    - `priority` でのソートは low < medium < high の順を使い、同順位は `createdAt` の昇順で決める。
+
+    ## ハンドラー
+    - `GET /tasks?status=todo,in_progress&assignee=u1&sort=priority&order=desc&page=2&pageSize=50`
+    - `assignee=none` は担当者なしを意味する。
+    - 未知の status の値、数値でない page、100 を超える `pageSize` は、通常の検証エラー本文付きで 400。
+
+    ## テスト
+    - リポジトリ: 各フィルター単独、フィルターの組み合わせ、各ソートキーの両方向、末尾を越えたページ。
+    - サービス: 既定値と検証。
+    - ハンドラー: クエリの解析とエラーの対応付け。
+
+- task: t18
+  lang: ja
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 4 }
+  short: |
+    認証ミドルウェアを作って、すべてのハンドラーに権限チェックを付けて
+  spec: |
+    API に認証と権限チェックを入れる必要があります。今はすべてのエンドポイントが開いたままです。
+
+    ミドルウェアを 1 つ作り、リクエストの `Authorization: Bearer <token>` を検証して `ctx.user`(id, role)を埋めます。トークンがない、または不正なら 401 です。そのうえで、すべてのハンドラーにロールのチェックを付けます。タスクの参照はログイン済みのユーザーなら誰でも、作成と更新は `member` 以上、削除とユーザー管理は `admin` だけができます。権限が足りなければ 403 です。
+
+    ハンドラーは 8 個ほどあり(`src/handlers/` の下)、各ハンドラーのテストも認証ヘッダーを付けるように直す必要があります。トークンの検証は `src/auth/` の下に新しいモジュールとして置き、署名鍵は設定から読みます。ロールと許可される操作の対応表は 1 か所(`src/auth/policy.ts`)にまとめ、ハンドラーごとに条件分岐が散らばらないようにしてください。既存のサービス層はユーザー情報を引数に取りませんが、作成者の記録が必要な `createTask` と `addComment` だけ `actorId` を受け取るように変えます。
+
+- task: t19
+  lang: ja
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 3 }
+  short: |
+    設定読み込みをリファクタリングして: defaults、ファイル、env を別々のソースにして順番にマージし、最後にスキーマ検証する
+  spec: |
+    設定の読み込みが、400 行の関数 1 つ(`src/config/load.ts` の `loadConfig`)に膨らんでいます。JSON ファイルを読み、手書きの `if` ブロックで環境変数を上書きし、その途中で検証もしています。設定項目を 1 つ増やすたびに 4 か所を触ることになります。これを作り変えたいです。
+
+    目指す形:
+    - メソッドを 1 つだけ持つ `ConfigSource` インターフェース: `read(): Promise<ConfigObject>`。
+    - ソースは 3 つ: `DefaultsSource`、`FileSource(path)`、`EnvSource(prefix)`。env ソースは `APP_DB__HOST` を `db.host` に対応付け(アンダースコア 2 つ = ネスト)、変換は何もしない。値は文字列のまま。
+    - `loadConfig(sources)` はそれらを順番に読み、既存の `deepMerge` でマージする。
+    - 検証と型変換は、マージの後に 1 回だけ、`src/config/schema.ts` のスキーマオブジェクト(string, number, boolean, enum, required, default)に基づいて行う。環境変数から来た `port: '8080'` はそこで数値の 8080 になる。必須値の欠落や型の誤りは、最初の 1 件だけでなく、すべての問題をまとめて報告する。
+    - 公開の入口である `getConfig()` はシグネチャと戻り値の型を保ち、アプリのほかの部分は変わらない。
+
+    既存の設定項目(30 個ほどあり、`test/config/` の現在のテストがその内容を示しています)はすべて現在の動作を保ち、各ソース、マージの順序、検証メッセージのテストを追加してください。古い `loadConfig` の中身は、新しいコードの横に残すのではなく、最後にはなくなっているようにしてください。
+
+- task: t20
+  lang: ja
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    誰がいつタスクを変えたのか分かるように、変更履歴を残して
+  spec: |
+    taskboard にタスクの変更履歴を追加してください。誰がいつ何を変えたのかを、タスクごとに参照できる必要があります。
+
+    ## イベントモデル
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed' | 'task.deleted';
+    interface AuditEvent {
+      id: string;
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;
+      at: string;                       // ISO 8601
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    }
+    ```
+
+    ## 記録するタイミング
+    1. `createTask`: `task.created`、`after` に作成されたタスク
+    2. `assignTask`: `task.assigned`、`before`/`after` には `assigneeId` だけ
+    3. `changeStatus`: 実際に状態が変わった場合だけ `task.status_changed`
+    4. `deleteTask`: `task.deleted`、`before` に削除前のタスク
+    5. 失敗したリクエスト(検証失敗、409)は記録しません
+
+    ## 保存と参照
+    - `AuditRepo.append(event)`、`AuditRepo.listByTask(taskId)`(時刻順)
+    - `GET /tasks/:id/audit` は `{ items }` で応答、存在しないタスクは 404
+    - 削除されたタスクの履歴は残っている必要があり、参照もできます
+
+    ## そのほか
+    - `actorId` はハンドラーがリクエストコンテキストから取り出してサービスに渡します
+    - サービスのメソッドのシグネチャに、`actorId` を最後の任意引数として追加
+    - サービス・ハンドラーのテストを追加
+
+- task: t21
+  lang: ja
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 9, dirs: 3 }
+  short: |
+    データアクセス層をコールバックから async/await に変換して
+  spec: |
+    データアクセス層はいまだに Node 形式のコールバックを使っていますが、その上はすべて Promise を使っています。そのため各サービスが、リポジトリの呼び出しを手作業で `new Promise(...)` に包んでいます。リポジトリが直接 Promise を返すようにしたいです。
+
+    `src/repo/` の下にリポジトリのファイルが 5 つ(users, tasks, comments, tags, sessions)あり、それに加えて、そのすべてが呼んでいる共有ヘルパー `src/repo/db.ts` があります。エクスポートされている各関数は現在 `(args..., cb)` を受け取ります。変更後は `(args...)` を受け取り、コールバックがこれまで受け取っていたのと同じエラーオブジェクトで reject する Promise を返します。`db.ts` のヘルパーは `query` と `transaction` を Promise を返す関数として公開し、`transaction` は、実行する関数が reject したらロールバックしなければなりません。
+
+    次に呼び出し側です。`src/service/` の下の 3 つのサービスは、手書きのラッパーをやめて、リポジトリの呼び出しを単に `await` するようにします。トランザクション内のクエリの順序や、どのエラーが表に出るかを含め、動作は変えてはいけません。
+
+    リポジトリのテストはコールバック形式の偽の `db` を使っているので、その偽物も同じ変換が必要です。リポジトリを 1 つ変換するたびにテストスイートが通る状態を保てるやり方で進めてください。そうすれば、変更をファイルごとにレビューできます。
+
+- task: t22
+  lang: ja
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 12, dirs: 5 }
+  short: |
+    エラーメッセージを全部メッセージキーに置き換えて、韓国語/英語のカタログを付けて
+  spec: |
+    ユーザーに見えるエラーメッセージが、コードのあちこちに韓国語の文字列として埋め込まれています。英語のユーザーを受け入れる必要があるので、メッセージをキーに置き換え、言語ごとのカタログから取り出して使う形に変えようとしています。
+
+    方式はこう考えています。`src/i18n/` の下に `ko.json`、`en.json` のカタログと `t(key, params, locale)` 関数を置きます。キーは `task.not_found`、`validation.required` のようなドット区切りで、値には `{name}` 形式のプレースホルダーが使えます。エラークラスはメッセージ文字列の代わりに `code` と `params` を持ち、応答を作る最後の段階(`src/handlers/http.ts` のエラーの対応付け)で、リクエストの `Accept-Language` を見て文章に変えます。対応していない言語には韓国語で返します。
+
+    変える必要があるのは、エラーを投げているサービスすべて(タスク、ユーザー、コメント、プロジェクト)と検証ユーティリティ、そしてハンドラーのエラーの対応付けです。メッセージ文字列を直接比較しているテストがかなりありますが、これらは `code` を比較するように直し、文章そのものはカタログのテストで 1 回だけ確認します。カタログにないキーを使ったらテストで引っかかるように、2 つのカタログのキー集合が同じであること、コードで使っているキーがすべて入っていることを確認するテストも入れてください。
+
+- task: t23
+  lang: ja
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 5 }
+  short: |
+    タスクの削除は、復元できるようにソフトデリートにするべき
+  spec: |
+    現在はタスクを本当に削除していて、サポートから「戻してほしい」という依頼が何度も来ます。削除をソフトデリートにしてください。
+
+    ## モデル
+    - `Task` に `deletedAt: string | null`(ISO 8601)を持たせる。null でなければ、そのタスクは削除済み。
+
+    ## リポジトリ
+    - `remove(id)` は行を消す代わりに `deletedAt` を設定する。
+    - `get`、`list`、`find` は、`{ includeDeleted: true }` 付きで呼ばれないかぎり、削除済みのタスクを飛ばす。
+    - 新しい `restore(id)` は `deletedAt` を消す。
+    - 新しい `purge(olderThan: Date)` は、その日付より前に削除されたタスクを本当に取り除く。
+
+    ## サービス
+    - `deleteTask` は、呼び出し側から見た動作を保つ: タスクは見えなくなり、2 度目の削除は 404。
+    - `restoreTask(id)` は、一度も削除されていない、または存在しないタスクに対して `NotFoundError` で失敗する。
+    - 削除済みタスクのコメントと監査イベントは残り、タスクと一緒に戻ってくる。
+    - 件数と週次レポートは削除済みのタスクを無視する。
+
+    ## HTTP
+    - `DELETE /tasks/:id` はクライアントから見て変わらない。
+    - 管理者向けの `POST /tasks/:id/restore`。
+    - 管理者向けの `GET /tasks?deleted=only` はごみ箱の一覧を返す。
+
+    ## マイグレーションと後片付け
+    - マイグレーションでこの列を追加し、既存の行はすべて null にする。
+    - 日次ジョブが、現在から 30 日前を指定して `purge` を呼ぶ。
+
+    ## テスト
+    - リポジトリ、サービス、ハンドラーの各レベル、それに、すでにタスクが入っているデータベースでのマイグレーション。
+
+- task: t24
+  lang: ja
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 5 }
+  short: |
+    ユーザーごとの通知設定機能を追加(メール/Slack のチャネル、イベントごとの on/off)
+  spec: |
+    ユーザーごとに、通知を受け取るチャネルとイベントを選べるようにしてください。
+
+    ## 設定モデル
+    ```ts
+    type Channel = 'email' | 'slack';
+    type NotifyEvent = 'task.assigned' | 'task.due_soon' | 'comment.added';
+    interface NotificationSettings {
+      userId: string;
+      channels: Record<Channel, { enabled: boolean; address: string | null }>;
+      events: Record<NotifyEvent, Channel[]>;
+    }
+    ```
+
+    ## 要件
+    1. 設定のないユーザーは既定値(メールだけ有効、すべてのイベントをメールで)として扱います。
+    2. `GET /me/notifications`、`PUT /me/notifications` で取得・保存します。
+    3. 有効なチャネルには宛先が必要で、メールアドレスと Slack の Webhook URL の形式を検証します。
+    4. イベントに指定したチャネルが無効になっていたら、保存時に 400 です。
+    5. 通知を送る側(`NotificationService.notify(event, userId, payload)`)は、設定を読んで該当するチャネルにだけ送ります。
+    6. チャネルごとの送信部品は `EmailSender`、`SlackSender` に分け、同じインターフェースを実装します。
+    7. 1 つのチャネルの送信に失敗しても、ほかのチャネルには送り、失敗はログに残します。
+    8. これまで `task.assigned` でメールを直接送っていたコードは、`notify` の呼び出しに置き換えます。
+    9. `task.due_soon` は、毎時動くジョブが締め切り 24 時間以内のタスクを探して呼びます。
+
+    ## テスト
+    - 設定の検証、既定値、チャネルの選択、1 つのチャネルが失敗したときの動作
+
+- task: t25
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 25, dirs: 8 }
+  short: |
+    決済処理を担当する新規サービスを、ゼロから設計して実装して
+  spec: |
+    今は注文サービスの中から決済代行会社の API を直接呼んでいますが、決済手段が増えて手に負えなくなっています。決済を別のサービスとして切り出そうとしています。設計からお願いします。
+
+    ## 範囲
+    - 新しいサービス `payments`(HTTP API + ワーカー)
+    - 決済の承認、売上確定、取消、一部返金
+    - 決済代行会社のアダプター 2 つ(現在使っている A 社、新しく接続する B 社)と共通インターフェース
+    - Webhook の受信と署名検証、リトライによる重複処理の防止(冪等キー)
+    - 決済の状態機械と状態遷移の履歴
+    - 注文サービスとの連携: 注文サービスは決済代行会社をもう直接呼ばず、`payments` の API だけを呼ぶ
+
+    ## 決める必要があること(提案してください)
+    1. 注文サービスと同期呼び出しでつなぐか、イベントで疎につなぐか
+    2. ストレージのスキーマと金額の表現(整数の最小単位)
+    3. 部分的に失敗したときの補償処理
+    4. 既存の決済データの移し方と、切り替え期間に二重記録するかどうか
+
+    ## 成果物
+    - アーキテクチャ文書と API 仕様
+    - サービスのコード、マイグレーション、アダプターごとの契約テスト
+    - 注文サービス側の呼び出し箇所の置き換え
+    - ローカルで 2 つのサービスを一緒に起動する構成
+
+- task: t26
+  lang: ja
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 30, dirs: 10 }
+  short: |
+    注文パイプラインを、サービス間の同期 REST 呼び出しから、メッセージキューを使ったイベント駆動アーキテクチャに移して
+  spec: |
+    現在、注文の確定は同期 REST 呼び出しの連鎖です。checkout が inventory を呼び、inventory が pricing を呼び、その後 checkout が payments を、最後に notifications を呼びます。どれか 1 つが遅いとリクエスト全体がタイムアウトし、途中で失敗すると、存在しない注文のために在庫が引き当てられたまま残ります。
+
+    このパイプラインを、メッセージキュー上のイベントに移したいです。ブローカーはまだ選んでいません。1 つ提案して、その理由を示してください。
+
+    コードを書く前に設計しておくべきこと:
+    - イベント(`order.placed`、`stock.reserved`、`stock.rejected`、`payment.captured`、`payment.failed`、`order.confirmed`、`order.cancelled`)と、そのペイロード、バージョン付けの規則。
+    - どの状態を誰が所有するか。呼び出しの連鎖に代わるサーガと、各ステップの補償処理。
+    - 配信保証: 冪等なコンシューマーを前提とした at-least-once、データベースのコミットと発行が食い違わないよう各プロデューサーに置く outbox テーブル、再送の手段を備えたデッドレターの経路。
+    - 注文 ID ごとの順序の要件。
+    - 結果が後から届くようになった今、checkout の API がブラウザーにどう応答するか。
+
+    そのうえで、作業そのものをサービスごとに進めます。checkout、inventory、pricing、payments、notifications のそれぞれに、パブリッシャーとコンシューマー、outbox とそのリレー、そして発行または購読するすべてのイベントの契約テストを用意します。サービス間の古い REST エンドポイントは、新しい経路がシャドーモードで動くまで残します。その移行と切り替えを計画し、各段階で何をロールバックできるかを教えてください。
+
+    可観測性もこの作業の一部です。すべてのイベントに相関 ID を付け、特定の注文がどこで止まっているかを確認できる手段を用意します。
+
+- task: t27
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 40, dirs: 12 }
+  short: |
+    サービスにマルチテナンシーを導入して。顧客企業ごとにデータが完全に分離されている必要がある
+  spec: |
+    現在のサービスは、顧客企業が 1 社であることを前提に作られています。2 社目の契約が決まったので、1 つのデプロイで複数の顧客企業を受け入れられるように変える必要があります。顧客企業の間でデータが混ざることは、絶対にあってはなりません。
+
+    まず分離の方式を決める必要があります。テーブルごとに `tenant_id` を持たせる方式、スキーマを分ける方式、データベースを分ける方式のうち、私たちの規模(顧客企業は数十社、テーブルは 40 余り)に合うものを比較して提案してください。私は `tenant_id` 列と行レベルセキュリティポリシーの組み合わせを考えていますが、確信はありません。
+
+    方式が決まれば、変わる範囲は次のとおりです。認証トークンにテナントが入り、リクエストごとにテナントコンテキストが設定され、リポジトリ層のすべてのクエリに自動で適用される必要があります。個々のクエリで条件を書き忘れても、ほかの顧客企業のデータが見えないようにすることが要点です。すべてのテーブルにマイグレーションが必要で、既存のデータは 1 社目の顧客企業のものとして埋めます。一意制約(メールアドレス、プロジェクトキーなど)はテナントの範囲に変わります。キャッシュキー、バックグラウンドジョブ、ファイルの保存パス、検索インデックス、監査ログにもテナントを入れる必要があります。管理者向けに、テナントを作成・停止する API も必要です。
+
+    テストは、層ごとに「ほかのテナントのデータにアクセスすると、存在しないものとして見える」ことを確認するものを基本として敷いてください。
+
+- task: t28
+  lang: ja
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 22, dirs: 7 }
+  short: |
+    サードパーティが CLI にコマンドやエクスポーターを追加できるよう、プラグインシステムを設計して作って
+  spec: |
+    CLI にエクスポーターやサブコマンドをもう 1 つ足す、というプルリクエストが次々に届きますが、そのすべてを私たちが抱えたくはありません。それらを各自で配布できるよう、プラグインシステムが欲しいです。
+
+    ## プラグインにできること
+    - コマンドの登録(名前、オプション、ハンドラー)。
+    - `export` コマンド用のエクスポーターの登録(形式名、ファイル拡張子、私たちのデータモデルからバイト列への関数)。
+    - `beforeSync` と `afterSync` へのフック。
+
+    ## 設計が必要なこと
+    1. 拡張 API とその安定性の約束: バージョン付きの `PluginApi` オブジェクト、何が公開か、どう非推奨にするか。
+    2. 発見と読み込み: プラグインは `mytool-plugin-*` という名前の npm パッケージで、設定ファイルに列挙する。読み込み順。2 つのプラグインが同じ名前を登録したときにどうなるか。
+    3. 分離: 読み込み中やフックの中で例外を投げたプラグインが CLI を落としてはならない。どこまでやるか(try/catch、ワーカースレッド、権限)を決める。
+    4. 設定: 各プラグインは、設定ファイルの中に検証済みの専用セクションを持つ。
+    5. 開発者体験: テンプレート、型定義、`mytool plugin doctor` コマンド。
+
+    ## 移行
+    - 組み込みのエクスポーター 3 つ(csv, json, markdown)と `stats` コマンドを同じ API に載せ替え、本体が他者に提供する仕組みを自分でも使うようにする。
+    - プラグインを入れていない人にとっては、動作は変わらない。
+
+    ## 成果物
+    - まずレビュー用の設計文書。
+    - ローダー、型定義付きの API パッケージ、移行した組み込み機能、読み込み・衝突・失敗するプラグインのテスト、それにプラグインの実例を 1 つ含むドキュメント。
+
+- task: t29
+  lang: ja
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 60, dirs: 15 }
+  short: |
+    今のモノリシックな構造を、モジュールの境界がはっきりするように全面的に再設計したい。パッケージの分割まで
+  spec: |
+    コードベースは `src/` 1 つに 300 を超えるファイルが絡み合っていて、互いを好き勝手な向きに import しています。機能を 1 つ直すと、関係のないテストが壊れることがよくあります。構造を組み直そうとしています。
+
+    ## 目標
+    - ドメインごとのモジュール(アカウント、プロジェクト、タスク、通知、決済、レポート)に境界を分け、モジュールどうしは公開の入口(`index.ts`)だけを通して使います。
+    - 依存の向きを一方向に決めます。ドメイン → 共通ユーティリティはよいが逆は不可、ドメインどうしは決められた向きだけを許します。
+    - 循環依存をなくします(現在 40 個以上)。
+    - ストレージへのアクセスと HTTP は各モジュールの中の外側の層に押し出し、ドメインロジックはそれらを知りません。
+    - ワークスペースのパッケージに分けられるものは分けます。
+
+    ## まず必要なもの
+    1. 現在の依存グラフの分析と、モジュール境界の提案
+    2. 段階的な移行計画: 一度に全部は移さず、各段階が終わるたびにビルドとテストが通ること
+    3. 境界を強制する方法(lint ルールや依存関係の検査)と CI への組み込み
+    4. 共通として残すものと、モジュールに下ろすものの基準
+
+    ## 制約
+    - 外部 API とデータベーススキーマは変えません
+    - 移行中も機能開発は続くので、大きなブランチ 1 つではなく、小さな変更をいくつも重ねて進めます
+
+- task: t30
+  lang: ja
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 35, dirs: 9 }
+  short: |
+    モバイルクライアントがオフラインで動いて、オンラインに戻ったら同期するようにする必要がある
+  spec: |
+    現場の技術者は、電波の届かない地下や屋上で私たちのモバイルアプリを使いますが、今のアプリはそこでは役に立ちません。どの画面も API から読み込み、どの編集もリクエストになるからです。アプリが完全にオフラインで動き、接続が戻ったら同期するようにしたいです。
+
+    これはクライアントのデータ層の書き直しで、まず設計が必要です。私に見えている論点は次のとおりです。UI にとっての正となる、端末上のローカルストア(どのデータベースか、どんなスキーマか、アプリのバージョン間でどう移行するか)。端末で生成する安定した ID を持つ、ローカル変更のキュー。それらの変更を送り、ほかの人の変更を取得する、サーバーとの同期プロトコル(接続が切れても再開でき、頻繁に動かせるほど軽いこと)。そして競合の扱いです。競合については、レコード全体に対する「最後の書き込みが勝つ」は望みません。同じ作業指示の別々のフィールドを編集した 2 人の技術者は、どちらも自分の変更を保てるべきで、1 つのフィールドでの本当の競合はユーザーに見せるべきです。写真と署名はサイズが大きいので、リトライ付きの専用のアップロード経路が必要です。
+
+    サーバー側にも対応する作業が必要です。ユーザーごとの変更フィード、まとめて送られてきた変更の冪等な受け付け、そして 2 週間オフラインだった端末が削除済みのレコードを復活させないための、削除のトゥームストーンです。
+
+    アプリのすべての画面を、「取得してから描画」から、ローカルストアを読んでそれを監視する形に移す必要があり、UI には同期の状態と未送信の変更を表示する必要があります。コードを書く前に、ストア、プロトコル、競合のルール、それに既存のインストールの移行計画を扱う設計文書から始めてください。

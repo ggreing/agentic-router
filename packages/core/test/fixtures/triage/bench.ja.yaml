@@ -1,0 +1,436 @@
+# The 15 bench task prompts (bench/tasks/custom/*/task.json, written in Korean) in Japanese (decision 139).
+# Same ids; the label is the task's authored level (L2 and above = team). Code, identifiers and the exact
+# strings a task asks for are kept as they are. Used only to compare stage 1 across languages: the bench
+# itself still runs the original prompts.
+
+- task: c-l0-01
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    textkit の `interpolate` で、値のない placeholder に出会ったときに投げるエラーメッセージに誤字があります(`vlaue`)。ユーザーの画面にそのまま表示されるメッセージなので、直す必要があります。
+
+    たとえば `interpolate('Hi {{name}}', {})` を呼ぶと `TextkitError` が投げられ、その `message` は正確に `Missing value for placeholder "name"` でなければなりません(引用符の中は placeholder の名前)。
+
+    メッセージ以外の動作(strict: false のときに placeholder を残す、など)は変えないでください。
+
+- task: c-l0-02
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    README では `wordCount` がパッケージの関数として紹介されていますが、`src/index.ts`(barrel)で export が抜けているため、`import { wordCount } from './src/index.ts'` ができません。`src/count.ts` にある `wordCount` を `src/index.ts` からも export してください。既存の export(`charCount` など)はそのまま残す必要があります。
+
+- task: c-l0-03
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    taskboard で priority を指定せずにタスクを作ると priority が `'low'` で入りますが、仕様上の既定値は `'medium'` が正しいです。`TaskService.createTask({ title })` で作っても、`createApp()` の `handlers.createTask({ body: { title } })` ハンドラーで作っても、priority を渡さなければ `'medium'` になるように直してください。priority を明示した場合は、今までどおりその値がそのまま入る必要があります。
+
+- task: c-l0-04
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    `truncate(text, maxLength, options?)` のバグ報告です。文字列の長さが `maxLength` とちょうど同じときにも切られてしまいます。`truncate('hello', 5)` は `'hello'` のまま返るべきなのに、`'hell…'` が返ります。`ellipsis` オプションを渡しても同じです(`truncate('abcdefgh', 8, { ellipsis: '...' })` → `'abcdefgh'` であるべき)。
+
+    長さが `maxLength` 以下なら原文をそのまま返し、超えたときだけ今までどおり(ellipsis を含めて maxLength 文字に)切ってください。
+
+- task: c-l0-05
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    confkit の `parseDuration('1h')` が `360000` を返します。1 時間は `3600000` ms でなければなりません。このせいで `'1h30m'` のような複合値も間違って計算されています(`5400000` が返るべき)。直してください。ほかの単位(ms, s, m, d)は今も正しく動いています。
+
+- task: c-l1-01
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit の `slugify` は ASCII しかまともに処理できず、困っています。`slugify('Crème Brûlée')` が `'cr-me-br-l-e'` になり、ハングルのタイトルは空文字列になってしまいます。下のように変えてください。
+
+    シグネチャ: `slugify(input: string, options?: SlugifyOptions): string`、`interface SlugifyOptions { separator?: string }`(`SlugifyOptions` 型も `src/index.ts` から export)。
+
+    ルール:
+    1. 結果は小文字。
+    2. ラテン文字のダイアクリティカルマーク(アクセント)は取り除く: `slugify('Crème Brûlée')` → `'creme-brulee'`、`slugify('ÉCOLE Française')` → `'ecole-francaise'`。
+    3. ハングルなど、ほかの文字体系の文字と数字はそのまま残す: `slugify('안녕 세상')` → `'안녕-세상'`、`slugify('React 훅 정리 2편')` → `'react-훅-정리-2편'`。(結果のハングルは、一般的な合成済み(NFC)の文字列でなければなりません。)
+    4. 文字/数字でない文字が続いたら区切り文字 1 つに置き換え、前後の区切り文字は取り除く。
+    5. `options.separator` で区切り文字を指定でき、既定値は `'-'`: `slugify('  --Hello,   World!--  ', { separator: '_' })` → `'hello_world'`。
+    6. 空文字列、空白だけ、記号だけの入力は `''`。
+
+    既存の動作(`slugify('Hello, World!')` → `'hello-world'`、`'Version 2.0 Release'` → `'version-2-0-release'`)は保たれなければなりません。
+
+- task: c-l1-02
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    taskboard の状態遷移まわりのバグです。タスクをキャンセル(`cancelled`)しようとすると、todo でも in_progress でも必ず 409 になります。それから、現在の状態と同じ状態に変えるリクエスト(例: todo → todo)も 409 になりますが、これはエラーにせず、何もしないのが正しいです。
+
+    正しいルール(`TaskService.changeStatus(taskId, status)`、`startTask` / `completeTask` / `cancelTask`、そして `handlers.updateStatus({ params: { id }, body: { status } })` のすべてに同じように適用):
+    - todo → in_progress, cancelled を許可
+    - in_progress → todo, done, cancelled を許可
+    - done → in_progress を許可 (reopen)
+    - cancelled → どの状態にも不可(終了状態)
+    - 上にない遷移は `ConflictError`、メッセージは既存の形式のまま `Invalid status transition: <from> -> <to>`(例: `Invalid status transition: cancelled -> todo`)。ハンドラーの応答は 409、body は `{ error: '<そのメッセージ>' }`。
+    - 現在の状態と同じ状態へのリクエストは、エラーなしで現在のタスクをそのまま返し、保存もしないので `updatedAt` が変わってはいけません。ハンドラーは 200。
+
+    未知の status の値に対する 400 の処理など、残りの動作はそのままにしてください。
+
+- task: c-l1-03
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit の `wordWrap(text, width)` の改善依頼です。CLI のヘルプ出力に使いたいのですが、問題が 2 つあります。
+
+    1) 入力にもともとある改行(`\n`)がすべて消えて、1 つの段落にまとめられてしまいます。入力の各行を別々に wrap して、結果を `\n` でつなぎ直してください。空行(段落の区切り)や空白だけの行は、空行として残します。1 行の中では今までどおり、連続する空白/タブを単語の区切りとみなし、前後の空白は捨てます。
+       - `wordWrap('aaa bbb\n\nccc ddd', 3)` → `'aaa\nbbb\n\nccc\nddd'`
+       - `wordWrap('the quick brown\nfox', 10)` → `'the quick\nbrown\nfox'`
+       - `wordWrap('a\n   \nb', 5)` → `'a\n\nb'`
+
+    2) `width` より長い単語を切るオプションを追加してください。シグネチャ: `wordWrap(text: string, width: number, options?: WordWrapOptions): string`、`interface WordWrapOptions { breakLongWords?: boolean }`(既定値 `false`、`WordWrapOptions` 型も `src/index.ts` から export)。
+       - `false`(既定)なら、今までどおり長い単語を切らず、1 行に丸ごと置きます。
+       - `true` なら、長い単語を先頭から `width` 文字ずつに分け、各断片を通常の単語と同じように greedy ルールで配置します。そのため、最後の(短い)断片の後ろに次の単語が入る余地があれば、同じ行に続きます。
+       - `wordWrap('abcdefghij', 4, { breakLongWords: true })` → `'abcd\nefgh\nij'`
+       - `wordWrap('abcdefg hi', 5, { breakLongWords: true })` → `'abcde\nfg hi'`
+
+    空文字列の入力は `''`、`width` が正の整数でなければ、今までどおり `TextkitError` を投げます。
+
+- task: c-l1-04
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    taskboard に期日の機能を入れてください。
+
+    1. タスク作成の入力(`NewTaskInput`)に任意フィールド `dueDate?: string | null` を追加(`'YYYY-MM-DD'` 形式の日付文字列)。`Task` にも `dueDate: string | null` フィールドを追加し、指定がない、または `null` なら `null` で保存します。
+    2. 検証: `dueDate` が与えられたのに文字列でない、`YYYY-MM-DD` 形式(年 4 桁、月/日 2 桁)でない、または存在しない日付(`'2023-02-29'`、`'2024-13-01'`、`'2024-04-31'` など)であれば、既存の検証エラーと同じやり方で `ValidationError` を投げ、`details` には正確に `'dueDate must be a valid date in YYYY-MM-DD format'` を入れてください。そうすれば `handlers.createTask` は既存どおり 400 `{ error: 'Validation failed', details: [...] }` を返すことになります。(`'2024-02-29'` のようなうるう年の日付は有効)
+    3. `TaskService.listOverdueTasks(today: string): Task[]` を追加。`today` も `'YYYY-MM-DD'`。`dueDate` があり、`dueDate < today` で、status が `done`/`cancelled` でないタスクだけを返します(期日が今日のものは遅延ではない)。並び順は `dueDate` の昇順、同じなら作成順。`today` が有効な日付でなければ `ValidationError`、details は `['today must be a valid date in YYYY-MM-DD format']`。
+    4. ハンドラー `handlers.listOverdueTasks(req)` を追加: `req.query.today` を受け取って 200 `{ items: Task[] }` を返し、`today` がない、または不正なら 400(上の ValidationError が既存のエラーの対応付けをそのまま通る)。
+
+- task: c-l1-05
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    confkit の `deepMerge(...layers)` にバグがいくつかあるので、直してください。シグネチャ(`deepMerge(...layers: ConfigObject[]): ConfigObject`)と基本の動作(後のレイヤーが優先、ネストしたオブジェクトはキー単位でマージ、配列は丸ごと置き換え)はそのまま保ちます。
+
+    1. 入力が書き換えられます。`const a = { db: { host: 'a', port: 1 } }; deepMerge(a, { db: { port: 2 } })` の後、`a.db.port` が 2 に変わっています。どの入力レイヤーも書き換えられてはならず、結果のオブジェクトは入力とネストしたオブジェクト/配列の参照を共有してはいけません(結果を変更しても入力に影響がないこと)。
+    2. 後のレイヤーの値が `undefined` なら、前のレイヤーの値を上書きせずに無視してください。`null` は明示的な値なので、今までどおり上書きします。例: `deepMerge({ port: 8080 }, { port: undefined })` → `{ port: 8080 }`、`deepMerge({ port: 8080 }, { port: null })` → `{ port: null }`。
+    3. 配列は今までどおり丸ごと置き換えますが、結果にはコピーが入る必要があります。
+    4. セキュリティ: レイヤーに `__proto__`、`constructor`、`prototype` のキーがあれば(最上位でもネストしたオブジェクトの中でも。例: `JSON.parse('{"__proto__": {"polluted": true}}')`)、そのキーは無視して prototype pollution が起きないようにし、結果にも該当のキーが own property として入らないようにしてください。
+
+- task: c-l2-01
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    taskboard のタスク一覧にフィルタリングとページネーションを入れてください。今は `handlers.listTasks` が全タスクを `{ items }` で全部返しています。層に合わせて分けて実装してください(フィルタリングそのものは repo、検証・既定値は service、クエリ文字列の解析は handler)。
+
+    ## Service
+    `TaskService.queryTasks(query?: TaskQuery): TaskPage` を追加(既存の `listTasks()` は今までどおり全件の配列を返すまま)。
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];       // このうちのどれかと一致 (OR)
+      assigneeId?: string | null;  // 文字列ならその担当者、null なら未割り当てのタスクだけ、省略ならフィルターなし
+      priority?: Priority;
+      search?: string;             // title の部分一致、大文字小文字を無視
+      page?: number;               // 1 から始まる、既定 1
+      pageSize?: number;           // 既定 20、最大 100
+    }
+    interface TaskPage {
+      items: Task[];
+      page: number;
+      pageSize: number;
+      total: number;       // フィルターに合う全件数 (ページ適用前)
+      totalPages: number;  // Math.ceil(total / pageSize)、total が 0 なら 0
+    }
+    ```
+    - 条件が複数あれば AND。
+    - 並び順は作成順(先に作ったタスクが先)。
+    - page が最後のページを越えたら、エラーではなく `items: []`(total、totalPages は通常の値)。
+    - 不正な値なら `ValidationError`(details に説明の文字列が 1 つ以上): status に未知の値、未知の priority、page が 1 以上の整数でない、pageSize が 1〜100 の整数でない。
+    - `TaskQuery`、`TaskPage` 型は `src/index.ts` から export。
+
+    ## Handler
+    `handlers.listTasks(req)` は `req.query`(値はすべて文字列)を解析して `queryTasks` に渡し、200 + `TaskPage` を body として返します。
+    - `status`: カンマ区切りのリスト(`'todo,in_progress'`)
+    - `assigneeId`: ユーザー id、または `'none'` なら未割り当てだけ
+    - `priority`
+    - `q`: title の検索語
+    - `page`、`pageSize`: 数字の文字列。整数でない値(`'abc'`、`'1.5'`)や範囲外の値は 400。
+
+    クエリがなければ `{ items: <最初の 20 件>, page: 1, pageSize: 20, total, totalPages }`。不正なクエリは既存のエラーの対応付けどおり 400 `{ error: 'Validation failed', details: [...] }`。
+
+- task: c-l2-02
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    taskboard にタスクの変更履歴(audit trail)を追加してください。誰がいつ何を変えたのかを、タスクごとに参照できる必要があります。
+
+    ## イベントモデル
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed';
+    interface AuditEvent {
+      id: string;               // イベントごとに一意な値
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;   // 操作したユーザーの id、分からなければ null
+      at: string;               // ISO 8601。その変更で保存されたタスクの updatedAt と同じ値 (task.created は createdAt)
+      changes: Record<string, { from: unknown; to: unknown }>;
+    }
+    ```
+    - `task.created`: `changes` は `{}`
+    - `task.assigned`: `{ assigneeId: { from: <前の担当者または null>, to: <新しい担当者または null> } }`(割り当ての解除もこのイベント)
+    - `task.status_changed`: `{ status: { from: <前の状態>, to: <新しい状態> } }`
+    - 失敗した操作(検証エラー、404、409 など)は記録しません。
+    - すでに同じ人に割り当てられているタスクを同じ人にもう一度割り当てても、変わるものがないのでイベントも残しません。
+    - `AuditEvent`、`AuditEventType` 型は `src/index.ts` から export。
+
+    ## Service (`TaskService`)
+    - 変更系のメソッドに、最後の任意引数 `actorId?: string | null` を追加(省略すると null): `createTask(input, actorId?)`、`assignTask(taskId, userId, actorId?)`、`changeStatus(taskId, status, actorId?)`、`startTask(taskId, actorId?)`、`completeTask(taskId, actorId?)`、`cancelTask(taskId, actorId?)`。
+    - `getTaskHistory(taskId: string): AuditEvent[]` を追加 — そのタスクのイベントを発生順に返す。存在しないタスクなら、既存と同じ `NotFoundError`(`Task not found: <id>`)。
+    - イベントのストアは、タスクの repo とは別の in-memory の audit log として作り、`createApp` でつないでください。時刻は `createApp({ now })` で注入される同じ clock を使います。
+
+    ## Handlers
+    - 既存の `createTask`、`assignTask`、`updateStatus` ハンドラーは `req.userId` を actorId として渡します(なければ null)。
+    - 新しいハンドラー `handlers.getTaskHistory(req)`: `req.params.id` の履歴を 200 `{ items: AuditEvent[] }` で返し、存在しないタスクなら 404 `{ error: 'Task not found: <id>' }`。
+
+- task: c-l2-03
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    confkit に、スキーマに基づく検証 + 型変換の機能を入れてください。環境変数はすべて文字列で入ってくるので、`port` が `'8080'` という文字列のまま残り、必須値の欠落も実行時になって初めて表に出る、という問題があります。
+
+    ## 1. `validateConfig(config, schema)` (`src/index.ts` から export)
+    ```ts
+    type FieldSchema =
+      | { type: 'string'; required?: boolean; default?: string; enum?: string[] }
+      | { type: 'number'; required?: boolean; default?: number; integer?: boolean; min?: number; max?: number }
+      | { type: 'boolean'; required?: boolean; default?: boolean }
+      | { type: 'duration'; required?: boolean; default?: string | number }
+      | { type: 'object'; properties: Schema };
+    interface Schema { [key: string]: FieldSchema }
+    interface ConfigIssue { path: string; message: string }  // path は 'db.port' のようなドット区切り
+    type ValidationResult = { ok: true; value: ConfigObject } | { ok: false; issues: ConfigIssue[] };
+    function validateConfig(config: ConfigObject, schema: Schema): ValidationResult;
+    ```
+    (`FieldSchema`、`Schema`、`ConfigIssue`、`ValidationResult` 型も export)
+
+    ルール:
+    - 変換: `number` フィールドは number または数字の文字列(`'8080'`)を受け取って number に。`boolean` は true/false または文字列 `'true'`/`'false'` だけを許可(`'yes'` のようなほかの値はイシュー)。`duration` は文字列なら既存の `parseDuration` で ms の数値に変換し、数値ならそのまま ms。`string` は文字列だけを許可(数値を文字列に変えない)。
+    - 値がないとき(キーがない、または undefined): `default` があれば default を使う(duration の default も ms に変換)、`required: true` ならイシュー `'is required'`、どちらでもなければ結果からそのキーを省く。
+    - `object` フィールド: 値がなければ空オブジェクトとみなして下位フィールドを検査する(そのため下位の default が埋まり、下位の required も報告される)。値がオブジェクトでなければ `'expected object'` のイシューを 1 つだけ出し、下位フィールドは検査しない。
+    - イシューのメッセージは、正確に下の文字列:
+      - 型の不一致/変換の失敗: `'expected string'`、`'expected number'`、`'expected boolean'`、`'expected duration'`、`'expected object'`
+      - number: `integer: true` なのに整数でなければ `'must be an integer'`、min 未満なら `'must be >= <min>'`、max を超えたら `'must be <= <max>'`(例: `'must be <= 65535'`)
+      - string の enum 違反: `'must be one of: <enum の値を ", " で join>'`(例: `'must be one of: development, production'`)
+      - スキーマにないキー: `'unknown key'`
+    - 1 つのフィールドにつきイシューは最大 1 つだけ出します(検査の順序: 型 → integer → min → max、string は 型 → enum)。
+    - すべてのフィールドのイシューを最後まで集めて返す(最初のエラーで止まらない)。イシューが 1 つでもあれば `ok: false`。イシュー配列の順序は問わない。
+    - 入力の config オブジェクトは書き換えず、`value` は変換・既定値が適用された新しいオブジェクト。
+
+    ## 2. `loadConfig` に `schema` オプション
+    `LoadOptions` に `schema?: Schema` を追加。与えられたら、マージした結果を `validateConfig` で検証し、成功すれば変換後の `value` を返し、失敗すれば `ConfigError` を throw します。このエラーの `message` は `'Invalid configuration'` で始まり、`issues` プロパティに `ConfigIssue[]` が入っている必要があります。`schema` がなければ既存の動作のままです。
+
+- task: c-l3-01
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    taskboard に **プロジェクト · メンバーシップ · ロールに基づく権限** を入れてください。今はタスクがすべて 1 つのかごに入っていて、誰でも何でも変えられます。タスクをプロジェクトでまとめ、プロジェクトの中ではロールに応じてできることを制限しようとしています。既存の層構造(models / repo / service / handlers / app)にそのまま従ってください。リポジトリ・サービス・ハンドラーが新しくでき、既存のタスク側も一緒に変わる作業です。
+
+    呼び出し元は `Request.userId` で識別します(すでにあるフィールド)。下のハンドラーはすべて、`createApp().handlers` に既存のタスクハンドラーと一緒に入っている必要があります。
+
+    ## 1. モデル
+    ```ts
+    type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+    interface Project {
+      id: string;            // 'project-1', 'project-2', ... (アプリごとに 1 から)
+      name: string;          // 前後の空白を除く、1〜60 文字、プロジェクト間で一意 (大文字小文字を無視)
+      description: string;   // 既定 ''
+      archived: boolean;     // 既定 false
+      createdBy: string;     // 作成したユーザーの id
+      createdAt: string;     // ISO 8601、AppOptions.now の時計を使う。作成時は updatedAt と同じ値
+      updatedAt: string;
+    }
+    interface Membership { projectId: string; userId: string; role: ProjectRole; addedAt: string }
+    ```
+    `Task` に `projectId: string | null` を追加します。プロジェクトなしで作ったタスクは `null` です。
+
+    ## 2. 権限表
+    `can(role: ProjectRole, action: ProjectAction): boolean` を `src/index.ts` から export してください。
+
+    | action | owner | admin | member | viewer |
+    |---|---|---|---|---|
+    | `project.read` | O | O | O | O |
+    | `project.update` | O | O | X | X |
+    | `project.archive` | O | X | X | X |
+    | `member.manage` | O | O | X | X |
+    | `task.read` | O | O | O | O |
+    | `task.write` | O | O | O | X |
+
+    ## 3. 共通ルール
+    検査の順序は下のとおりで、前の段階で引っかかったら、その応答を返します。
+    1. 呼び出し元: `userId` がない、または登録されていないユーザーなら 401 `{ error: 'Authentication required' }`。無効(`active: false`)なユーザーなら 403。
+    2. 対象: プロジェクトがなければ 404 `{ error: 'Project not found: <id>' }`、タスクがなければ既存どおり 404 `Task not found: <id>`。
+    3. メンバー・ロール: そのプロジェクトのメンバーでなければ 403 `{ error: 'Not a member of project: <id>' }`。メンバーだが権限表で許可されていなければ 403(メッセージは自由)。
+    4. アーカイブ: アーカイブされたプロジェクトに書き込み(`project.update`、`member.manage`、`task.write` に当たるすべての操作と、メンバーの脱退)をすると 409 `{ error: 'Project is archived: <id>' }`。読み取りはできます。
+    5. その後に、各操作の残りのルール。
+
+    入力の検証失敗(400)は既存どおり `{ error: 'Validation failed', details: [...] }` です。400 とほかの失敗が重なったときの優先順位は決めません(そのようなケースは確認しません)。
+    新しいエラークラス `UnauthorizedError`(401)、`ForbiddenError`(403)を `AppError` のサブクラスとして作り、export してください(コンストラクターの第 1 引数はメッセージ)。
+
+    ## 4. プロジェクトのハンドラー
+    | ハンドラー | リクエスト | 必要な権限 | 成功時の応答 |
+    |---|---|---|---|
+    | `createProject` | `body: { name, description? }` | ログイン済みの有効なユーザー | 201 `Project`。作成した人が `owner` メンバーになる |
+    | `getProject` | `params.id` | `project.read` | 200 `Project` |
+    | `listProjects` | `query.includeArchived?` | ログイン | 200 `{ items: Project[] }` 呼び出し元がメンバーであるプロジェクトだけ、作成順。アーカイブ済みは `includeArchived === 'true'` のときだけ含む |
+    | `updateProject` | `params.id`, `body: { name?, description? }` | `project.update` | 200 `Project` (`updatedAt` を更新) |
+    | `archiveProject` / `unarchiveProject` | `params.id` | `project.archive` | 200 `Project` |
+    | `listMembers` | `params.id` | `project.read` | 200 `{ items: Membership[] }` 追加された順 |
+    | `addMember` | `params.id`, `body: { userId, role }` | `member.manage` | 201 `Membership` |
+    | `changeMemberRole` | `params.id`, `params.userId`, `body: { role }` | `member.manage` | 200 `Membership` |
+    | `removeMember` | `params.id`, `params.userId` | `member.manage` または本人の脱退 | 200 `{ unassignedTaskIds: string[] }` |
+
+    細かいルール:
+    - 名前の検証メッセージ: `'name is required'`(ない、または空文字列・空白だけ)、`'name must be at most 60 characters'`。`description` が文字列でなければ 400。すでに使われている名前なら 409(自分自身の現在の名前に変えることは、大文字小文字だけを変える場合を含めて、衝突ではない)。`updateProject` で `name` を省略すると、名前はそのままです。
+    - `addMember`: `role` が 4 つのロールのどれでもなければ 400 `details: ['role must be one of: owner, admin, member, viewer']`、`userId` がなければ 400。対象のユーザーがいなければ 404 `User not found: <id>`、無効なら 409 `User is inactive: <id>`、すでにメンバーなら 409。
+    - `owner` ロールを与えられるのは owner だけです。admin が `owner` を与えようとする(追加・変更)、owner であるメンバーのロールを変える、owner を外そうとする、のいずれも 403。
+    - プロジェクトには owner が常に 1 人以上いなければなりません。最後の owner のロールを下げる、または最後の owner を外す(本人の脱退を含む)と 409 `{ error: 'Project must keep at least one owner' }`。
+    - `changeMemberRole`・`removeMember` の対象がメンバーでなければ 404。
+    - `removeMember`: どのロールでも、自分自身は外せます(脱退)。外されたユーザーに割り当てられていた **そのプロジェクトの** タスクは未割り当て(`assigneeId: null`、`updatedAt` を更新)になり、そのタスクの id を `unassignedTaskIds` として返します。ほかのプロジェクトや、プロジェクトのないタスクには触れません。
+    - アーカイブ/解除は、すでにその状態でも 200 です。
+
+    ## 5. タスク側の変更
+    - `createTask`: `body.projectId` があれば、そのプロジェクトに作ります(`task.write` が必要)。文字列でなければ 400。なければ今までどおり、プロジェクトのないタスク(`projectId: null`)です。
+    - プロジェクトに属するタスクは、`getTask` に `task.read`、`assignTask`・`updateStatus` に `task.write` が必要です(3 番の検査順序を適用、タスクのプロジェクトが基準)。
+    - プロジェクトのタスクの担当者は、そのプロジェクトの viewer でないメンバーでなければなりません。そうでなければ 409 `{ error: 'User cannot be assigned in project: <userId>' }`。(ユーザーなしの 404、無効の 409 は既存のルールが先です。)
+    - `listTasks`: プロジェクトのないタスク + 呼び出し元がメンバーであるプロジェクトのタスクを、作成順に返します(匿名ならプロジェクトのないタスクだけ)。`query.projectId` があれば、そのプロジェクトのタスクだけを返し、`task.read` が必要です。
+    - **プロジェクトのないタスクは、今とまったく同じように動かなければなりません。** 匿名の呼び出しもでき、既存のテストがそのまま通る必要があります。`TaskService` の既存の呼び出しの形(`createTask(input)`、`getTask(id)`、`listTasks()`、`assignTask(id, userId)`、`changeStatus(id, status)`)も保ってください(呼び出し元の id は、後ろに任意引数として足す形)。
+
+    ## 6. 仕上げ
+    - `createApp()` が新しいリポジトリ・サービスを作ってつなぎ、`handlers` に上のハンドラーをすべて入れます。
+    - 新しい型・クラス・`can` は `src/index.ts` から export します。
+    - 既存のテスト(`npm test`)がすべて通る必要があります。
+
+- task: c-l3-02
+  lang: ja
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    confkit の構造を変えてください。今は `loadConfig` がレイヤーを 1 度まとめて普通のオブジェクトを返して終わりなので、(1) 値がどのレイヤーから来たのか分からず、(2) JSON やコマンドライン引数のような新しい入力をつなぐ場所がなく、(3) 値どうしで参照できず、(4) 実行中に読み直すことができません。入力を **ソース** として抽象化し、その上に **出所の追跡 · 参照の置換 · 参照用の Config オブジェクト · 読み直し** を載せようとしています。`loadConfig` は、新しい構造の上で動く薄いラッパーとして残します。モジュールは役割ごとに分けてください(ソース群、マージ・出所、置換、比較、マスク、Config オブジェクト)。
+
+    下の名前はすべて `src/index.ts` から export します。エラーはすべて既存の `ConfigError` を使います。
+
+    ## 1. ソース
+    ```ts
+    interface ConfigSource { name: string; load(): ConfigObject }
+
+    objectSource(name: string, value: ConfigObject | (() => ConfigObject)): ConfigSource
+    iniSource(name: string, text: string | (() => string)): ConfigSource      // 既存の parseIni
+    jsonSource(name: string, text: string | (() => string)): ConfigSource
+    envSource(env: Record<string, string | undefined>, prefix = 'APP_', name = 'env'): ConfigSource   // 既存の fromEnv
+    argvSource(argv: string[], name = 'argv'): ConfigSource
+    ```
+    - ソースを作るときには何も読まず、`load()` を呼ぶたびに新しく読みます。関数を渡した場合は `load()` のたびにその関数を呼び直し、`envSource` は渡された env オブジェクトを毎回見直します。
+    - `objectSource` の `load()` はディープコピーを返します(受け取った側が書き換えても元はそのまま)。
+    - `jsonSource`: 最上位がオブジェクトの JSON だけを受け付けます。パースの失敗や、最上位がオブジェクトでない場合(配列、数値、null)は `load()` で `ConfigError` になり、メッセージにソース名が入ります。JSON の `null` の値はそのまま残します。
+    - `argvSource` のルール:
+      - `--db.host=localhost`: `=` の後ろが値です(`--name=` は空文字列、値の中の `=` はそのまま)。
+      - `--port 8080`: `=` がなく、次のトークンが `--` で始まらなければ、そのトークンが値です(`--offset -5` は -5)。
+      - `--debug`: 値がなければ `true`。
+      - `--no-debug`: `false`。次のトークンを値として取りません。
+      - キーの `.` はネストです。値は INI の値と同じルールで変換します(`true`/`false`、数値、引用符で囲めば文字列)。
+      - `--` が現れたら、その後ろはすべて無視します。オプションでもオプションの値でもないトークンは無視します。
+
+    ## 2. マージと出所
+    ```ts
+    resolveSources(sources: ConfigSource[]): { value: ConfigObject; origins: Record<string, string> }
+    ```
+    - 順番に `load()` してまとめます。後ろのソースが勝ち、オブジェクトどうしはキー単位でまとめ、それ以外の値(配列を含む)は丸ごと置き換わります(既存の `deepMerge` と同じルール)。
+    - `origins` は、結果の **葉**(オブジェクトでない値。配列と null も葉)のパスごとに、その値を与えたソースの名前です。パスは `'db.host'` のようなドット区切りです。オブジェクトがスカラーに、またはスカラーがオブジェクトに変わったら、以前のパスの出所は消えなければなりません。
+    - ソース名が重複していたら `ConfigError`(メッセージにその名前を含む)。
+
+    ## 3. 参照の置換
+    ```ts
+    interpolate(config: ConfigObject): ConfigObject   // 新しいオブジェクトを返し、入力は変えない
+    ```
+    - 文字列の値の中の `${パス}` を、そのパスの値に置き換えます。配列の中の文字列も対象です。波かっこの中の前後の空白は無視します。
+    - 文字列全体が参照 1 つだけなら(`'${port}'`)、参照先の値の型を保ちます(数値は数値のまま)。ほかの文字と混ざっていれば、文字列として連結します。
+    - 参照先の値にさらに参照があれば、最後まで展開します。
+    - `$${` は置換せず、文字どおりの `${` になります。
+    - エラー(`ConfigError`、`path` はその参照が入っている値のパス):
+      - 存在しないパス: メッセージに `unknown reference` を含む
+      - 循環(自分自身を含む): メッセージに `circular reference` を含む
+      - 参照先の値が文字列・数値・真偽値でない(オブジェクト、配列、null)
+
+    ## 4. 比較
+    ```ts
+    interface ConfigChange { path: string; before: ConfigValue | undefined; after: ConfigValue | undefined }
+    diffConfig(before: ConfigObject, after: ConfigObject): ConfigChange[]
+    ```
+    葉の単位で、追加(`before: undefined`) · 削除(`after: undefined`) · 変更を、path の昇順で返します。配列は中身が同じなら同じ値です。葉がオブジェクトに変わった場合は、以前の葉の削除と新しい葉の追加として現れます。
+
+    ## 5. Config オブジェクト
+    ```ts
+    createConfig(options: {
+      sources: ConfigSource[];
+      interpolate?: boolean;   // 既定 true
+      secrets?: string[];      // マスクするパスのパターン
+    }): Config
+
+    interface Config {
+      get(path: string): ConfigValue | undefined;
+      has(path: string): boolean;
+      require(path: string): ConfigValue;
+      getString(path: string, fallback?: string): string;
+      getNumber(path: string, fallback?: number): number;
+      getBoolean(path: string, fallback?: boolean): boolean;
+      getDuration(path: string, fallback?: number): number;   // ms
+      origin(path: string): string | undefined;
+      explain(): Array<{ path: string; value: ConfigValue; source: string }>;
+      toObject(options?: { redact?: boolean }): ConfigObject;
+      reload(): ConfigChange[];
+      onChange(listener: (changes: ConfigChange[]) => void): () => void;
+    }
+    ```
+    - `createConfig` はすぐに読みます(ソースのエラー・置換のエラーがあれば、ここで throw)。値はマージの後、置換まで済んだ値で、出所はマージの時点が基準です。
+    - `require` と型付きの取得で値がなければ `ConfigError`(メッセージに `missing required config` を含み、`path` を設定)。型付きの取得は、`fallback` を渡すと、値が **ないときだけ** それを返します。
+    - 型が合わなければ `ConfigError`(`path` を設定し、メッセージに下の文言を含む):
+      - `getString`: 文字列だけ。`expected string`
+      - `getNumber`: 数値または数字の文字列(`'3'`)。`expected number`
+      - `getBoolean`: 真偽値または `'true'`/`'false'`。`expected boolean`
+      - `getDuration`: 数値(ms)または既存の `parseDuration` が読める文字列。`expected duration`
+    - `origin(path)`: 葉のパスのソース名。オブジェクトのパスや存在しないパスは `undefined`。
+    - `explain()`: すべての葉を path の昇順で。`toObject()`: ディープコピー。
+    - `secrets`: ドット区切りのパスのパターンで、`*` はセグメント 1 つに対応します(`db.password`、`*.token`、`api.*`)。パターンに合うパスとその下位は秘密です。`toObject({ redact: true })` は秘密の値を `'***'` に置き換え(秘密のパスがオブジェクトなら、オブジェクト全体が `'***'`)、`explain()` は秘密の葉の `value` を `'***'` で出します。`get` などの直接の取得は実際の値を返します。
+    - `reload()`: すべてのソースを読み直して入れ替え、以前の値との `diffConfig` の結果を返します。変更が 1 つでもあれば、登録されたリスナーをその配列で 1 回ずつ呼びます。変更がなければ呼びません。読み直しの途中でエラーが出たら throw し、**以前の状態をそのまま保ち**、リスナーも呼びません。
+    - `onChange` は解除用の関数を返します。
+
+    ## 6. loadConfig
+    - 既存の動作はそのままです(defaults < sources < env、置換はしない)。既存のテストが通る必要があります。
+    - `LoadOptions` に `argv?: string[]`(最優先)と `interpolate?: boolean`(既定 false)を追加します。
+    - 内部は上のソース・`createConfig` を使って実装してください。

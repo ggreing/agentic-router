@@ -1,0 +1,745 @@
+# Triage evaluation prompts in Simplified Chinese (decision 139): the 30 tasks of prompts.yaml, both wordings.
+#
+# A translation of prompts.yaml, task by task: same task ids, labels and splits; `from` is the language of
+# the original. Code, identifiers, paths and log lines are kept as they are. Written by hand as a developer
+# would type them, not tuned to the stage-1 keywords. Used to compare stage 1 across languages; the limits
+# stated in prompts.yaml apply here too.
+
+- task: t01
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    interpolate 的错误信息里有个错别字 vlaue，改一下
+  spec: |
+    textkit 的 `interpolate` 在遇到没有值的 placeholder 时抛出的错误信息里有一个错别字。
+
+    ## 复现步骤
+    1. 调用 `interpolate('Hi {{name}}', {})`
+    2. 抛出 `TextkitError`
+    3. 打印 `message`
+
+    ## 实际
+    `Missing vlaue for placeholder "name"`
+
+    ## 期望
+    `Missing value for placeholder "name"`
+
+    这句话会原样显示在用户界面上，所以要在发版前改掉。只需要改这个字符串，`strict: false` 时保留 placeholder 的行为、错误类和错误码都不要动。我已经确认其他文件里没有同样的错别字。
+
+- task: t02
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    把请求的默认超时从 30 秒调到 60 秒
+  spec: |
+    我们 HTTP 请求的默认超时对报表类的端点来说太短了，网络慢的客户老是碰到超时。
+
+    我想要的是：
+    - `src/http/defaults.ts` 里的 `DEFAULT_TIMEOUT_MS` 从 `30_000` 改成 `60_000`。
+    - 客户端的其他部分都不变：单次调用的覆盖值仍然优先，重试保持原样。
+    - 这个常量只在这一处定义，调用方都是 import 它。
+
+    补充一点背景，也许有用：这个月 `/reports/export` 的 p99 大约是 41 秒，上次发版以来，客服团队已经记了 11 张关于该页面 "request timed out" 的工单。我们讨论过按端点单独配置，最后决定暂时不做。请不要加配置项，只改默认值。
+
+- task: t03
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 0, dirs: 0 }
+  short: |
+    这个正则匹配的是什么？ `^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$`
+  spec: |
+    做代码评审时看到下面这个正则，能解释一下它具体匹配什么吗？
+
+    ```ts
+    const FILE_REF = /^(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}$/;
+    ```
+
+    我的理解是这样的。
+    - 有一个或多个用斜杠分隔的路径片段
+    - 最后一个片段必须带扩展名
+
+    想弄清楚的几点：
+    1. 为什么 `src/a.ts` 可以，而 `a.ts` 不行？
+    2. 扩展名限制为 `{1,5}` 有什么原因吗？`.jsonl` 可以吗？
+    3. Windows 路径(`src\a.ts`)能匹配吗？
+    4. `[\w.-]` 里的 `.` 为什么不用转义？
+
+    不需要改代码，只要说明一下就好。
+
+- task: t04
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    清理一下 src/server/app.ts 里没用到的 import，lint 在报
+  spec: |
+    main 上 `npm run lint` 过不了，有三条被当作错误的警告，都在 `src/server/app.ts`：
+
+    ```
+    src/server/app.ts
+      3:10  error  'readFileSync' is defined but never used   no-unused-vars
+      4:8   error  'path' is defined but never used            no-unused-vars
+      9:15  error  'RequestContext' is defined but never used  no-unused-vars
+    ```
+
+    它们是上周删掉的静态文件处理器留下来的。请只删除这三个 import，别的都不要动。我确认过 `path` 在文件后面没有以别的名字被使用。不要改 lint 配置，也不要重新格式化这个文件；diff 应该是删除三行(如果其中两个在同一行，就更少)。
+
+- task: t05
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    README 里的安装命令写成了 npm i confkitt，写错了。改成 confkit
+  spec: |
+    README 的安装说明里，包名写错了。
+
+    - 位置：`README.md` 中“安装”一节的第一个代码块
+    - 现在：`npm i confkitt`
+    - 正确的值：`npm i confkit`
+
+    已经有两次咨询说，新用户直接复制粘贴后得到 404。同一节下面的 `pnpm add confkit`、`yarn add confkit` 两行是对的，保持原样即可。英文 README(`README.en.md`)里没有这个错别字。这只是文档改动，不需要改测试或版本号。
+
+- task: t06
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L0, files: 1, dirs: 1 }
+  short: |
+    上传日志里写的是 "MB"，但数字其实是 KB，把这条信息改对
+  spec: |
+    看生产日志时注意到的一个小问题。上传处理器会把每个被接受的文件的大小这样记下来：
+
+    ```
+    upload accepted: report-2026-10.pdf (48213 MB)
+    ```
+
+    这个数字是 `file.size / 1024`，所以是千字节，不是兆字节。48 GB 的 PDF 可就太厉害了。
+
+    请把信息里的单位改成 "KB"。计算保持原样：解析这些日志行的仪表盘只读数字、忽略单位，所以改数字会弄坏仪表盘，而改单位的文字是安全的。这一行在 `src/upload/handler.ts` 里，处理 "accepted" 情况的那个函数中。这样的日志调用只有一处。
+
+- task: t07
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    parseDate 把 2024-02-29 当成无效日期拒绝了，修一下这个 bug
+  spec: |
+    `parseDate` 会拒绝闰年的 2 月 29 日，这是个 bug。
+
+    ## 复现
+    ```ts
+    parseDate('2024-02-29') // ValidationError: invalid day for month
+    parseDate('2023-02-29') // ValidationError (这个行为是对的)
+    parseDate('2000-02-29') // ValidationError (不对，2000 年是闰年)
+    parseDate('1900-02-29') // ValidationError (对的，1900 年不是闰年)
+    ```
+
+    ## 看起来有问题的地方
+    `src/date/parse.ts` 的 `daysInMonth` 对 2 月总是返回 28。
+
+    ## 期望行为
+    - 能被 4 整除是闰年，但能被 100 整除是平年，但能被 400 整除又是闰年
+    - 其他月份和格式校验保持现状
+
+    请在 `test/date/parse.test.ts` 里加上上面这四种情况。其他函数(`formatDate`、`addDays`)不用动。
+
+- task: t08
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    给 `sync` 命令加一个 --dry-run 标志，只打印将要上传的内容，不真正上传
+  spec: |
+    CLI 的功能需求：`mytool sync --dry-run`。
+
+    现在的 `sync` 会遍历本地文件夹，把每个文件和远端列表比较，然后上传有变化的文件。我希望能先看看它会做什么。
+
+    行为：
+    - `--dry-run`(布尔值，默认 false)只有 `sync` 命令接受。
+    - 带上这个标志时，命令照常执行到上传调用之前，然后对每个将要上传的文件打印一行，格式是 `would upload <relative path> (<size> bytes)`，最后再打印一行 `N file(s) would be uploaded`。
+    - 不发生任何网络写入。读取远端列表没问题。
+    - 列表读取成功时，退出码和现在一样是 0。
+    - `--help` 会列出这个标志，并附一行说明。
+
+    这个命令在 `src/commands/sync.ts` 里；上传本身就是靠近末尾的那一次 `uploader.put()` 调用。请在 `test/commands/sync.test.ts` 里已有测试的旁边加一个测试，检查设置了该标志时什么都没有上传。
+
+- task: t09
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    把列表 API 的 pageSize 上限限制在 100，超过就返回 400
+  spec: |
+    列表查询 API 没有 `pageSize` 上限，像 `?pageSize=100000` 这样的请求会直接进来。昨天就这么一个请求，响应花了 9 秒。
+
+    需求：
+    1. `pageSize` 超过 100 时返回 400，响应体用和现有校验错误相同的格式(`{ error: 'validation', details: ['pageSize must be <= 100'] }`)。
+    2. `pageSize` 小于 1 或不是整数时，和现在一样是 400(已经实现)。
+    3. 省略时默认值 20 不变。
+
+    校验在 `src/handlers/listTasks.ts` 的查询解析部分。服务层和仓储层都不用改。请在 `test/handlers/listTasks.test.ts` 里加上 101 和 100 两种情况。
+
+- task: t10
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 1, dirs: 1 }
+  short: |
+    订单没有发货信息时，renderInvoice 会崩溃，报 "Cannot read properties of undefined (reading 'lines')"，请修复
+  spec: |
+    线上崩溃，从周二那次部署之后开始。给一个还没发货的订单渲染发票时会抛异常。
+
+    ```
+    TypeError: Cannot read properties of undefined (reading 'lines')
+        at shipmentTotal (/app/src/billing/totals.ts:48:27)
+        at renderInvoice (/app/src/billing/invoice.ts:112:19)
+        at InvoiceController.show (/app/src/http/controllers/invoice.ts:31:22)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at next (/app/node_modules/express/lib/router/route.js:144:13)
+        at Route.dispatch (/app/node_modules/express/lib/router/route.js:114:3)
+        at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+        at /app/node_modules/express/lib/router/index.js:284:15
+        at Function.process_params (/app/node_modules/express/lib/router/index.js:346:12)
+        at next (/app/node_modules/express/lib/router/index.js:280:10)
+    ```
+
+    环境：Node 24.3，应用版本 5.18.2，Postgres 16。凡是 `shipment` 为 null 的订单都会出现，大约占被查看发票的 4%。
+
+    期望：没有发货信息的订单渲染出来时，运费合计为 0，没有发货明细。我认为 `shipmentTotal` 应该把缺失的发货信息当作空来处理。请为没有发货信息的订单加一个回归测试。
+
+- task: t11
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    CSV 导出时，值里有双引号文件就坏了。做一下转义处理
+  spec: |
+    CSV 导出的 bug 反馈。只要有任务的标题里带双引号，在 Excel 里列就会错位。
+
+    例：导出标题为 `"긴급" 배포 점검` 的任务，现在的输出是这样的。
+
+    ```
+    id,title,status
+    t-12,""긴급" 배포 점검",todo
+    ```
+
+    期望的输出(RFC 4180)：
+
+    ```
+    id,title,status
+    t-12,"""긴급"" 배포 점검",todo
+    ```
+
+    规则整理如下：
+    - 值里只要有双引号、逗号、换行中的任何一个，就用双引号把整个值包起来。
+    - 值里面的双引号写成两个。
+    - 其他的值和现在一样原样写出。
+
+    应该只改 `src/export/csv.ts` 的 `escapeCell` 就行。请在 `test/export/csv.test.ts` 里加上含双引号、逗号、换行的三种值。
+
+- task: t12
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    让 fetchJson 在遇到 5xx 和网络错误时用指数退避重试，最多 3 次
+  spec: |
+    `src/net/fetchJson.ts` 里的 `fetchJson` 第一次失败就放弃了。我希望它能重试。
+
+    规则：
+    1. 网络错误和 HTTP 500 到 599 时重试。4xx 绝不重试。
+    2. 总共最多尝试 3 次(也就是重试 2 次)。
+    3. 第二次尝试前等 200 ms，第三次前等 400 ms。
+    4. 如果每次尝试都失败，原样抛出最后一个错误。
+    5. 调用方传入的 `AbortSignal` 会立刻中止等待，并以中止原因 reject。
+    6. 调用方可以用 `{ retries: 0 }` 关掉重试；默认是 2。
+
+    修改后的签名：
+
+    ```ts
+    export interface FetchJsonOptions { retries?: number; signal?: AbortSignal }
+    export function fetchJson<T>(url: string, options?: FetchJsonOptions): Promise<T>;
+    ```
+
+    现有的调用方都不传选项，必须继续正常工作。测试放在 `test/net/fetchJson.test.ts`；这个文件里已经有一个可以用的假服务器辅助函数，另外请使用假定时器，这样测试就不用真的等待。
+
+- task: t13
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 3, dirs: 2 }
+  short: |
+    给缓存加一个 TTL 选项。在配置里按秒指定，默认不过期
+  spec: |
+    想给内存缓存加上过期时间。
+
+    - 配置：`cache.ttlSeconds`(数字，可选)。省略或为 0 时，和现在一样不过期。
+    - 用 `Cache.set(key, value)` 放进去的条目，从放入时刻起过了 `ttlSeconds` 之后，`get` 返回 `undefined`，内部也把它删掉。
+    - `Cache.has(key)` 也按同样的标准。
+    - 负数或不是数字的值，在读取配置时按现有校验错误的方式拒绝。
+
+    要改的地方大概是 `src/cache/cache.ts`、放配置 schema 的 `src/config/schema.ts`，还有 `test/cache/cache.test.ts`。时间不要用 `Date.now()`，而是用注入到构造函数里的 `now()` 函数，这样测试里可以拨动时钟(`src/util/clock.ts` 里已经有 `Clock` 类型)。
+
+- task: t14
+  lang: zh
+  from: en
+  split: test
+  label: { kind: direct, level: L1, files: 2, dirs: 1 }
+  short: |
+    test/report/weekly.test.ts 在 CI 上失败，本地却能过，我觉得是时区的问题。能把这个测试修好吗
+  spec: |
+    我们有一个不稳定的测试。`test/report/weekly.test.ts` 里的 `weekly report groups tasks by ISO week`，在首尔的每一台笔记本上都能过，在跑 UTC 的 CI 上却失败。
+
+    ```
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+
+    + '2026-W45'
+    - '2026-W46'
+        at TestContext.<anonymous> (test/report/weekly.test.ts:41:10)
+    ```
+
+    目前查到的情况：
+    - 测试夹具用 `new Date(2026, 10, 9, 0, 30)` 构造日期，这是本地时间。
+    - 在 UTC 下，那个时刻还是 8 号星期日，属于第 45 周。
+    - 生产代码(`src/report/weekly.ts`)接受一个 `timeZone` 参数，就我所见是正确的。
+
+    所以我认为错的是测试，不是代码。请让夹具不依赖机器的时区(用带明确偏移量的 ISO 字符串来构造日期，并给函数传 `timeZone: 'Asia/Seoul'`)，如果 `test/report/helpers.ts` 里的共用辅助函数也是这样构造日期的，那里也一并修掉。除非你发现 `src/report/weekly.ts` 确实有错，否则不要改它；如果确实有错，改之前先告诉我。
+
+- task: t15
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: direct, level: L1, files: 2, dirs: 2 }
+  short: |
+    给 deepMerge 加一个拼接数组的选项(arrays: 'concat')。默认和现在一样是替换
+  spec: |
+    请给 confkit 的 `deepMerge` 加一个选择数组合并方式的选项。这个任务只改一个函数和它的测试。
+
+    ```ts
+    interface MergeOptions { arrays?: 'replace' | 'concat' | 'unique' }
+    function deepMerge(layers: ConfigObject[], options?: MergeOptions): ConfigObject;
+    ```
+
+    规则：
+    1. 省略 `arrays` 时是 `'replace'`，和现在的行为一样(后面图层的数组整个替换)。
+    2. `'concat'` 时，把同一个键的数组按图层顺序拼接起来。
+    3. `'unique'` 和 `'concat'` 一样，但会去掉重复的原始值，并保持首次出现的顺序。
+    4. 对于含对象的数组，`'unique'` 按 `JSON.stringify` 的结果比较，而不是按引用。
+    5. 一边是数组、另一边不是数组时，不管选项是什么，后面的值胜出。
+    6. 嵌套对象里的数组也适用同样的规则。
+    7. 任何情况下都不修改输入的图层。
+    8. 结果不和输入共享数组引用。
+    9. 未知的 `arrays` 值抛出 `ConfigError`。
+
+    现有的调用处是像 `deepMerge(a, b, c)` 这样用可变参数的。这次不要把签名改成上面那样，而是保持现有形式，当最后一个参数形如 `MergeOptions` 时把它解释为选项。代码写在 `src/merge.ts`，测试在 `test/merge.test.ts`。
+
+- task: t16
+  lang: zh
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    给任务加上评论功能
+  spec: |
+    请给 taskboard 加上任务评论功能。仓储、服务、处理器三层各自按职责分开来做。
+
+    ## 模型
+    ```ts
+    interface Comment {
+      id: string;
+      taskId: string;
+      authorId: string;
+      body: string;        // 1~2000 个字符，以去掉首尾空白后的长度为准
+      createdAt: string;   // ISO 8601
+      editedAt: string | null;
+    }
+    ```
+
+    ## 仓储 (`CommentRepo`)
+    - `add(comment)`, `listByTask(taskId)`, `get(id)`, `update(id, patch)`, `remove(id)`
+    - `listByTask` 按 `createdAt` 升序
+
+    ## 服务 (`CommentService`)
+    - 给不存在的任务发评论时抛 `NotFoundError`
+    - `body` 校验不通过是 `ValidationError`(details 里有 `'body'`)
+    - 只有作者本人可以编辑、删除，否则是 `ForbiddenError`
+    - 编辑后填上 `editedAt`
+    - 任务被删除时，该任务的评论也一起删掉(在 `TaskService.deleteTask` 里调用)
+
+    ## 处理器
+    - `POST /tasks/:id/comments`, `GET /tasks/:id/comments`, `PATCH /comments/:id`, `DELETE /comments/:id`
+    - 错误映射和现有处理器一致：Validation 400，Forbidden 403，NotFound 404
+
+    ## 测试
+    - 服务和处理器各自的正常与失败情况，以及删除任务时的级联删除
+
+- task: t17
+  lang: zh
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 6, dirs: 4 }
+  short: |
+    任务列表的端点需要过滤、排序和分页
+  spec: |
+    给任务列表加上过滤、排序和分页。现在 `GET /tasks` 把所有任务放在 `{ items }` 里返回。按层拆分工作：过滤本身放在仓储里，校验和默认值放在服务里，查询字符串的解析放在处理器里。
+
+    ## 服务
+    新增 `TaskService.queryTasks(query?: TaskQuery): TaskPage`，`listTasks()` 仍然返回完整的数组。
+
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];        // any of these
+      assigneeId?: string | null;   // null = unassigned only
+      text?: string;                // case-insensitive match in title
+      sort?: 'createdAt' | 'priority' | 'dueDate';
+      order?: 'asc' | 'desc';
+      page?: number;                // 1-based, default 1
+      pageSize?: number;            // default 20, max 100
+    }
+    interface TaskPage { items: Task[]; total: number; page: number; pageSize: number }
+    ```
+
+    ## 仓储
+    - `TaskRepo.find(filter, sort, range)` 返回当前页，以及分页前的总数。
+    - 按 `priority` 排序时使用 low < medium < high 的顺序；相同时退回到按 `createdAt` 升序。
+
+    ## 处理器
+    - `GET /tasks?status=todo,in_progress&assignee=u1&sort=priority&order=desc&page=2&pageSize=50`
+    - `assignee=none` 表示未分配。
+    - 未知的 status 值、非数字的 page、超过 100 的 `pageSize`，都返回 400 和通常的校验错误响应体。
+
+    ## 测试
+    - 仓储：每个过滤条件单独使用、组合使用，每个排序键的两个方向，翻到末尾之后的页。
+    - 服务：默认值和校验。
+    - 处理器：查询解析和错误映射。
+
+- task: t18
+  lang: zh
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 4 }
+  short: |
+    做一个认证中间件，并给所有处理器加上权限检查
+  spec: |
+    API 需要加上认证和权限检查。现在所有端点都是敞开的。
+
+    做一个中间件，校验请求里的 `Authorization: Bearer <token>`，并填好 `ctx.user`(id, role)。没有令牌或令牌不对就是 401。然后给所有处理器加上角色检查。查看任务，登录用户都可以；创建和修改需要 `member` 及以上；删除和用户管理只有 `admin` 可以。权限不够就是 403。
+
+    处理器大约有八个(在 `src/handlers/` 下面)，每个处理器的测试也要改成带上认证头。令牌校验作为新模块放在 `src/auth/` 下面，签名密钥从配置里读。角色和允许操作的对应表放在一个地方(`src/auth/policy.ts`)，不要让条件判断散落在各个处理器里。现有的服务层不接收用户信息，只有需要记录作者的 `createTask` 和 `addComment` 改成接收 `actorId`。
+
+- task: t19
+  lang: zh
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 3 }
+  short: |
+    重构配置加载：defaults、文件和 env 应该是各自独立的来源，按顺序合并，最后做 schema 校验
+  spec: |
+    我们的配置加载已经长成了一个 400 行的函数(`src/config/load.ts` 里的 `loadConfig`)：读一个 JSON 文件，用手写的 `if` 块把环境变量叠上去，一边读一边校验。每加一个配置项都要动四个地方。我想把它重新整理一下。
+
+    目标形态：
+    - 一个 `ConfigSource` 接口，只有一个方法 `read(): Promise<ConfigObject>`。
+    - 三个来源：`DefaultsSource`、`FileSource(path)` 和 `EnvSource(prefix)`。env 来源把 `APP_DB__HOST` 映射为 `db.host`(双下划线 = 嵌套)，不做任何转换；值保持字符串。
+    - `loadConfig(sources)` 按顺序读取它们，并用现有的 `deepMerge` 合并。
+    - 校验和类型转换只做一次，在合并之后，由 `src/config/schema.ts` 里的 schema 对象驱动(string, number, boolean, enum, required, default)。来自环境变量的 `port: '8080'` 在那里变成数字 8080；缺少必填值或类型不对时，一次报告所有问题，而不是只报第一个。
+    - 公开入口 `getConfig()` 保持签名和返回类型不变，这样应用的其他部分不用改。
+
+    请保持每个现有配置项的当前行为(大约有三十个；`test/config/` 里现在的测试描述了它们)，并为每个来源、合并顺序和校验信息添加测试。旧的 `loadConfig` 函数体最后应该消失，而不是留在新代码旁边。
+
+- task: t20
+  lang: zh
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 7, dirs: 5 }
+  short: |
+    记录一下变更历史，好让我们能看到是谁在什么时候改了任务
+  spec: |
+    请给 taskboard 加上任务的变更历史。要能按任务查到是谁、在什么时候、改了什么。
+
+    ## 事件模型
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed' | 'task.deleted';
+    interface AuditEvent {
+      id: string;
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;
+      at: string;                       // ISO 8601
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+    }
+    ```
+
+    ## 记录时机
+    1. `createTask`：`task.created`，`after` 里是创建出来的任务
+    2. `assignTask`：`task.assigned`，`before`/`after` 里只有 `assigneeId`
+    3. `changeStatus`：只有状态真的变了才记 `task.status_changed`
+    4. `deleteTask`：`task.deleted`，`before` 里是删除前的任务
+    5. 失败的请求(校验失败、409)不记录
+
+    ## 存储和查询
+    - `AuditRepo.append(event)`、`AuditRepo.listByTask(taskId)`(按时间顺序)
+    - `GET /tasks/:id/audit` 以 `{ items }` 响应，任务不存在时 404
+    - 已删除任务的历史必须保留，也能查询
+
+    ## 其他
+    - `actorId` 由处理器从请求上下文里取出，再传给服务
+    - 在服务方法的签名里把 `actorId` 加为最后一个可选参数
+    - 补上服务和处理器的测试
+
+- task: t21
+  lang: zh
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 9, dirs: 3 }
+  short: |
+    把数据访问层从回调改成 async/await
+  spec: |
+    数据访问层还在用 Node 风格的回调，而它上面的所有代码都用 Promise，所以每个服务都得手工把仓储调用包进 `new Promise(...)`。我希望仓储直接返回 Promise。
+
+    `src/repo/` 下面有五个仓储文件(users, tasks, comments, tags, sessions)，外加它们每一个都会调用的共用辅助模块 `src/repo/db.ts`。每个导出的函数现在接收 `(args..., cb)`；改完之后接收 `(args...)`，并返回一个 Promise，它 reject 时用的错误对象和以前回调收到的一样。`db.ts` 里的辅助模块要把 `query` 和 `transaction` 作为返回 Promise 的函数暴露出来，而且 `transaction` 在它运行的函数 reject 时必须回滚。
+
+    然后是调用方：`src/service/` 下面的三个服务应该去掉手写的包装，直接 `await` 仓储调用。行为不能变，包括事务内查询的顺序，以及哪些错误会暴露出来。
+
+    仓储的测试用的是一个基于回调的假 `db`；这个假对象也需要做同样的转换。请用一种能在每转换完一个仓储后测试套件都保持通过的方式来做，这样这次改动就可以一个文件一个文件地评审。
+
+- task: t22
+  lang: zh
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 12, dirs: 5 }
+  short: |
+    把错误信息全部换成消息键，并配上韩语/英语的文案目录
+  spec: |
+    展示给用户的错误信息以韩语字符串的形式散落在代码各处。因为要接入英语用户，我们打算把信息换成键，再从按语言划分的目录里取出来用。
+
+    方式是这样设想的。在 `src/i18n/` 下面放 `ko.json`、`en.json` 两个目录，以及 `t(key, params, locale)` 函数。键采用 `task.not_found`、`validation.required` 这样的点号写法，值里可以使用 `{name}` 形式的占位符。错误类不再带信息字符串，而是带 `code` 和 `params`，在生成响应的最后一步(`src/handlers/http.ts` 的错误映射)根据请求的 `Accept-Language` 转成句子。不支持的语言一律返回韩语。
+
+    需要改的地方是所有抛错误的服务(任务、用户、评论、项目)、校验工具，以及处理器的错误映射。有不少测试是直接比较信息字符串的，这些要改成比较 `code`，句子本身只在目录的测试里确认一次。为了让使用了目录里没有的键时测试能发现，请再加一个测试，确认两个目录的键集合相同，并且代码里用到的键都在其中。
+
+- task: t23
+  lang: zh
+  from: en
+  split: dev
+  label: { kind: team, level: L2, files: 8, dirs: 5 }
+  short: |
+    删除任务应该是软删除，这样我们还能恢复
+  spec: |
+    我们现在是真的把任务删掉，而客服一直在要求把某个任务找回来。请把删除改成软删除。
+
+    ## 模型
+    - `Task` 增加 `deletedAt: string | null`(ISO 8601)。它不为 null 时，任务就是已删除。
+
+    ## 仓储
+    - `remove(id)` 设置 `deletedAt`，而不是删掉这一行。
+    - `get`、`list` 和 `find` 跳过已删除的任务，除非调用时带了 `{ includeDeleted: true }`。
+    - 新增 `restore(id)`，清掉 `deletedAt`。
+    - 新增 `purge(olderThan: Date)`，真正移除在该日期之前被删除的任务。
+
+    ## 服务
+    - 从调用方的角度看，`deleteTask` 的行为不变：任务消失，第二次删除是 404。
+    - 对从未被删除或不存在的任务，`restoreTask(id)` 以 `NotFoundError` 失败。
+    - 已删除任务的评论和审计事件保留；它们随任务一起回来。
+    - 计数和周报忽略已删除的任务。
+
+    ## HTTP
+    - `DELETE /tasks/:id` 对客户端来说不变。
+    - `POST /tasks/:id/restore`，仅管理员可用。
+    - `GET /tasks?deleted=only`，仅管理员可用，列出回收站。
+
+    ## 迁移和日常清理
+    - 用一次迁移加上这一列，所有现有行都为 null。
+    - 一个每日任务以当前时间减 30 天调用 `purge`。
+
+    ## 测试
+    - 仓储、服务和处理器各个层面，加上在已经有任务的数据库上跑迁移。
+
+- task: t24
+  lang: zh
+  from: ko
+  split: test
+  label: { kind: team, level: L2, files: 9, dirs: 5 }
+  short: |
+    增加按用户的通知设置功能(邮件/Slack 渠道，按事件 on/off)
+  spec: |
+    请让每个用户可以选择接收通知的渠道和事件。
+
+    ## 设置模型
+    ```ts
+    type Channel = 'email' | 'slack';
+    type NotifyEvent = 'task.assigned' | 'task.due_soon' | 'comment.added';
+    interface NotificationSettings {
+      userId: string;
+      channels: Record<Channel, { enabled: boolean; address: string | null }>;
+      events: Record<NotifyEvent, Channel[]>;
+    }
+    ```
+
+    ## 需求
+    1. 没有设置的用户按默认值处理(只开邮件，所有事件都走邮件)。
+    2. 用 `GET /me/notifications`、`PUT /me/notifications` 查询和保存。
+    3. 开启的渠道必须有地址，并校验邮箱地址和 Slack Webhook URL 的格式。
+    4. 事件指定的渠道如果是关闭的，保存时返回 400。
+    5. 发送通知的一方(`NotificationService.notify(event, userId, payload)`)读取设置，只发到对应的渠道。
+    6. 各渠道的发送器拆成 `EmailSender`、`SlackSender`，实现同一个接口。
+    7. 一个渠道发送失败时，其他渠道照常发送，失败记到日志里。
+    8. 原来在 `task.assigned` 里直接发邮件的代码，换成调用 `notify`。
+    9. `task.due_soon` 由一个每小时运行的任务找出 24 小时内到期的任务后调用。
+
+    ## 测试
+    - 设置的校验、默认值、渠道选择、一个渠道失败时的行为
+
+- task: t25
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 25, dirs: 8 }
+  short: |
+    从零开始设计并实现一个负责支付处理的新服务
+  spec: |
+    现在是在订单服务里直接调用支付公司的 API，随着支付方式越来越多，已经撑不住了。我们打算把支付拆成独立的服务。请从设计开始。
+
+    ## 范围
+    - 新服务 `payments`(HTTP API + worker)
+    - 支付授权、请款、取消、部分退款
+    - 两个支付公司的适配器(现在在用的 A 公司、准备接入的 B 公司)和公共接口
+    - Webhook 接收与签名校验，防止重试造成的重复处理(幂等键)
+    - 支付状态机和状态流转历史
+    - 与订单服务的对接：订单服务不再直接调用支付公司，只调用 `payments` 的 API
+
+    ## 需要决定的事(请给出建议)
+    1. 和订单服务是用同步调用绑定，还是用事件松耦合
+    2. 存储 schema 和金额的表示(整数最小单位)
+    3. 部分失败时的补偿处理
+    4. 现有支付数据的迁移方法，以及切换期间是否双写
+
+    ## 交付物
+    - 架构文档和 API 规格
+    - 服务代码、迁移、每个适配器的契约测试
+    - 替换订单服务那边的调用处
+    - 在本地同时启动两个服务的配置
+
+- task: t26
+  lang: zh
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 30, dirs: 10 }
+  short: |
+    把订单流程从服务之间的同步 REST 调用，迁到基于消息队列的事件驱动架构上
+  spec: |
+    现在下单是一串同步的 REST 调用：checkout 调 inventory，inventory 调 pricing，然后 checkout 调 payments，最后调 notifications。其中任何一个慢了，整个请求就超时；中间某一步失败，就会给一个并不存在的订单留下被预留的库存。
+
+    我想把这条流程迁到消息队列上的事件。broker 还没选；请推荐一个并说明理由。
+
+    写任何代码之前必须先设计好的内容：
+    - 事件(`order.placed`、`stock.reserved`、`stock.rejected`、`payment.captured`、`payment.failed`、`order.confirmed`、`order.cancelled`)及其负载和版本规则。
+    - 谁拥有哪个状态，以及取代调用链的 saga，包括每一步的补偿。
+    - 投递保证：at-least-once 配合幂等的消费者；每个生产者里放一张 outbox 表，让数据库提交和发布不会不一致；一条死信通道，并且能够重放。
+    - 按订单 id 的顺序要求。
+    - 现在结果是稍后才到的，checkout 的 API 怎么回应浏览器。
+
+    然后是具体的工作，一个服务一个服务地做：checkout、inventory、pricing、payments 和 notifications 各自要有发布者和消费者、outbox 及其转发器，以及针对它们生产或消费的每个事件的契约测试。服务之间旧的 REST 端点要保留到新通道以影子模式跑过之后；请规划这次迁移和切换，并告诉我每个阶段我们能回滚什么。
+
+    可观测性也是其中一部分：每个事件都带关联 id，并且要有办法看到某个订单卡在了哪里。
+
+- task: t27
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 40, dirs: 12 }
+  short: |
+    给服务引入多租户。每家客户公司的数据必须完全隔离
+  spec: |
+    现在的服务是以只有一家客户公司为前提做的。第二家客户的合同已经定了，所以要改成一次部署能接纳多家客户公司。客户公司之间的数据绝对不能混在一起。
+
+    首先要确定隔离方式。在每张表上放 `tenant_id` 的方式、分 schema 的方式、分数据库的方式，请比较这三种，并提出适合我们规模(客户公司几十家、表四十多张)的方案。我在考虑 `tenant_id` 列加行级安全策略的组合，但没有把握。
+
+    方式确定之后，变动的范围如下。认证令牌里要带上租户，每个请求都要设置租户上下文，并自动应用到仓储层的所有查询上。关键是即使某条查询漏写了条件，也看不到其他客户公司的数据。所有表都需要迁移，现有数据填为第一家客户公司所有。唯一约束(邮箱、项目键等)改为在租户范围内唯一。缓存键、后台任务、文件存储路径、搜索索引、审计日志里也都要带上租户。还需要给管理员用的创建和停用租户的 API。
+
+    测试方面，请在每一层都铺上一条基本的检查：“访问其他租户的数据时，看起来就像不存在”。
+
+- task: t28
+  lang: zh
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 22, dirs: 7 }
+  short: |
+    设计并做出一套插件系统，让第三方可以给 CLI 增加命令和导出器
+  spec: |
+    总有人给 CLI 提 pull request，再加一个导出器或者再加一个子命令，而我们不想把这些全都揽下来。我想要一套插件系统，让他们可以自己发布这些东西。
+
+    ## 插件能做什么
+    - 注册命令(名称、选项、处理函数)。
+    - 为 `export` 命令注册导出器(格式名、文件扩展名、一个把我们的数据模型转成字节的函数)。
+    - 挂到 `beforeSync` 和 `afterSync` 上。
+
+    ## 需要设计的内容
+    1. 扩展 API 及其稳定性承诺：带版本的 `PluginApi` 对象，哪些是公开的，我们怎么做弃用。
+    2. 发现和加载：插件是名为 `mytool-plugin-*` 的 npm 包，列在配置文件里；加载顺序；两个插件注册了同一个名字时怎么办。
+    3. 隔离：插件在加载期间或钩子里抛异常，不能把 CLI 带崩；决定我们做到什么程度(try/catch、worker 线程、权限)。
+    4. 配置：每个插件在配置文件里有自己的一段经过校验的配置。
+    5. 开发者体验：模板、类型声明、`mytool plugin doctor` 命令。
+
+    ## 迁移
+    - 把三个内置导出器(csv, json, markdown)和 `stats` 命令搬到同一套 API 上，让核心自己也使用它提供给别人的机制。
+    - 对不安装插件的人，行为没有变化。
+
+    ## 交付物
+    - 先出一份设计文档，供评审。
+    - 加载器、带类型声明的 API 包、迁移后的内置功能、针对加载、冲突和出错插件的测试，以及包含一个完整示例插件的文档。
+
+- task: t29
+  lang: zh
+  from: ko
+  split: dev
+  label: { kind: team, level: L3, files: 60, dirs: 15 }
+  short: |
+    想把现在的单体结构全面重新设计，让模块边界清晰起来。一直做到拆包
+  spec: |
+    代码库在一个 `src/` 下面缠着 300 多个文件，彼此之间朝任意方向 import。改一个功能，经常会弄坏毫不相干的测试。我们打算把结构重新理一遍。
+
+    ## 目标
+    - 按领域划分模块(账户、项目、任务、通知、支付、报表)并划清边界，模块之间只通过公开入口(`index.ts`)互相使用。
+    - 把依赖方向定成单向：领域 → 公共工具可以，反过来不行；领域之间只允许规定好的方向。
+    - 消除循环依赖(目前有 40 个以上)。
+    - 存储访问和 HTTP 推到各模块内部的外层，领域逻辑不知道它们的存在。
+    - 能拆成 workspace 包的就拆。
+
+    ## 首先需要的东西
+    1. 对当前依赖图的分析，以及模块边界的提案
+    2. 分阶段的迁移计划：不是一次全搬完，每个阶段结束时构建和测试都必须通过
+    3. 强制边界的办法(lint 规则或依赖检查)以及接入 CI
+    4. 哪些留作公共、哪些下放到模块的判断标准
+
+    ## 约束
+    - 不改外部 API 和数据库 schema
+    - 迁移期间功能开发还在继续，所以不是开一个大分支，而是用许多小改动来推进
+
+- task: t30
+  lang: zh
+  from: en
+  split: test
+  label: { kind: team, level: L3, files: 35, dirs: 9 }
+  short: |
+    移动端需要能离线使用，并在重新联网后同步
+  spec: |
+    现场技术人员在没有信号的地下室和屋顶上使用我们的移动应用，而现在这个应用在那些地方毫无用处：每个页面都从 API 加载，每次编辑都是一次请求。我希望应用能完全离线工作，并在连接恢复时同步。
+
+    这等于把客户端的数据层重做一遍，需要先做设计。我能想到的问题有：设备上的本地存储，作为 UI 的唯一数据来源(用哪种数据库，什么样的 schema，在应用版本之间怎么迁移)；一个本地改动的队列，带有在设备上生成的稳定 id；一套和服务器之间的同步协议，把这些改动发出去，并拉取别人的改动，断线之后可以续传，而且开销足够小，可以频繁运行；还有冲突处理。对于冲突，我不想在整条记录上用“最后写入者胜出”。两位技术人员编辑同一张工单的不同字段时，各自的改动都应该保留；同一个字段上真正的冲突应该展示给用户。照片和签名体积很大，需要自己的、带重试的上传通道。
+
+    服务器端也需要配套的工作：按用户的变更流，幂等地接收批量改动，以及为删除保留墓碑标记，这样一台离线了两周的设备就不会让已删除的记录复活。
+
+    应用里的每个页面都要从“先请求再渲染”改成读取本地存储并监听它，而且 UI 需要显示同步状态和待提交的改动。请在写代码之前，先从一份设计文档开始，内容涵盖存储、协议和冲突规则，以及现有安装的迁移计划。

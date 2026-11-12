@@ -2,6 +2,9 @@
 //
 //   node packages/core/src/triage-eval-cli.ts set [--judge <out.jsonl>] [--bench <bench dir>]
 //       stage 1 on the 60 labelled prompts (and the bench tasks); with --judge also stage 2 (score bands, decision 115) and the cascade
+//   node packages/core/src/triage-eval-cli.ts lang <ja|zh> [--bench <bench dir>]
+//       stage 1 on the translated prompt set (prompts.<lang>.yaml, and bench.<lang>.yaml with --bench) and how its
+//       answers compare with the answers on the originals, prompt by prompt (decision 139)
 //   node packages/core/src/triage-eval-cli.ts swebench <verified.json> [--judge <out.jsonl>]
 //       stage 1 on SWE-bench Verified with change-size proxy labels (a population that is mostly "direct")
 //   node packages/core/src/triage-eval-cli.ts judge-input --out <dir> [--bench <bench dir>] [--swebench <verified.json>] [--sample 100]
@@ -18,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ARRANGEMENTS, arrangementOf, bestArrangement, calibration, cascade, judgeAnswers, loadPromptSet, regretTable, scoreBy, scoreSet, summariseRuns,
+  ARRANGEMENTS, arrangementOf, bestArrangement, calibration, cascade, judgeAnswers, languageAgreement, loadPromptSet, regretTable, scoreBy, scoreSet, summariseRuns,
   type Answer, type Arrangement, type Classifier, type JudgeLine, type LabelledPrompt, type MeasuredRun, type SetScore,
 } from './triage-eval.ts';
 import { JUDGE_EFFORT, JUDGE_MODEL, JUDGE_SCHEMA, JUDGE_SYSTEM, buildJudgeRequest } from './triage-judge.ts';
@@ -127,6 +130,22 @@ const judgeWord = opt.judge ? judgeAnswers(readJsonl<JudgeLine>(opt.judge), null
 if (cmd === 'set') {
   report('authored prompt set', loadPromptSet(fs.readFileSync(opt.prompts || PROMPTS, 'utf8')), judge, judgeWord);
   if (opt.bench) report('bench tasks', benchTasks(opt.bench), judge, judgeWord);
+} else if (cmd === 'lang' && pos[0]) {
+  const lang = pos[0];
+  const fixture = (name: string) => path.join(path.dirname(PROMPTS), name);
+  const compare = (title: string, original: LabelledPrompt[], file: string): void => {
+    if (!fs.existsSync(file)) { console.log(`\n== ${title}: no ${path.basename(file)}`); return; }
+    const translated = loadPromptSet(fs.readFileSync(file, 'utf8'));
+    console.log(`\n== ${title} in ${lang} (${translated.length} prompts)`);
+    console.log(row('original', scoreSet(original, stage1)));
+    console.log(row(lang, scoreSet(translated, stage1)));
+    const a = languageAgreement(original, translated, stage1);
+    console.log(`  same answer and level ${a.same}/${a.n} (${Math.round((a.same / (a.n || 1)) * 100)}%), same answer ${a.sameKind}/${a.n}; team-sized answered direct ${a.falseDirect} (new ${a.newFalseDirect}); small answered team ${a.falseTeam} (new ${a.newFalseTeam})`);
+    for (const c of a.changes) console.log(`    ${c.id.padEnd(12)} label ${c.label.kind}/${c.label.level}  ${c.from} -> ${c.to}`);
+    if (a.missing.length) console.log(`  not compared: ${a.missing.join(', ')}`);
+  };
+  compare('authored prompt set', loadPromptSet(fs.readFileSync(PROMPTS, 'utf8')), fixture(`prompts.${lang}.yaml`));
+  if (opt.bench) compare('bench tasks', benchTasks(opt.bench), fixture(`bench.${lang}.yaml`));
 } else if (cmd === 'swebench' && pos[0]) {
   report('SWE-bench Verified, proxy labels', sweBench(pos[0]), judge, judgeWord);
 } else if (cmd === 'judge-input' && opt.out) {

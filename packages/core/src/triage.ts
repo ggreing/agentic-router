@@ -69,32 +69,74 @@ export const L3_PLANNED_AS_L2 = 'L3 signs, planned as L2';
 
 interface Rule { level: Level; weight: number; why: string; re: RegExp }
 
-// Keyword rules (Korean + English). English alternatives get word boundaries (rapid != API,
-// prefix != fix, node_modules != module); Korean ones do not, because particles attach directly to
-// the word (API를, 버그가).
-const rule = (level: Level, weight: number, why: string, ko: string, en: string): Rule =>
-  ({ level, weight, why, re: new RegExp(`${ko}|\\b(?:${en})\\b`, 'i') });
+// Keyword rules: Korean, Japanese, Chinese (Simplified and Traditional) and English (decision 139).
+// English alternatives get word boundaries (rapid != API, prefix != fix, node_modules != module). The others
+// do not: Korean particles attach directly to the word (API를, 버그가), and Japanese and Chinese are written
+// without spaces, so \b says nothing there. Words that also name ordinary product features are left out or
+// narrowed (a Japanese "コメント" is as often a user comment as a code comment).
+const rule = (level: Level, weight: number, why: string, w: { ko: string; ja: string; zh: string; en: string }): Rule =>
+  ({ level, weight, why, re: new RegExp(`${w.ko}|${w.ja}|${w.zh}|\\b(?:${w.en})\\b`, 'i') });
 const RULES: Rule[] = [
-  rule('L0', 0.8, 'typo/lint/format', '오타|오탈자|철자|린트|포맷|들여쓰기|주석|import ?정리',
-    'typos?|misspell(?:ed|ing|ings)?|lint|format(?:ting)?|indent(?:ation)?|comments?|unused imports?'),
-  rule('L0', 0.6, 'single constant/default/message', '기본값|상수|메시지|문구|오프 ?바이 ?원|export 누락',
-    'default values?|constants?|message text|off[- ]by[- ]one|missing exports?'),
-  rule('L1', 0.6, 'bug fix', '버그|고쳐|수정해|에러|오류|예외|안 ?돼|안 ?됨|깨져',
-    'bugs?|fix(?:es|ed|ing)?|errors?|exceptions?|broken|fail(?:s|ed|ing)?|crash(?:es|ed|ing)?'),
-  rule('L1', 0.5, 'small feature/option', '옵션|파라미터|인자|엣지 ?케이스|유니코드|테스트 추가',
-    'options?|parameters?|arguments?|edge cases?|unicode|add (?:a )?tests?'),
-  rule('L2', 0.7, 'module-level change', '리팩터|리팩토|모듈|계층|페이지네이션|필터링|스키마|검증 ?로직|감사 ?로그|이력|마이그레이션',
-    'refactor(?:s|ed|ing)?|modules?|layers?|pagination|filtering|schemas?|validation|audit(?:s|ing| log)?|history|migrations?'),
-  rule('L2', 0.5, 'new API/endpoint/feature', '엔드포인트|기능을? 추가|구현해',
-    'APIs?|endpoints?|add (?:a )?feature|implement(?:s|ed|ing)?'),
-  rule('L3', 0.9, 'new service/architecture', '신규 서비스|새 서비스|아키텍처|처음부터|재설계|전면|프레임워크 (?:교체|전환)|시스템 전체|마이크로서비스',
-    'new service|architecture|from scratch|redesign|overhaul|rewrite|whole system|microservices?'),
+  rule('L0', 0.8, 'typo/lint/format', {
+    ko: '오타|오탈자|철자|린트|포맷|들여쓰기|주석|import ?정리',
+    ja: '誤字|脱字|タイポ|スペルミス|綴り|リント|整形|フォーマッタ|コードフォーマット|インデント|コメントアウト|コメント(?:を|の)(?:修正|削除|追記|直)|注釈|未使用(?:の)? ?import|import ?(?:の|を)?整理',
+    zh: '错别字|錯別字|错字|錯字|拼写|拼寫|笔误|筆誤|格式化|缩进|縮進|縮排|注释|註釋|註解|未使用的? ?import|没用到的 ?import|整理 ?import',
+    en: 'typos?|misspell(?:ed|ing|ings)?|lint|format(?:ting)?|indent(?:ation)?|comments?|unused imports?',
+  }),
+  rule('L0', 0.6, 'single constant/default/message', {
+    ko: '기본값|상수|메시지|문구|오프 ?바이 ?원|export 누락',
+    ja: 'デフォルト値|既定値|初期値|定数|メッセージ|文言|オフバイワン|export ?(?:漏れ|忘れ|が抜け)',
+    zh: '默认值|預設值|缺省值|常量|常數|消息|訊息|提示语|提示語|文案|措辞|措辭|差一错误|差一錯誤|漏了? ?export|缺少 ?export|少了 ?export',
+    en: 'default values?|constants?|message text|off[- ]by[- ]one|missing exports?',
+  }),
+  rule('L1', 0.6, 'bug fix', {
+    ko: '버그|고쳐|수정해|에러|오류|예외|안 ?돼|안 ?됨|깨져',
+    ja: 'バグ|不具合|直して|直す|修正して|修正する|修正を|エラー|例外|動かない|動きません|動作しない|壊れ|クラッシュ',
+    zh: '缺陷|修复|修復|修一下|修好|错误|錯誤|报错|報錯|异常|異常|崩溃|崩潰|不工作|不能用|坏了|壞了|出错|出錯',
+    en: 'bugs?|fix(?:es|ed|ing)?|errors?|exceptions?|broken|fail(?:s|ed|ing)?|crash(?:es|ed|ing)?',
+  }),
+  rule('L1', 0.5, 'small feature/option', {
+    ko: '옵션|파라미터|인자|엣지 ?케이스|유니코드|테스트 추가',
+    ja: 'オプション|パラメータ|パラメーター|引数|エッジケース|境界ケース|ユニコード|テスト(?:を|の)?追加',
+    zh: '选项|選項|参数|參數|边界情况|邊界情況|边缘情况|邊緣情況|(?:添加|增加|新增|补充|補充|加(?:个|個)?)测试|(?:添加|增加|新增|補充|加個?)測試',
+    en: 'options?|parameters?|arguments?|edge cases?|unicode|add (?:a )?tests?',
+  }),
+  rule('L2', 0.7, 'module-level change', {
+    ko: '리팩터|리팩토|모듈|계층|페이지네이션|필터링|스키마|검증 ?로직|감사 ?로그|이력|마이그레이션',
+    ja: 'リファクタ|モジュール|レイヤ|階層|層|ページネーション|フィルタリング|絞り込み|スキーマ|バリデーション ?ロジック|検証ロジック|監査ログ|履歴|マイグレーション|移行',
+    zh: '重构|重構|模块|模組|模塊|层|層|分页|分頁|过滤|過濾|筛选|篩選|校验逻辑|校驗邏輯|验证逻辑|驗證邏輯|审计日志|審計日誌|稽核日誌|稽核紀錄|变更历史|變更歷史|变更记录|變更記錄|历史记录|歷史記錄|迁移|遷移',
+    en: 'refactor(?:s|ed|ing)?|modules?|layers?|pagination|filtering|schemas?|validation|audit(?:s|ing| log)?|history|migrations?',
+  }),
+  rule('L2', 0.5, 'new API/endpoint/feature', {
+    ko: '엔드포인트|기능을? 추가|구현해',
+    ja: 'エンドポイント|機能(?:を|の)?追加|実装して|実装する|実装を',
+    zh: '端点|端點|(?:添加|新增|增加|加上?)(?:一?(?:个|個|项|項))?(?:新)?功能|(?:实现|實現|實作)(?![在位是见見放于於])',
+    en: 'APIs?|endpoints?|add (?:a )?feature|implement(?:s|ed|ing)?',
+  }),
+  rule('L3', 0.9, 'new service/architecture', {
+    ko: '신규 서비스|새 서비스|아키텍처|처음부터|재설계|전면|프레임워크 (?:교체|전환)|시스템 전체|마이크로서비스',
+    ja: '新規サービス|新しいサービス|新サービス|アーキテクチャ|ゼロから|一から|再設計|全面的|全面(?:刷新|改修|書き換え)|フレームワーク(?:を|の)?(?:置き換え|移行|切り替え|変更)|システム全体|マイクロサービス|作り直し|書き直し',
+    zh: '新(?:的)?服务|新(?:的)?服務|全新(?:的)?服[务務]|架构|架構|从零|從零|从头(?:开始)?(?:写|做|设计|构建|搭建|开发|实现|重写)|從頭(?:開始)?(?:寫|做|設計|構建|搭建|開發|實現|實作|重寫)|重新设计|重新設計|全面|框架(?:的)?(?:替换|替換|迁移|遷移|切换|切換)|整个系统|整個系統|微服务|微服務|重写|重寫|推倒重来|推倒重來',
+    en: 'new service|architecture|from scratch|redesign|overhaul|rewrite|whole system|microservices?',
+  }),
 ];
 
 // The user says the change is wide. This is the one wording signal that states size directly.
 const BREADTH = new RegExp([
   '여러 (?:개의 )?(?:파일|모듈|패키지|서비스)', '모듈 단위', '전 계층', '계층별', '코드베이스 전체', '프로젝트 전체', '저장소 전체',
   '모든 (?:핸들러|모듈|파일|엔드포인트|서비스|컴포넌트|화면|테이블|호출부)',
+  // Japanese
+  '複数(?:の)?(?:ファイル|モジュール|パッケージ|サービス|レイヤー?|層)', 'モジュール単位', '全(?:レイヤー?|層|階層)', '(?:レイヤー?|層|階層)(?:ごと|別)',
+  '(?:コードベース|プロジェクト|リポジトリ)全体',
+  '(?:すべて|全て|全部)の(?:ハンドラー?|モジュール|ファイル|エンドポイント|サービス|コンポーネント|画面|テーブル|呼び出し(?:元|箇所|側))',
+  '全(?:ハンドラー?|モジュール|ファイル|エンドポイント|サービス|コンポーネント|画面|テーブル)',
+  // Chinese, Simplified and Traditional
+  '(?:多个|多個|若干|好几个|好幾個)(?:文件|檔案|模块|模組|模塊|包|套件|服务|服務|层|層)', '按模块|按模組|以模[块組]为单位',
+  '(?:所有|各|每一?)(?:个|個)?(?:层|層)', '按层|按層|逐层|逐層',
+  '整个(?:代码库|代码仓库|项目|仓库|工程)|整個(?:程式碼庫|代碼庫|專案|項目|倉庫)',
+  '(?:所有|全部)(?:的)?(?:处理器|處理器|处理函数|處理函式|handler|模块|模組|模塊|文件|檔案|端点|端點|接口|服务|服務|组件|元件|組件|页面|頁面|表|调用处|调用方|調用處|呼叫端)',
+  // 'each file' describes a loop as often as a wide change, so 每个 counts with a code unit only, as English each/every does
+  '(?:每个|每個|每一个|每一個)(?:处理器|處理器|处理函数|處理函式|handler|模块|模組|模塊|端点|端點|服务|服務|组件|元件|組件)',
   '\\b(?:multiple|several|many) (?:files|modules|packages|services|layers)\\b',
   '\\bacross (?:the )?(?:whole |entire )?(?:codebase|code base|project|repo(?:sitory)?|modules|layers|packages|services|files|multiple \\w+)\\b',
   '\\b(?:every|each) (?:handler|module|endpoint|service|component|layer|package)\\b',
@@ -106,16 +148,43 @@ const BREADTH = new RegExp([
 // request is never settled as direct by stage 1, whatever else it says.
 // (English "all" and "every" alone are too common to mean anything, so they count only with a noun for code places.)
 const PLACES = 'files?|messages?|strings?|handlers?|modules?|endpoints?|services?|components?|places?|occurrences?|usages?|call sites?|callers?|errors?|tests?|pages?|screens?|tables?|queries|query';
-const QUANTIFIER = new RegExp(`전부|모두|일괄|전체|곳곳|싹 다|\\b(?:everywhere|throughout|(?:all|every|each)(?: of)?(?: the| our)? (?:\\w+ )?(?:${PLACES})|entire (?:codebase|project|repo(?:sitory)?|app(?:lication)?))\\b`, 'i');
+const QUANTIFIER = new RegExp(`전부|모두|일괄|전체|곳곳|싹 다|全部|すべて|全て|一括|全体|あちこち|至る所|いたるところ|所有|一律|批量|整体|整體|到处|到處|各处|各處|统统|統統|全都|\\b(?:everywhere|throughout|(?:all|every|each)(?: of)?(?: the| our)? (?:\\w+ )?(?:${PLACES})|entire (?:codebase|project|repo(?:sitory)?|app(?:lication)?))\\b`, 'i');
 
-const QUESTION = /^\s*(왜|어떻게|무엇|뭐|뭘|설명|알려|what\b|why\b|how\b|explain\b|is there\b|can you explain\b)|[?？]\s*$/i;
-const EDIT_VERB = /고쳐|수정|바꿔|추가|구현|만들어|작성해|넣어|\b(?:fix|change|add|implement|create|write|refactor|update)\b/i;
+// A question: it opens with a question word, or ends as one. Japanese and Chinese questions often end
+// without a question mark (ですか。 / 吗。), so the sentence-final particle counts too.
+const QUESTION = new RegExp([
+  '^\\s*(?:왜|어떻게|무엇|뭐|뭘|설명|알려|what\\b|why\\b|how\\b|explain\\b|is there\\b|can you explain\\b',
+  'なぜ|なんで|どうして|どうやって|どのように|何が|何を|これは何|説明して|教えて',
+  '为什么|為什麼|怎么|怎麼|如何|什么是|什麼是|这是什么|這是什麼|请解释|請解釋|解释一下|解釋一下|说明一下|說明一下|请问|請問)',
+  '[?？]\\s*$', '(?:ですか|ますか|でしょうか|のか)[。.]?\\s*$', '[吗嗎呢][。.]?\\s*$',
+  '(?:教えて|説明して)(?:ください|下さい|ほしい)?[。.]?\\s*$', '(?:解释|解釋|说明|說明)一下[。.]?\\s*$',
+].join('|'), 'i');
+const EDIT_VERB = new RegExp([
+  '고쳐|수정|바꿔|추가|구현|만들어|작성해|넣어',
+  '直して|直す|修正|変えて|変更して|追加|実装|作って|作成して|書いて|入れて',
+  '修复|修復|修正|修改|改成|改为|改為|添加|新增|增加|加上|实现|實現|實作|创建|創建|建立|编写|編寫|撰寫',
+  '\\b(?:fix|change|add|implement|create|write|refactor|update)\\b',
+].join('|'), 'i');
 // A question about something failing is a debugging task, not a question.
-const FAILURE = /실패|에러|오류|안 ?돼|안 ?됨|깨져|\b(?:fail(?:s|ed|ing)?|errors?|crash(?:es|ed|ing)?|broken|exceptions?|(?:doesn'?t|does not|won'?t|not) work(?:ing)?)\b/i;
-const DEBUG = /디버그|원인|왜 .*(안|실패)|\b(?:debug(?:ging)?|root cause|stack ?trace|traceback)\b/i;
-const DESIGN = /설계|아키텍처|\b(?:design|architecture)\b/i;
-const REFACTOR = /리팩터|리팩토|\brefactor/i;
-const FILE_REF = /(?:^|[\s`'"(])((?:[\w.-]+\/)+[\w.-]+\.\w{1,5}|[\w-]+\.(?:ts|tsx|js|mjs|py|go|rs|java|kt|rb|php|cs|vue|css|scss|json|ya?ml|md|sql))(?=$|[\s`'"),:])/g;
+const FAILURE = new RegExp([
+  '실패|에러|오류|안 ?돼|안 ?됨|깨져',
+  '失敗|エラー|動かない|動きません|動作しない|壊れ|落ち(?:る|ます|た)|クラッシュ',
+  '失败|错误|錯誤|报错|報錯|不工作|不能用|坏了|壞了|崩溃|崩潰|出错|出錯',
+  "\\b(?:fail(?:s|ed|ing)?|errors?|crash(?:es|ed|ing)?|broken|exceptions?|(?:doesn'?t|does not|won'?t|not) work(?:ing)?)\\b",
+].join('|'), 'i');
+const DEBUG = /디버그|원인|왜 .*(안|실패)|デバッグ|原因|なぜ.*(?:ない|失敗)|スタックトレース|调试|調試|除錯|为什么.*(?:不|失败)|為什麼.*(?:不|失敗)|堆栈|堆疊|\b(?:debug(?:ging)?|root cause|stack ?trace|traceback)\b/i;
+const DESIGN = /설계|아키텍처|設計|アーキテクチャ|设计|架构|架構|\b(?:design|architecture)\b/i;
+const REFACTOR = /리팩터|리팩토|リファクタ|重构|重構|\brefactor/i;
+const FEATURE = /추가|구현|만들어|새 |追加|実装|作って|作成|新しい|新規|添加|新增|增加|实现|實現|實作|创建|創建|新建|\b(?:new|add|implement|create)\b/i;
+// A path or file name in prose. Japanese and Chinese text runs straight into it and uses full-width
+// punctuation and brackets, so kana, Han characters and those marks end a name like a space does.
+const CJK_EDGE = '\\u3040-\\u30ff\\u3400-\\u9fff\\u3000-\\u303f\\uff00-\\uffef';
+const FILE_REF = new RegExp(`(?:^|[\\s\`'"(${CJK_EDGE}])((?:[\\w.-]+\\/)+[\\w.-]+\\.\\w{1,5}|[\\w-]+\\.(?:ts|tsx|js|mjs|py|go|rs|java|kt|rb|php|cs|vue|css|scss|json|ya?ml|md|sql))(?=$|[\\s\`'"),:${CJK_EDGE}])`, 'g');
+// Lists and sections as Japanese and Chinese write them: "・" bullets, "1、" / "（1）" / "①" numbers (often
+// with no space after), "【...】" and "■" section lines. Added to the Markdown forms, not instead of them.
+const CJK_BULLET = /^[ \t\u3000]*[・•‧◦][ \t\u3000]*\S/gm;
+const CJK_NUMBERED = /^[ \t\u3000]*(?:[0-9０-９]{1,2}[、．）]|[（(][0-9０-９]{1,2}[）)]|[①-⑳])[ \t\u3000]*\S/gm;
+const CJK_HEADING = /^[ \t\u3000]*(?:【[^】\n]{1,40}】|[■◆▼●][ \t\u3000]*\S.{0,40})[ \t\u3000]*$/gm;
 
 // Pasted material. Stack-trace / traceback lines are removed before keywords, length and file
 // counting (a 10-frame trace is not a 10-file change) and count as a separate "log attached"
@@ -143,7 +212,7 @@ function taskTypeOf(text: string, isQuestion: boolean, attached: boolean): TaskT
   if (DEBUG.test(text) || (QUESTION.test(text) && FAILURE.test(text)) || attached) return 'debug';
   if (REFACTOR.test(text)) return 'refactor';
   if (DESIGN.test(text)) return 'design';
-  if (/추가|구현|만들어|새 |\b(?:new|add|implement|create)\b/i.test(text)) return 'feature';
+  if (FEATURE.test(text)) return 'feature';
   return 'edit';
 }
 
@@ -156,7 +225,14 @@ function ruleScores(text: string): { score: Record<Level, number>; why: string[]
 
 function featuresOf(p: Parsed, raw: string, mentionedFiles?: string[]): PromptFeatures {
   const { text, prose, fences } = p;
-  const letters = count(prose, /[A-Za-z가-힣]/g);
+  // Script mix (decision 139): which writing systems the prose is in. Han characters are shared by Chinese
+  // and Japanese, so kana is what tells Japanese apart.
+  const hangul = count(prose, /[가-힣]/g);
+  const kana = count(prose, /[\u3040-\u30ff]/g);
+  const han = count(prose, /[\u3400-\u9fff]/g);
+  const latin = count(prose, /[A-Za-z]/g);
+  const letters = hangul + kana + han + latin;
+  const share = (n: number) => (letters ? round2(n / letters) : 0);
   const isQuestion = QUESTION.test(text) && !EDIT_VERB.test(text) && !FAILURE.test(text);
   const { score } = ruleScores(text);
   return {
@@ -164,16 +240,17 @@ function featuresOf(p: Parsed, raw: string, mentionedFiles?: string[]): PromptFe
     proseChars: prose.trim().length,
     lines: raw ? raw.split(/\r?\n/).length : 0,
     words: prose.split(/\s+/).filter(Boolean).length,
-    headings: count(prose, /^#{1,6}\s+\S/gm),
-    bullets: count(prose, /^\s*[-*+]\s+\S/gm),
-    numberedItems: count(prose, /^\s*\d+[.)]\s+\S/gm),
+    headings: count(prose, /^#{1,6}\s+\S/gm) + count(prose, CJK_HEADING),
+    bullets: count(prose, /^\s*[-*+]\s+\S/gm) + count(prose, CJK_BULLET),
+    numberedItems: count(prose, /^\s*\d+[.)]\s+\S/gm) + count(prose, CJK_NUMBERED),
     codeFences: fences.length,
     fencedChars: fences.reduce((a, f) => a + f.length, 0),
     inlineCode: count(prose, /`[^`\n]+`/g),
     filePaths: mentionedFiles ? new Set(mentionedFiles).size : distinct(prose, FILE_REF, 1),
     identifiers: distinct(prose, /`([A-Za-z_][\w.]*)(?:\([^`\n]*\))?`/g, 1),
     urls: count(raw, /https?:\/\//g),
-    hangulRatio: letters ? round2(count(prose, /[가-힣]/g) / letters) : 0,
+    hangulRatio: share(hangul), kanaRatio: share(kana), hanRatio: share(han), latinRatio: share(latin),
+    script: kana / (letters || 1) >= 0.05 ? 'ja' : hangul / (letters || 1) >= 0.2 ? 'ko' : han / (letters || 1) >= 0.2 ? 'zh' : 'latin',
     questions: count(prose, /[?？]/g),
     traceLines: p.traceLines,
     typeDecls: fences.reduce((a, f) => a + count(f, TYPE_DECL), 0),

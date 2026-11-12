@@ -1,0 +1,436 @@
+# The 15 bench task prompts (bench/tasks/custom/*/task.json, written in Korean) in Simplified Chinese (decision 139).
+# Same ids; the label is the task's authored level (L2 and above = team). Code, identifiers and the exact
+# strings a task asks for are kept as they are. Used only to compare stage 1 across languages: the bench
+# itself still runs the original prompts.
+
+- task: c-l0-01
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    textkit 的 `interpolate` 在遇到没有值的 placeholder 时抛出的错误信息里有个错别字(`vlaue`)。这条信息会原样显示在用户界面上，所以需要改掉。
+
+    比如调用 `interpolate('Hi {{name}}', {})` 会抛出 `TextkitError`，它的 `message` 必须正好是 `Missing value for placeholder "name"`(引号里是 placeholder 的名字)。
+
+    除了这条信息，其他行为(比如 strict: false 时保留 placeholder)请不要改。
+
+- task: c-l0-02
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    README 里把 `wordCount` 列为包的函数，但 `src/index.ts`(barrel)里漏了 export，所以 `import { wordCount } from './src/index.ts'` 用不了。请把 `src/count.ts` 里的 `wordCount` 也从 `src/index.ts` export 出来。已有的 export(`charCount` 等)要保持不变。
+
+- task: c-l0-03
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    在 taskboard 里不带 priority 创建任务时，priority 会是 `'low'`，但按产品设计默认值应该是 `'medium'`。不管是用 `TaskService.createTask({ title })` 创建，还是用 `createApp()` 的 `handlers.createTask({ body: { title } })` 处理器创建，只要没给 priority，就应该是 `'medium'`，请改一下。明确指定 priority 时，要和现在一样原样使用那个值。
+
+- task: c-l0-04
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    反馈一个 `truncate(text, maxLength, options?)` 的 bug。字符串长度和 `maxLength` 正好相等时也会被截断。`truncate('hello', 5)` 应该原样返回 `'hello'`，结果却是 `'hell…'`。带上 `ellipsis` 选项也一样(`truncate('abcdefgh', 8, { ellipsis: '...' })` → 应该是 `'abcdefgh'`)。
+
+    长度不超过 `maxLength` 时原样返回原文，只有超过时才像现在这样截断(连同 ellipsis 一共 maxLength 个字符)。
+
+- task: c-l0-05
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L0 }
+  prompt: |
+    confkit 的 `parseDuration('1h')` 返回的是 `360000`。1 小时应该是 `3600000` ms。因为这个，像 `'1h30m'` 这样的复合值也算错了(应该是 `5400000`)。请修一下。其他单位(ms, s, m, d)现在是对的。
+
+- task: c-l1-01
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit 的 `slugify` 只能正确处理 ASCII，这是个问题。`slugify('Crème Brûlée')` 会变成 `'cr-me-br-l-e'`，韩文标题干脆变成空字符串。请按下面的要求修改。
+
+    签名：`slugify(input: string, options?: SlugifyOptions): string`，`interface SlugifyOptions { separator?: string }`(`SlugifyOptions` 类型也从 `src/index.ts` export)。
+
+    规则：
+    1. 结果是小写。
+    2. 去掉拉丁字母的变音符号(重音)：`slugify('Crème Brûlée')` → `'creme-brulee'`，`slugify('ÉCOLE Française')` → `'ecole-francaise'`。
+    3. 韩文等其他文字体系的字母和数字原样保留：`slugify('안녕 세상')` → `'안녕-세상'`，`slugify('React 훅 정리 2편')` → `'react-훅-정리-2편'`。(结果里的韩文必须是一般的合成形式(NFC)字符串。)
+    4. 连续的非字母/数字字符换成一个分隔符，首尾的分隔符去掉。
+    5. 可以用 `options.separator` 指定分隔符，默认值是 `'-'`：`slugify('  --Hello,   World!--  ', { separator: '_' })` → `'hello_world'`。
+    6. 空字符串、只有空白、只有符号的输入返回 `''`。
+
+    现有行为(`slugify('Hello, World!')` → `'hello-world'`，`'Version 2.0 Release'` → `'version-2-0-release'`)必须保持。
+
+- task: c-l1-02
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    taskboard 状态流转方面的 bug。想把任务取消(`cancelled`)时，不管是 todo 还是 in_progress，总是返回 409。另外，改成和当前状态相同的状态的请求(例如 todo → todo)也返回 409，这种情况不应该报错，直接什么都不做才对。
+
+    正确的规则(`TaskService.changeStatus(taskId, status)`、`startTask` / `completeTask` / `cancelTask`，以及 `handlers.updateStatus({ params: { id }, body: { status } })` 都同样适用)：
+    - todo → in_progress, cancelled 允许
+    - in_progress → todo, done, cancelled 允许
+    - done → in_progress 允许 (reopen)
+    - cancelled → 不能变成任何状态(终止状态)
+    - 上面没有列出的流转是 `ConflictError`，信息沿用现有格式 `Invalid status transition: <from> -> <to>`(例如 `Invalid status transition: cancelled -> todo`)。处理器的响应是 409，body 为 `{ error: '<那条信息>' }`。
+    - 请求变成和当前相同的状态时，不报错，原样返回当前任务，也不保存，所以 `updatedAt` 不能变。处理器返回 200。
+
+    对未知 status 值返回 400 等其余行为保持原样。
+
+- task: c-l1-03
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    textkit `wordWrap(text, width)` 的改进需求。想把它用在 CLI 的帮助输出上，但有两个问题。
+
+    1) 输入里原有的换行(`\n`)全都没了，被合并成一个段落。请对输入的每一行分别做 wrap，再用 `\n` 把结果接回去。空行(段落分隔)和只有空白的行保留为空行。在一行之内，和现在一样把连续的空格/制表符当作单词分隔，首尾空白丢掉。
+       - `wordWrap('aaa bbb\n\nccc ddd', 3)` → `'aaa\nbbb\n\nccc\nddd'`
+       - `wordWrap('the quick brown\nfox', 10)` → `'the quick\nbrown\nfox'`
+       - `wordWrap('a\n   \nb', 5)` → `'a\n\nb'`
+
+    2) 请加一个把比 `width` 长的单词切开的选项。签名：`wordWrap(text: string, width: number, options?: WordWrapOptions): string`，`interface WordWrapOptions { breakLongWords?: boolean }`(默认值 `false`，`WordWrapOptions` 类型也从 `src/index.ts` export)。
+       - `false`(默认)时，和现在一样不切长单词，整个放在一行。
+       - `true` 时，把长单词从头开始按每 `width` 个字符切成片段，每个片段像普通单词一样按 greedy 规则排布。所以最后一个(较短的)片段后面如果还放得下下一个单词，就接在同一行。
+       - `wordWrap('abcdefghij', 4, { breakLongWords: true })` → `'abcd\nefgh\nij'`
+       - `wordWrap('abcdefg hi', 5, { breakLongWords: true })` → `'abcde\nfg hi'`
+
+    输入空字符串返回 `''`，`width` 不是正整数时和现在一样抛 `TextkitError`。
+
+- task: c-l1-04
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    请给 taskboard 加上截止日期功能。
+
+    1. 在创建任务的输入(`NewTaskInput`)里加一个可选字段 `dueDate?: string | null`(`'YYYY-MM-DD'` 格式的日期字符串)。`Task` 也加上 `dueDate: string | null` 字段，没有指定或为 `null` 时存为 `null`。
+    2. 校验：给了 `dueDate` 但不是字符串，或者不是 `YYYY-MM-DD` 格式(年 4 位、月/日 2 位)，或者是不存在的日期(`'2023-02-29'`、`'2024-13-01'`、`'2024-04-31'` 等)时，按现有校验错误的方式抛 `ValidationError`，并在 `details` 里放入正好是 `'dueDate must be a valid date in YYYY-MM-DD format'` 的字符串。这样 `handlers.createTask` 就会和原来一样返回 400 `{ error: 'Validation failed', details: [...] }`。(像 `'2024-02-29'` 这样的闰年日期是有效的)
+    3. 新增 `TaskService.listOverdueTasks(today: string): Task[]`。`today` 也是 `'YYYY-MM-DD'`。只返回有 `dueDate`、`dueDate < today`、并且 status 不是 `done`/`cancelled` 的任务(截止日期是今天的不算逾期)。按 `dueDate` 升序排序，相同则按创建顺序。`today` 不是有效日期时抛 `ValidationError`，details 为 `['today must be a valid date in YYYY-MM-DD format']`。
+    4. 新增处理器 `handlers.listOverdueTasks(req)`：接收 `req.query.today`，返回 200 `{ items: Task[] }`，`today` 缺失或不对时返回 400(上面的 ValidationError 直接走现有的错误映射)。
+
+- task: c-l1-05
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: direct, level: L1 }
+  prompt: |
+    confkit 的 `deepMerge(...layers)` 有几个 bug，请修一下。签名(`deepMerge(...layers: ConfigObject[]): ConfigObject`)和基本行为(后面的图层优先，嵌套对象按键合并，数组整个替换)保持不变。
+
+    1. 输入被改掉了。`const a = { db: { host: 'a', port: 1 } }; deepMerge(a, { db: { port: 2 } })` 之后，`a.db.port` 变成了 2。任何输入图层都不能被修改，结果对象也不能和输入共享嵌套对象/数组的引用(修改结果不应该影响输入)。
+    2. 后面图层的值是 `undefined` 时，不要覆盖前面图层的值，而是忽略它。`null` 是明确的值，所以和现在一样覆盖。例：`deepMerge({ port: 8080 }, { port: undefined })` → `{ port: 8080 }`，`deepMerge({ port: 8080 }, { port: null })` → `{ port: null }`。
+    3. 数组和现在一样整个替换，但结果里放的必须是副本。
+    4. 安全：图层里如果有 `__proto__`、`constructor`、`prototype` 这些键(不管在最上层还是嵌套对象里，例如 `JSON.parse('{"__proto__": {"polluted": true}}')`)，就忽略这些键，避免发生 prototype pollution，结果里也不能把这些键作为 own property 放进去。
+
+- task: c-l2-01
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    请给 taskboard 的任务列表加上过滤和分页。现在 `handlers.listTasks` 把所有任务放在 `{ items }` 里全部返回。请按层分开来做(过滤本身放在 repo，校验和默认值放在 service，查询字符串的解析放在 handler)。
+
+    ## Service
+    新增 `TaskService.queryTasks(query?: TaskQuery): TaskPage`(原有的 `listTasks()` 和现在一样，仍然返回完整数组)。
+    ```ts
+    interface TaskQuery {
+      status?: TaskStatus[];       // 与其中任意一个相等 (OR)
+      assigneeId?: string | null;  // 字符串表示该负责人，null 表示只要未分配的任务，省略表示不过滤
+      priority?: Priority;
+      search?: string;             // title 部分匹配，忽略大小写
+      page?: number;               // 从 1 开始，默认 1
+      pageSize?: number;           // 默认 20，最大 100
+    }
+    interface TaskPage {
+      items: Task[];
+      page: number;
+      pageSize: number;
+      total: number;       // 符合过滤条件的总数 (分页之前)
+      totalPages: number;  // Math.ceil(total / pageSize)，total 为 0 时是 0
+    }
+    ```
+    - 有多个条件时是 AND。
+    - 按创建顺序排序(先创建的任务在前)。
+    - page 超过最后一页时不报错，而是 `items: []`(total、totalPages 是正常值)。
+    - 值不对时抛 `ValidationError`(details 里至少有 1 个说明字符串)：status 里有未知的值、未知的 priority、page 不是大于等于 1 的整数、pageSize 不是 1~100 之间的整数。
+    - `TaskQuery`、`TaskPage` 类型从 `src/index.ts` export。
+
+    ## Handler
+    `handlers.listTasks(req)` 解析 `req.query`(值全是字符串)后传给 `queryTasks`，返回 200，body 是 `TaskPage`。
+    - `status`：逗号分隔的列表(`'todo,in_progress'`)
+    - `assigneeId`：用户 id，或者 `'none'` 表示只要未分配的
+    - `priority`
+    - `q`：title 的搜索词
+    - `page`、`pageSize`：数字字符串。不是整数的值(`'abc'`、`'1.5'`)或超出范围的值返回 400。
+
+    没有查询参数时返回 `{ items: <前 20 个>, page: 1, pageSize: 20, total, totalPages }`。查询不对时按现有的错误映射返回 400 `{ error: 'Validation failed', details: [...] }`。
+
+- task: c-l2-02
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    请给 taskboard 加上任务的变更历史(audit trail)。要能按任务查到是谁、在什么时候、改了什么。
+
+    ## 事件模型
+    ```ts
+    type AuditEventType = 'task.created' | 'task.assigned' | 'task.status_changed';
+    interface AuditEvent {
+      id: string;               // 每个事件唯一的值
+      taskId: string;
+      type: AuditEventType;
+      actorId: string | null;   // 操作的用户 id，不知道就是 null
+      at: string;               // ISO 8601。和这次变更保存下来的任务的 updatedAt 相同 (task.created 则是 createdAt)
+      changes: Record<string, { from: unknown; to: unknown }>;
+    }
+    ```
+    - `task.created`：`changes` 是 `{}`
+    - `task.assigned`：`{ assigneeId: { from: <之前的负责人或 null>, to: <新的负责人或 null> } }`(取消分配也是这个事件)
+    - `task.status_changed`：`{ status: { from: <之前的状态>, to: <新的状态> } }`
+    - 失败的操作(校验错误、404、409 等)不记录。
+    - 把已经分配给某人的任务再次分配给同一个人，没有任何变化，所以也不留事件。
+    - `AuditEvent`、`AuditEventType` 类型从 `src/index.ts` export。
+
+    ## Service (`TaskService`)
+    - 给会产生变更的方法加上最后一个可选参数 `actorId?: string | null`(省略则为 null)：`createTask(input, actorId?)`、`assignTask(taskId, userId, actorId?)`、`changeStatus(taskId, status, actorId?)`、`startTask(taskId, actorId?)`、`completeTask(taskId, actorId?)`、`cancelTask(taskId, actorId?)`。
+    - 新增 `getTaskHistory(taskId: string): AuditEvent[]` — 按发生顺序返回该任务的事件。任务不存在时和原来一样抛 `NotFoundError`(`Task not found: <id>`)。
+    - 事件的存储做成和任务 repo 分开的 in-memory audit log，并在 `createApp` 里接上。时间使用通过 `createApp({ now })` 注入的同一个 clock。
+
+    ## Handlers
+    - 原有的 `createTask`、`assignTask`、`updateStatus` 处理器把 `req.userId` 作为 actorId 传下去(没有就是 null)。
+    - 新处理器 `handlers.getTaskHistory(req)`：把 `req.params.id` 的历史以 200 `{ items: AuditEvent[] }` 返回，任务不存在时返回 404 `{ error: 'Task not found: <id>' }`。
+
+- task: c-l2-03
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: team, level: L2 }
+  prompt: |
+    请给 confkit 加上基于 schema 的校验 + 类型转换功能。环境变量进来时全是字符串，所以 `port` 一直是字符串 `'8080'`，必填值缺失也要到运行时才暴露出来。
+
+    ## 1. `validateConfig(config, schema)` (从 `src/index.ts` export)
+    ```ts
+    type FieldSchema =
+      | { type: 'string'; required?: boolean; default?: string; enum?: string[] }
+      | { type: 'number'; required?: boolean; default?: number; integer?: boolean; min?: number; max?: number }
+      | { type: 'boolean'; required?: boolean; default?: boolean }
+      | { type: 'duration'; required?: boolean; default?: string | number }
+      | { type: 'object'; properties: Schema };
+    interface Schema { [key: string]: FieldSchema }
+    interface ConfigIssue { path: string; message: string }  // path 是 'db.port' 这样的点号写法
+    type ValidationResult = { ok: true; value: ConfigObject } | { ok: false; issues: ConfigIssue[] };
+    function validateConfig(config: ConfigObject, schema: Schema): ValidationResult;
+    ```
+    (`FieldSchema`、`Schema`、`ConfigIssue`、`ValidationResult` 类型也要 export)
+
+    规则：
+    - 转换：`number` 字段接受 number 或数字字符串(`'8080'`)，转成 number。`boolean` 只允许 true/false 或字符串 `'true'`/`'false'`(像 `'yes'` 这样的其他值算问题)。`duration` 是字符串时用现有的 `parseDuration` 转成 ms 数值，是数字时就直接当作 ms。`string` 只允许字符串(不把数字转成字符串)。
+    - 没有值时(键不存在或为 undefined)：有 `default` 就用 default(duration 的 default 也转成 ms)，`required: true` 就报问题 `'is required'`，两者都不是就在结果里省略这个键。
+    - `object` 字段：没有值时当作空对象来检查下级字段(所以下级的 default 会被填上，下级的 required 也会被报告)。值不是对象时只报一个 `'expected object'`，不检查下级字段。
+    - 问题的信息必须正好是下面这些字符串：
+      - 类型不符/转换失败：`'expected string'`、`'expected number'`、`'expected boolean'`、`'expected duration'`、`'expected object'`
+      - number：`integer: true` 但不是整数时 `'must be an integer'`，小于 min 时 `'must be >= <min>'`，大于 max 时 `'must be <= <max>'`(例如 `'must be <= 65535'`)
+      - string 违反 enum：`'must be one of: <用 ", " join 起来的 enum 值>'`(例如 `'must be one of: development, production'`)
+      - schema 里没有的键：`'unknown key'`
+    - 一个字段最多只报一个问题(检查顺序：类型 → integer → min → max，string 是 类型 → enum)。
+    - 把所有字段的问题收集完再返回(不在第一个错误处停下)。只要有一个问题就是 `ok: false`。问题数组的顺序无所谓。
+    - 不修改输入的 config 对象，`value` 是应用了转换和默认值之后的新对象。
+
+    ## 2. `loadConfig` 的 `schema` 选项
+    在 `LoadOptions` 里加上 `schema?: Schema`。给了的话，就用 `validateConfig` 校验合并后的结果，成功则返回转换后的 `value`，失败则 throw `ConfigError`。这个错误的 `message` 以 `'Invalid configuration'` 开头，`issues` 属性里必须有 `ConfigIssue[]`。没有 `schema` 时保持现有行为。
+
+- task: c-l3-01
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    请给 taskboard 加上 **项目 · 成员关系 · 基于角色的权限**。现在任务全都放在一个篮子里，谁都可以改任何东西。我们想把任务按项目归组，并在项目内按角色限制能做的事。请沿用现有的分层结构(models / repo / service / handlers / app)。这次会新增仓储、服务、处理器，原有的任务部分也要一起改。
+
+    调用者用 `Request.userId` 识别(已有的字段)。下面的处理器都必须和原有的任务处理器一起放在 `createApp().handlers` 里。
+
+    ## 1. 模型
+    ```ts
+    type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+    interface Project {
+      id: string;            // 'project-1', 'project-2', ... (每个应用从 1 开始)
+      name: string;          // 去掉首尾空白，1~60 个字符，在项目之间唯一 (忽略大小写)
+      description: string;   // 默认 ''
+      archived: boolean;     // 默认 false
+      createdBy: string;     // 创建者的用户 id
+      createdAt: string;     // ISO 8601，使用 AppOptions.now 的时钟。创建时和 updatedAt 相同
+      updatedAt: string;
+    }
+    interface Membership { projectId: string; userId: string; role: ProjectRole; addedAt: string }
+    ```
+    给 `Task` 加上 `projectId: string | null`。不属于任何项目的任务是 `null`。
+
+    ## 2. 权限表
+    请从 `src/index.ts` export `can(role: ProjectRole, action: ProjectAction): boolean`。
+
+    | action | owner | admin | member | viewer |
+    |---|---|---|---|---|
+    | `project.read` | O | O | O | O |
+    | `project.update` | O | O | X | X |
+    | `project.archive` | O | X | X | X |
+    | `member.manage` | O | O | X | X |
+    | `task.read` | O | O | O | O |
+    | `task.write` | O | O | O | X |
+
+    ## 3. 通用规则
+    检查顺序如下，在前面的步骤被拦下就返回那一步的响应。
+    1. 调用者：没有 `userId` 或者是未注册的用户时返回 401 `{ error: 'Authentication required' }`。未激活(`active: false`)的用户返回 403。
+    2. 对象：项目不存在时返回 404 `{ error: 'Project not found: <id>' }`，任务不存在时和原来一样返回 404 `Task not found: <id>`。
+    3. 成员与角色：不是该项目的成员时返回 403 `{ error: 'Not a member of project: <id>' }`。是成员但权限表不允许时返回 403(信息自定)。
+    4. 归档：对已归档的项目做写操作(属于 `project.update`、`member.manage`、`task.write` 的所有操作，以及成员退出)时返回 409 `{ error: 'Project is archived: <id>' }`。读取可以。
+    5. 然后才是各个操作的其余规则。
+
+    输入校验失败(400)和原来一样是 `{ error: 'Validation failed', details: [...] }`。400 和其他失败同时出现时的优先级不作规定(不会检查这种情况)。
+    新的错误类 `UnauthorizedError`(401)、`ForbiddenError`(403)请作为 `AppError` 的子类创建并 export(构造函数的第一个参数是信息)。
+
+    ## 4. 项目处理器
+    | 处理器 | 请求 | 所需权限 | 成功响应 |
+    |---|---|---|---|
+    | `createProject` | `body: { name, description? }` | 已登录的激活用户 | 201 `Project`。创建者成为 `owner` 成员 |
+    | `getProject` | `params.id` | `project.read` | 200 `Project` |
+    | `listProjects` | `query.includeArchived?` | 已登录 | 200 `{ items: Project[] }` 只包含调用者是成员的项目，按创建顺序。已归档的只有 `includeArchived === 'true'` 时才包含 |
+    | `updateProject` | `params.id`, `body: { name?, description? }` | `project.update` | 200 `Project` (更新 `updatedAt`) |
+    | `archiveProject` / `unarchiveProject` | `params.id` | `project.archive` | 200 `Project` |
+    | `listMembers` | `params.id` | `project.read` | 200 `{ items: Membership[] }` 按加入顺序 |
+    | `addMember` | `params.id`, `body: { userId, role }` | `member.manage` | 201 `Membership` |
+    | `changeMemberRole` | `params.id`, `params.userId`, `body: { role }` | `member.manage` | 200 `Membership` |
+    | `removeMember` | `params.id`, `params.userId` | `member.manage` 或本人退出 | 200 `{ unassignedTaskIds: string[] }` |
+
+    细则：
+    - 名称的校验信息：`'name is required'`(没有，或是空字符串、只有空白)，`'name must be at most 60 characters'`。`description` 不是字符串时返回 400。名称已被占用时返回 409(改成自己当前的名称不算冲突，包括只改大小写的情况)。`updateProject` 里省略 `name` 时名称不变。
+    - `addMember`：`role` 不是四种角色之一时返回 400 `details: ['role must be one of: owner, admin, member, viewer']`，没有 `userId` 时返回 400。目标用户不存在时返回 404 `User not found: <id>`，未激活时返回 409 `User is inactive: <id>`，已经是成员时返回 409。
+    - `owner` 角色只有 owner 能授予。admin 想授予 `owner`(添加或变更)、想改 owner 成员的角色、想移除 owner，都返回 403。
+    - 项目里必须始终至少有一个 owner。降低最后一个 owner 的角色，或移除最后一个 owner(包括本人退出)时返回 409 `{ error: 'Project must keep at least one owner' }`。
+    - `changeMemberRole`、`removeMember` 的目标不是成员时返回 404。
+    - `removeMember`：不管是什么角色，都可以移除自己(退出)。被移除的用户在 **该项目中** 负责的任务变为未分配(`assigneeId: null`，更新 `updatedAt`)，并把这些任务的 id 作为 `unassignedTaskIds` 返回。其他项目的任务和不属于任何项目的任务不动。
+    - 归档/取消归档时，即使已经处于那个状态也返回 200。
+
+    ## 5. 任务部分的改动
+    - `createTask`：有 `body.projectId` 时在该项目里创建(需要 `task.write`)。不是字符串时返回 400。没有时和现在一样是不属于任何项目的任务(`projectId: null`)。
+    - 属于项目的任务，`getTask` 需要 `task.read`，`assignTask`、`updateStatus` 需要 `task.write`(适用第 3 节的检查顺序，以任务所属的项目为准)。
+    - 项目任务的负责人必须是该项目中不是 viewer 的成员。否则返回 409 `{ error: 'User cannot be assigned in project: <userId>' }`。(用户不存在的 404、未激活的 409 仍然是现有规则优先。)
+    - `listTasks`：按创建顺序返回不属于任何项目的任务 + 调用者是成员的项目里的任务(匿名时只返回不属于任何项目的任务)。有 `query.projectId` 时只返回该项目的任务，并且需要 `task.read`。
+    - **不属于任何项目的任务必须和现在的行为完全一样。** 匿名调用也可以，现有的测试必须原样通过。`TaskService` 现有的调用形式(`createTask(input)`、`getTask(id)`、`listTasks()`、`assignTask(id, userId)`、`changeStatus(id, status)`)也请保持(调用者 id 以可选参数的形式加在后面)。
+
+    ## 6. 收尾
+    - `createApp()` 创建新的仓储和服务并接好，在 `handlers` 里放入上面全部的处理器。
+    - 新的类型、类和 `can` 从 `src/index.ts` export。
+    - 现有的测试(`npm test`)必须全部通过。
+
+- task: c-l3-02
+  lang: zh
+  from: ko
+  split: bench
+  label: { kind: team, level: L3 }
+  prompt: |
+    请改一下 confkit 的结构。现在 `loadConfig` 把各层合并一次、返回一个普通对象就结束了，所以 (1) 不知道某个值来自哪一层，(2) 没有地方接入 JSON 或命令行参数这样的新输入，(3) 值之间不能互相引用，(4) 运行期间不能重新读取。我们打算把输入抽象成 **来源**，并在其上加上 **出处追踪 · 引用替换 · 用于查询的 Config 对象 · 重新读取**。`loadConfig` 保留为跑在新结构之上的一层薄封装。模块请按职责拆分(各个来源、合并与出处、替换、比较、遮蔽、Config 对象)。
+
+    下面的名字全部从 `src/index.ts` export。错误一律使用现有的 `ConfigError`。
+
+    ## 1. 来源
+    ```ts
+    interface ConfigSource { name: string; load(): ConfigObject }
+
+    objectSource(name: string, value: ConfigObject | (() => ConfigObject)): ConfigSource
+    iniSource(name: string, text: string | (() => string)): ConfigSource      // 现有的 parseIni
+    jsonSource(name: string, text: string | (() => string)): ConfigSource
+    envSource(env: Record<string, string | undefined>, prefix = 'APP_', name = 'env'): ConfigSource   // 现有的 fromEnv
+    argvSource(argv: string[], name = 'argv'): ConfigSource
+    ```
+    - 创建来源时什么都不读，每次调用 `load()` 时重新读取。传入函数时，每次 `load()` 都重新调用这个函数；`envSource` 每次都重新查看传入的 env 对象。
+    - `objectSource` 的 `load()` 返回深拷贝(拿到的一方修改它，原对象也不变)。
+    - `jsonSource`：只接受最上层是对象的 JSON。解析失败或最上层不是对象(数组、数字、null)时，在 `load()` 里抛 `ConfigError`，信息里带上来源的名字。JSON 里的 `null` 值原样保留。
+    - `argvSource` 的规则：
+      - `--db.host=localhost`：`=` 后面是值(`--name=` 是空字符串，值里面的 `=` 原样保留)。
+      - `--port 8080`：没有 `=`，并且下一个 token 不以 `--` 开头时，那个 token 就是值(`--offset -5` 是 -5)。
+      - `--debug`：没有值时是 `true`。
+      - `--no-debug`：`false`。不把下一个 token 当作值取走。
+      - 键里的 `.` 表示嵌套。值按和 INI 值相同的规则转换(`true`/`false`、数字、用引号包起来就是字符串)。
+      - 出现 `--` 之后的内容全部忽略。既不是选项也不是选项值的 token 忽略。
+
+    ## 2. 合并与出处
+    ```ts
+    resolveSources(sources: ConfigSource[]): { value: ConfigObject; origins: Record<string, string> }
+    ```
+    - 按顺序 `load()` 后合并。后面的来源胜出，对象之间按键合并，其他的值(包括数组)整个替换(和现有的 `deepMerge` 规则相同)。
+    - `origins` 是结果里每个 **叶子**(不是对象的值。数组和 null 也是叶子)路径对应的、给出该值的来源名。路径是 `'db.host'` 这样的点号写法。对象变成标量，或者标量变成对象时，旧路径的出处必须消失。
+    - 来源名重复时抛 `ConfigError`(信息里包含那个名字)。
+
+    ## 3. 引用替换
+    ```ts
+    interpolate(config: ConfigObject): ConfigObject   // 返回新对象，不改变输入
+    ```
+    - 把字符串值里的 `${路径}` 换成该路径的值。数组里的字符串也在范围内。花括号里首尾的空白忽略。
+    - 整个字符串只有一个引用时(`'${port}'`)，保持被引用值的类型(数字还是数字)。和其他字符混在一起时，作为字符串拼接。
+    - 被引用的值里还有引用时，一直展开到底。
+    - `$${` 不做替换，变成字面上的 `${`。
+    - 错误(`ConfigError`，`path` 是包含该引用的值的路径)：
+      - 路径不存在：信息里包含 `unknown reference`
+      - 循环(包括引用自己)：信息里包含 `circular reference`
+      - 被引用的值不是字符串、数字、布尔值(对象、数组、null)
+
+    ## 4. 比较
+    ```ts
+    interface ConfigChange { path: string; before: ConfigValue | undefined; after: ConfigValue | undefined }
+    diffConfig(before: ConfigObject, after: ConfigObject): ConfigChange[]
+    ```
+    以叶子为单位，把新增(`before: undefined`) · 删除(`after: undefined`) · 变更按 path 升序返回。数组内容相同就算相同的值。叶子变成对象时，表现为旧叶子的删除和新叶子的新增。
+
+    ## 5. Config 对象
+    ```ts
+    createConfig(options: {
+      sources: ConfigSource[];
+      interpolate?: boolean;   // 默认 true
+      secrets?: string[];      // 要遮蔽的路径模式
+    }): Config
+
+    interface Config {
+      get(path: string): ConfigValue | undefined;
+      has(path: string): boolean;
+      require(path: string): ConfigValue;
+      getString(path: string, fallback?: string): string;
+      getNumber(path: string, fallback?: number): number;
+      getBoolean(path: string, fallback?: boolean): boolean;
+      getDuration(path: string, fallback?: number): number;   // ms
+      origin(path: string): string | undefined;
+      explain(): Array<{ path: string; value: ConfigValue; source: string }>;
+      toObject(options?: { redact?: boolean }): ConfigObject;
+      reload(): ConfigChange[];
+      onChange(listener: (changes: ConfigChange[]) => void): () => void;
+    }
+    ```
+    - `createConfig` 会立即读取(来源有错或替换有错就在这里 throw)。值是合并之后又做完替换的值，出处以合并时为准。
+    - `require` 和按类型读取时如果没有值，抛 `ConfigError`(信息里包含 `missing required config`，并设置 `path`)。按类型读取时如果给了 `fallback`，**只有在没有值时** 才返回它。
+    - 类型不符时抛 `ConfigError`(设置 `path`，信息里包含下面的字样)：
+      - `getString`：只接受字符串。`expected string`
+      - `getNumber`：数字或数字字符串(`'3'`)。`expected number`
+      - `getBoolean`：布尔值或 `'true'`/`'false'`。`expected boolean`
+      - `getDuration`：数字(ms)或现有 `parseDuration` 能读的字符串。`expected duration`
+    - `origin(path)`：叶子路径的来源名。对象路径或不存在的路径返回 `undefined`。
+    - `explain()`：按 path 升序列出所有叶子。`toObject()`：深拷贝。
+    - `secrets`：点号写法的路径模式，`*` 对应一个片段(`db.password`、`*.token`、`api.*`)。符合模式的路径及其下级都是机密。`toObject({ redact: true })` 把机密的值换成 `'***'`(机密路径是对象时，整个对象变成 `'***'`)，`explain()` 把机密叶子的 `value` 输出为 `'***'`。`get` 等直接读取返回真实的值。
+    - `reload()`：重新读取所有来源并替换，返回和之前的值做 `diffConfig` 的结果。只要有一处变更，就用这个数组把已注册的监听器各调用一次。没有变更就不调用。重新读取时出错就 throw，并且 **原样保持之前的状态**，也不调用监听器。
+    - `onChange` 返回一个取消注册的函数。
+
+    ## 6. loadConfig
+    - 现有行为保持不变(defaults < sources < env，不做替换)。现有的测试必须通过。
+    - 在 `LoadOptions` 里加上 `argv?: string[]`(优先级最高)和 `interpolate?: boolean`(默认 false)。
+    - 内部请用上面的来源和 `createConfig` 来写。

@@ -24,17 +24,62 @@ export interface LabelledPrompt {
 export interface Answer { kind: TriageKind; level: Level; teamScore?: number }
 export type Classifier = (p: LabelledPrompt) => Answer | undefined;
 
-interface RawTask { task: string; lang: string; split?: string; label: PromptLabel; short?: string; spec?: string }
+interface RawTask { task: string; lang: string; split?: string; label: PromptLabel; short?: string; spec?: string; prompt?: string }
 
-/** Reads prompts.yaml: one entry per task with a `short` and a `spec` wording. */
+/**
+ * Reads a prompt set: one entry per task with a `short` and a `spec` wording (prompts.yaml and its
+ * translations), or with one `prompt` (the translated bench tasks; its id is the task id).
+ */
 export function loadPromptSet(yamlText: string): LabelledPrompt[] {
   const out: LabelledPrompt[] = [];
   for (const t of parse(yamlText) as RawTask[]) {
+    if (typeof t.prompt === 'string' && t.prompt.trim()) {
+      out.push({ id: t.task, task: t.task, lang: t.lang, style: 'task', split: t.split ?? 'other', label: t.label, prompt: t.prompt.trim() });
+    }
     for (const style of ['short', 'spec'] as const) {
       const prompt = t[style];
       if (typeof prompt !== 'string' || !prompt.trim()) continue;
       out.push({ id: `${t.task}-${style}`, task: t.task, lang: t.lang, style, split: t.split ?? 'other', label: t.label, prompt: prompt.trim() });
     }
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ the same prompts in another language (decision 139)
+
+export interface LanguageAgreement {
+  n: number;
+  /** Same three-way answer and level as the original. */
+  same: number;
+  /** Same three-way answer. */
+  sameKind: number;
+  /** The translation is answered "direct" where the label says team: the costly error. `newly` = the original was not. */
+  falseDirect: number;
+  newFalseDirect: number;
+  /** The translation is answered "team" where the label says direct. */
+  falseTeam: number;
+  newFalseTeam: number;
+  /** What changed, as "<original kind>/<level> -> <translated kind>/<level>" with the prompt ids. */
+  changes: Array<{ id: string; label: PromptLabel; from: string; to: string }>;
+  missing: string[];
+}
+
+/** How a classifier's answers on a translated set compare with its answers on the original, prompt by prompt (matched by id). */
+export function languageAgreement(original: LabelledPrompt[], translated: LabelledPrompt[], classify: Classifier): LanguageAgreement {
+  const byId = new Map(translated.map(p => [p.id, p]));
+  const out: LanguageAgreement = { n: 0, same: 0, sameKind: 0, falseDirect: 0, newFalseDirect: 0, falseTeam: 0, newFalseTeam: 0, changes: [], missing: [] };
+  for (const o of original) {
+    const t = byId.get(o.id);
+    if (!t) { out.missing.push(o.id); continue; }
+    const a = classify(o);
+    const b = classify(t);
+    if (!a || !b) { out.missing.push(o.id); continue; }
+    out.n++;
+    if (a.kind === b.kind) out.sameKind++;
+    if (a.kind === b.kind && a.level === b.level) out.same++;
+    else out.changes.push({ id: o.id, label: o.label, from: `${a.kind}/${a.level}`, to: `${b.kind}/${b.level}` });
+    if (o.label.kind === 'team' && b.kind === 'direct') { out.falseDirect++; if (a.kind !== 'direct') out.newFalseDirect++; }
+    if (o.label.kind === 'direct' && b.kind === 'team') { out.falseTeam++; if (a.kind !== 'team') out.newFalseTeam++; }
   }
   return out;
 }

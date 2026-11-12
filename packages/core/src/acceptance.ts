@@ -58,7 +58,7 @@ export function isReask(s: PromptSimilarity | undefined, t: { jaccard: number; c
 
 // ------------------------------------------------------------------ explicit dissatisfaction
 
-/** Looked for in the start of the next prompt only. A weak signal: "revert the migration" is a new task. */
+/** Looked for in the start of the next prompt only. A weak signal: "revert the migration" is a new task. Korean, English, Japanese, Chinese. */
 export const DISSATISFACTION_RULES: ReadonlyArray<{ id: string; re: RegExp }> = [
   { id: 'en-still-broken', re: /\bstill\s+(?:broken|failing|fails|wrong|not\s+working|doesn'?t\s+work|does\s+not\s+work)\b/i },
   { id: 'en-does-not-work', re: /\b(?:doesn'?t|does\s+not|didn'?t|did\s+not)\s+work\b|\bnot\s+working\b/i },
@@ -68,6 +68,16 @@ export const DISSATISFACTION_RULES: ReadonlyArray<{ id: string; re: RegExp }> = 
   { id: 'ko-not-working', re: /(?:안\s*(?:돼요?|됩니다|되는데|되네요?|된다)|동작(?:을)?\s*(?:안|하지\s*않)|작동(?:을)?\s*(?:안|하지\s*않))/ },
   { id: 'ko-wrong', re: /(?:틀렸|잘못\s*(?:됐|되었|했|고쳤|만들)|이게\s*아니|그게\s*아니)/ },
   { id: 'ko-undo', re: /(?:되돌려|원래대로|원상\s*복구|롤백|취소해)/ },
+  // Japanese and Chinese, Simplified and Traditional (decision 139). No word boundaries exist there, so the
+  // phrases are whole expressions, and they stay the weak signal the others are.
+  { id: 'ja-still', re: /まだ(?:動か|動き|直っ|直ら|エラー|失敗|同じ|ダメ|だめ|駄目|壊れ)|相変わらず/ },
+  { id: 'ja-not-working', re: /動かない|動きません|動作しない|動作しません|うまくいかない|うまくいきません|(?:ダメ|だめ|駄目)(?:です|でした|だ)/ },
+  { id: 'ja-wrong', re: /違います|違うよ|違うんで|間違ってい|間違ってる|間違えて|そうじゃな|そうではな|これじゃな|これではな/ },
+  { id: 'ja-undo', re: /元に戻して|戻してください|戻してほしい|取り消して|やり直して|リバートして|巻き戻して/ },
+  { id: 'zh-still', re: /(?:还是|還是|仍然|依然|依旧|依舊)(?:不行|不对|不對|报错|報錯|失败|失敗|有问题|有問題|一样|一樣|没|沒|会|會)/ },
+  { id: 'zh-not-working', re: /不行|不工作|没用|沒用|不起作用|没有生效|沒有生效|没生效|沒生效|跑不起来|跑不起來|用不了/ },
+  { id: 'zh-wrong', re: /不对|不對|错了|錯了|搞错|搞錯|弄错|弄錯|不是我(?:要|想)|不是这个意思|不是這個意思/ },
+  { id: 'zh-undo', re: /撤销|撤銷|回滚|回滾|还原|還原|改回去|改回来|改回來|退回去|復原|恢复原样|恢復原樣/ },
 ];
 const DISSATISFACTION_HEAD_CHARS = 600;
 
