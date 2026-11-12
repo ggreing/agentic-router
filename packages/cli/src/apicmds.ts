@@ -1,5 +1,5 @@
-// API-key mode commands (decisions 130-131): init --mode api, mode direct|proxy, token rotate, key set,
-// proxy allow-upstream. Everything that reaches outside this process (the keychain, Claude Code's login
+// API-key mode commands (decisions 130-131, spec 2.1): init --mode api, mode subscription|api|direct|proxy,
+// token rotate, key set, proxy allow-upstream. Everything that reaches outside this process (the keychain, Claude Code's login
 // status, the user's confirmation, stdin) comes in through ApiDeps, so tests use fakes.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,8 +7,10 @@ import { routerHome } from '@agentic-router/core';
 import {
   DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, ROTATION_GRACE_MS, checkUpstream, keyStatus, newToken, storeKey, writeTokenFile, type VaultErrorCode,
 } from '@agentic-router/proxy';
-import { claudeAuthStatus, detectLogin, planApiSettings, type ApiMode, type CommandRunner } from './apimode.ts';
+import { claudeAuthStatus, detectLogin, planApiSettings, planSubscriptionSettings, type ApiMode, type CommandRunner } from './apimode.ts';
+import { runningSupervisor } from './daemonctl.ts';
 import { pickPort, readConfig, restrictHome, writeConfig, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
+import { superviseFiles } from './supervise.ts';
 
 export interface ApiDeps {
   settingsFile: string;
@@ -23,6 +25,15 @@ export interface ApiDeps {
   isTTY: boolean;
   readStdin(): Promise<string>;
   out(line: string): void;
+  /** Asks a running supervisor to re-read the mode (start or stop the proxy); false when none runs. */
+  reload?(): boolean;
+}
+
+/** The real reload: a file the supervisor polls for (portable to Windows, where signals are hard kills). */
+export function realReload(): boolean {
+  if (!runningSupervisor()) return false;
+  fs.writeFileSync(superviseFiles().reload, String(Date.now()));
+  return true;
 }
 
 export const realVault: ApiDeps['vault'] = {
@@ -59,15 +70,22 @@ async function storeKeyStep(f: Record<string, string | boolean>, d: ApiDeps): Pr
   return { ok: true };
 }
 
-/** Before init --mode api writes anything: no saved Claude login, and a usable keychain holding the key. */
-export async function preflightApi(f: Record<string, string | boolean>, d: ApiDeps): Promise<Step> {
+/** No saved claude.ai / Console login next to the gateway credential (an auth conflict), unless --allow-login. */
+async function loginStep(f: Record<string, string | boolean>, d: ApiDeps, again: string): Promise<Step> {
   const login = await detectLogin(d.login);
   if (login.state === 'saved_login' && f['allow-login'] !== true) {
     d.out(`Claude Code has a saved login${login.method ? ` (${login.method})` : ''}. API-key mode needs it gone: a gateway credential next to a saved login gives an auth conflict. `
-      + 'Run `claude auth logout` (or /logout in Claude Code), then run `agentic-router init --mode api` again. (--allow-login continues anyway.)');
+      + `Run \`claude auth logout\` (or /logout in Claude Code), then run \`${again}\` again. (--allow-login continues anyway.)`);
     return { ok: false, code: 2 };
   }
   if (login.state === 'unknown') d.out('Could not tell whether Claude Code has a saved claude.ai login. If it has, run `claude auth logout` (or /logout) before using API-key mode.');
+  return { ok: true };
+}
+
+/** Before init --mode api writes anything: no saved Claude login, and a usable keychain holding the key. */
+export async function preflightApi(f: Record<string, string | boolean>, d: ApiDeps): Promise<Step> {
+  const login = await loginStep(f, d, 'agentic-router init --mode api');
+  if (!login.ok) return login;
   const status = await d.vault.status();
   if (status === 'present') { d.out('API key found in the OS keychain'); return { ok: true }; }
   if (status !== 'not_found') { d.out(`keychain: ${vaultHelp[status] ?? status}`); return { ok: false, code: 2 }; }
@@ -104,9 +122,53 @@ export async function setMode(mode: ApiMode, f: Record<string, string | boolean>
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();
   writeConfig({ ...cfg, apiMode: mode });
+  const live = (d.reload ?? realReload)();
   d.out(mode === 'direct'
-    ? 'Direct mode: new Claude Code sessions talk to the API themselves with the key from the keychain (no proxy, no budget blocking). Restart running sessions; run agentic-router stop and start so the proxy is no longer supervised.'
-    : 'Proxy mode: new Claude Code sessions go through the proxy. Run agentic-router stop and start to run it, then restart Claude Code sessions.');
+    ? `Direct mode: new Claude Code sessions talk to the API themselves with the key from the keychain (no proxy, no budget blocking). ${live ? 'The supervisor stops the proxy now. ' : ''}Restart running Claude Code sessions.`
+    : `Proxy mode: new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `agentic-router start` to run it;'} then restart running Claude Code sessions.`);
+  return 0;
+}
+
+/**
+ * `mode subscription` (spec 2.1): back to the claude.ai subscription once its limit has recovered. Takes the
+ * router's base URL, hint variable and apiKeyHelper out of Claude Code's settings (confirmed) and stops the
+ * proxy under the supervisor. The key stays in the keychain and the local token file stays: `mode api`
+ * switches back without setting up again.
+ */
+export async function modeSubscription(f: Record<string, string | boolean>, d: ApiDeps): Promise<number> {
+  const cfg = readConfig();
+  if (!cfg) { d.out('Not set up yet: run agentic-router init first.'); return 2; }
+  const change = planSubscriptionSettings(d.settingsFile);
+  if (!cfg.apiMode && !change) { d.out('Already in subscription mode: nothing to change.'); return 0; }
+  if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
+  change?.apply();
+  const { apiMode: _gone, ...rest } = cfg;
+  writeConfig(rest);
+  const live = (d.reload ?? realReload)();
+  d.out(`Subscription mode: new Claude Code sessions use the claude.ai login. If you logged out for API-key mode, log in again (/login in Claude Code). ${live ? 'The supervisor stops the proxy now. ' : ''}`
+    + 'The API key stays in the keychain, so `agentic-router mode api` switches back. Restart running Claude Code sessions.');
+  return 0;
+}
+
+/**
+ * `mode api` (spec 2.1): API-key mode through the proxy again, for a setup that has a key and a local token
+ * already (else init --mode api). The saved-login check of init applies; the settings change is confirmed and
+ * the supervisor starts the proxy.
+ */
+export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): Promise<number> {
+  const cfg = readConfig();
+  if (!cfg?.proxyPort || !fs.existsSync(proxyTokenFile())) { d.out('API-key mode is not set up: run agentic-router init --mode api first'); return 2; }
+  const status = await d.vault.status();
+  if (status !== 'present') { d.out(`API-key mode needs the key in the keychain, but: ${status === 'not_found' ? 'no key is stored (agentic-router key set)' : vaultHelp[status] ?? status}`); return 2; }
+  const login = await loginStep(f, d, 'agentic-router mode api');
+  if (!login.ok) return login.code;
+  const change = planApiSettings(d.settingsFile, 'proxy', cfg.proxyPort);
+  if (cfg.apiMode === 'proxy' && !change) { d.out('Already in API-key mode through the proxy: nothing to change.'); return 0; }
+  if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
+  change?.apply();
+  writeConfig({ ...cfg, apiMode: 'proxy' });
+  const live = (d.reload ?? realReload)();
+  d.out(`API-key mode (proxy): new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `agentic-router start` to run it;'} then restart running Claude Code sessions.`);
   return 0;
 }
 

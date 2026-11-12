@@ -7,8 +7,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { paths } from '@agentic-router/core';
-import { HINT_HEADERS_ENV, detectLogin, isRouterHelper, keyHelper, localTokenHelper, planApiSettings, proxyBaseUrl } from '../src/apimode.ts';
-import { allowUpstream, configureApi, keySet, preflightApi, proxyTokenFile, setMode, tokenRotate, type ApiDeps } from '../src/apicmds.ts';
+import { HINT_HEADERS_ENV, detectLogin, isRouterHelper, keyHelper, localTokenHelper, planApiSettings, planSubscriptionSettings, proxyBaseUrl } from '../src/apimode.ts';
+import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, proxyTokenFile, setMode, tokenRotate, type ApiDeps } from '../src/apicmds.ts';
 import { apiChecks, type ApiCheckInput } from '../src/doctor.ts';
 import { ensureLocalState, readConfig, writeConfig } from '../src/setup.ts';
 
@@ -217,4 +217,56 @@ test('the real proxy health route is read with the local token', async () => {
     assert.deepEqual(await proxyHealth(port, 'tok-1234567890'), { ok: true, upstream: 'https://api.anthropic.com', inflight: 2 });
     assert.equal(await proxyHealth(port, 'wrong'), null);
   } finally { server.close(); }
+});
+
+test('spec 2.1: subscription settings take out only what API-key mode put in', () => {
+  const file = path.join(tmp, 'settings.json');
+  fs.writeFileSync(file, JSON.stringify({ model: 'opus', apiKeyHelper: 'corp-vault get' }));
+  planApiSettings(file, 'proxy', 47811, PKG)!.apply();                     // the backup keeps "corp-vault get"
+  fs.writeFileSync(file, JSON.stringify({ ...settingsOf(file), env: { ...settingsOf(file).env, FOO: 'bar' } }));
+  const plan = planSubscriptionSettings(file)!;
+  assert.match(plan.summary, /apiKeyHelper: remove the router's helper; env\.ANTHROPIC_BASE_URL: remove .*; env\.CLAUDE_CODE_GATEWAY_HINT_HEADERS: remove; your earlier apiKeyHelper "corp-vault get" is in settings\.json\.agentic-router\.bak; it is not put back/);
+  plan.apply();
+  assert.deepEqual(settingsOf(file), { model: 'opus', env: { FOO: 'bar' } });
+  assert.equal(planSubscriptionSettings(file), null, 'nothing of ours left');
+  // a gateway and a helper of the user's own stay
+  fs.writeFileSync(file, JSON.stringify({ apiKeyHelper: 'corp-vault get', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } }));
+  assert.equal(planSubscriptionSettings(file), null);
+});
+
+test('spec 2.1: mode subscription and mode api switch back and forth (confirmed), keep the key, and reload the supervisor', async () => {
+  let reloads = 0;
+  const deps = (o: Parameters<typeof fake>[0] = {}) => { const f = fake(o); return { ...f, deps: { ...f.deps, reload: () => { reloads++; return true; } } }; };
+  assert.equal(await modeSubscription({}, deps().deps), 2, 'not set up');
+  assert.equal(await modeApi({}, deps().deps), 2, 'API-key mode never set up');
+  const { config } = await ensureLocalState();
+  const c = await configureApi(config, fake().deps);
+  const f = deps();
+  planApiSettings(f.deps.settingsFile, 'proxy', c.proxyPort!)!.apply();
+  // to the subscription
+  assert.equal(await modeSubscription({}, deps({ answer: false }).deps), 1);
+  assert.equal(readConfig()!.apiMode, 'proxy');
+  assert.equal(await modeSubscription({}, f.deps), 0);
+  assert.equal(readConfig()!.apiMode, undefined);
+  assert.deepEqual([readConfig()!.proxyPort, fs.existsSync(proxyTokenFile())], [c.proxyPort, true], 'port and local token kept for mode api');
+  const s = settingsOf(f.deps.settingsFile);
+  assert.deepEqual([s.apiKeyHelper, s.env?.ANTHROPIC_BASE_URL, s.env?.[HINT_HEADERS_ENV]], [undefined, undefined, undefined]);
+  assert.match(f.lines.at(-1)!, /^Subscription mode: .*The supervisor stops the proxy now\. .*agentic-router mode api/);
+  assert.equal(reloads, 1);
+  assert.equal(await modeSubscription({}, deps().deps), 0);
+  assert.match(f.lines.at(-1)!, /Subscription mode/);
+  // back to API-key mode: the key must be there and no saved login next to it
+  assert.equal(await modeApi({}, deps({ status: 'not_found' }).deps), 2);
+  const saved = deps({ login: '{"loggedIn":true,"authMethod":"claude.ai"}' });
+  assert.equal(await modeApi({}, saved.deps), 2);
+  assert.match(saved.lines[0]!, /then run `agentic-router mode api` again/);
+  const back = deps();
+  assert.equal(await modeApi({ yes: true }, back.deps), 0);
+  assert.equal(readConfig()!.apiMode, 'proxy');
+  assert.deepEqual([settingsOf(back.deps.settingsFile).env.ANTHROPIC_BASE_URL, isRouterHelper(settingsOf(back.deps.settingsFile).apiKeyHelper)], [proxyBaseUrl(c.proxyPort!), true]);
+  assert.match(back.lines.at(-1)!, /The supervisor starts it now/);
+  assert.equal(reloads, 2);
+  const again = deps();
+  assert.equal(await modeApi({}, again.deps), 0);
+  assert.match(again.lines.at(-1)!, /^Already in API-key mode/);
 });

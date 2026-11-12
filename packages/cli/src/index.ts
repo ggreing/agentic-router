@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agentic-router <init|start|stop|status|doctor|dashboard|routing|supervise|mode|token|key|proxy>
+// agentic-router <init|start|stop|status|doctor|dashboard|routing|data|supervise|mode|token|key|proxy>
 import fs from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
@@ -9,8 +9,9 @@ import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planProjec
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
 import { planApiSettings } from './apimode.ts';
-import { allowUpstream, configureApi, keySet, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
+import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
 import { dashboardCommand } from './dashboard.ts';
+import { dataExport, dataPurge, realDataDeps } from './data.ts';
 import { autoReleaseSummary, configuredAutoRelease, routingReset } from './routing.ts';
 import { runSupervisor } from './supervise.ts';
 
@@ -36,6 +37,13 @@ async function confirm(changes: PlannedChange[], yes: boolean): Promise<boolean>
   if (!process.stdin.isTTY) { console.log('Not a terminal: re-run with --yes to apply.'); return false; }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const a = (await rl.question('Apply? [y/N] ')).trim().toLowerCase();
+  rl.close();
+  return a === 'y' || a === 'yes';
+}
+
+async function ask(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const a = (await rl.question(question)).trim().toLowerCase();
   rl.close();
   return a === 'y' || a === 'yes';
 }
@@ -100,7 +108,9 @@ async function init(f: Record<string, string | boolean>) {
 async function apiCommand(cmd: string, args: string[], f: Record<string, string | boolean>): Promise<number> {
   const d = apiDeps(f);
   if (cmd === 'mode') {
-    if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: agentic-router mode <direct|proxy> [--yes]'); return 2; }
+    if (args[0] === 'subscription') return modeSubscription(f, d);
+    if (args[0] === 'api') return modeApi(f, d);
+    if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: agentic-router mode <subscription|api|direct|proxy> [--yes]'); return 2; }
     return setMode(args[0], f, d);
   }
   if (cmd === 'token' && args[0] === 'rotate') return tokenRotate(d);
@@ -136,6 +146,10 @@ if (isMain) {
   } else if (cmd === 'supervise') await runSupervisor();
   else if (cmd === 'dashboard') process.exitCode = await dashboardCommand(f);
   else if (cmd === 'routing' && positional[0] === 'reset') process.exitCode = await routingResetCommand();
+  else if (cmd === 'data' && (positional[0] === 'export' || positional[0] === 'purge')) {
+    const d = realDataDeps({ confirm: ask, isTTY: process.stdin.isTTY === true });
+    process.exitCode = positional[0] === 'export' ? await dataExport(f, d) : await dataPurge(f, d);
+  }
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|mode direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
+  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|mode subscription|api|direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
 }

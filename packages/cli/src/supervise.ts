@@ -23,6 +23,8 @@ export const superviseFiles = (home = routerHome()) => ({
   pid: path.join(home, 'supervise.pid'),
   status: path.join(home, 'supervise.json'),
   stop: path.join(home, 'supervise.stop'),
+  /** `mode subscription|api|direct|proxy` drops this: the supervisor re-reads the config and starts or stops the proxy. */
+  reload: path.join(home, 'supervise.reload'),
   log: path.join(home, 'logs', 'supervise.log'),
 });
 
@@ -113,7 +115,8 @@ export class Supervisor {
       if (this.#children.get(spec.name) === child) this.#children.delete(spec.name);
       st.lastExit = { code, signal, at: new Date().toISOString() };
       st.pid = null;
-      if (this.#stopping) { st.state = 'stopped'; this.#write(); return; }
+      // stopping, or taken out by reconcile: no restart
+      if (this.#stopping || !this.#o.specs.includes(spec)) { st.state = 'stopped'; this.#write(); return; }
       this.#failed(spec, started, code, signal);
     });
   }
@@ -130,18 +133,47 @@ export class Supervisor {
     this.#timers.set(spec.name, t);
   }
 
+  async #stopOne(spec: ChildSpec): Promise<void> {
+    const t = this.#timers.get(spec.name);
+    if (t) { clearTimeout(t); this.#timers.delete(spec.name); }
+    const child = this.#children.get(spec.name);
+    if (child && !exited(child)) {
+      try { await spec.stop(child); } catch { /* fall through to the kill */ }
+      if (!await waitExit(child, spec.stopTimeoutMs)) { try { child.kill(); } catch { /* gone */ } await waitExit(child, 2000); }
+    }
+    if (spec.pidFile) fs.rmSync(spec.pidFile, { force: true });
+  }
+
+  /**
+   * Brings the children in line with the config after a mode switch, by name: a child no longer wanted is
+   * stopped (gracefully, as in stop) and dropped; a new one is started. Children in both are left running.
+   */
+  async reconcile(next: ChildSpec[]): Promise<{ stopped: string[]; started: string[] }> {
+    if (this.#stopping) return { stopped: [], started: [] };
+    const wanted = new Set(next.map(s => s.name));
+    const have = new Map(this.#o.specs.map(s => [s.name, s]));
+    const gone = [...this.#o.specs].reverse().filter(s => !wanted.has(s.name));
+    const added = next.filter(s => !have.has(s.name));
+    this.#o.specs = [...this.#o.specs.filter(s => wanted.has(s.name)), ...added];
+    for (const spec of gone) {
+      await this.#stopOne(spec);
+      delete this.#states[spec.name];
+      this.#o.log?.('child no longer wanted: stopped', { child: spec.name });
+    }
+    for (const spec of added) {
+      this.#states[spec.name] = { pid: null, state: 'stopped', restarts: 0, failures: 0 };
+      this.#spawn(spec);
+    }
+    this.#write();
+    return { stopped: gone.map(s => s.name), started: added.map(s => s.name) };
+  }
+
   /** Stops every child in order (the proxy first, so it can flush to the daemon), then resolves. */
   async stop(): Promise<void> {
     this.#stopping = true;
     for (const t of this.#timers.values()) clearTimeout(t);
     this.#timers.clear();
-    for (const spec of [...this.#o.specs].reverse()) {
-      const child = this.#children.get(spec.name);
-      if (!child || exited(child)) continue;
-      try { await spec.stop(child); } catch { /* fall through to the kill */ }
-      if (!await waitExit(child, spec.stopTimeoutMs)) { try { child.kill(); } catch { /* gone */ } await waitExit(child, 2000); }
-      if (spec.pidFile) fs.rmSync(spec.pidFile, { force: true });
-    }
+    for (const spec of [...this.#o.specs].reverse()) await this.#stopOne(spec);
     // children waiting for a restart are stopped too
     for (const st of Object.values(this.#states)) { st.state = 'stopped'; st.pid = null; }
     this.#write();
@@ -177,6 +209,7 @@ export async function runSupervisor(home = routerHome()): Promise<void> {
     try { fs.appendFileSync(files.log, JSON.stringify({ t: new Date().toISOString(), msg, ...data }) + '\n', { mode: 0o600 }); } catch { /* ignore */ }
   };
   fs.rmSync(files.stop, { force: true });
+  fs.rmSync(files.reload, { force: true });
   fs.writeFileSync(files.pid, String(process.pid));
   const sup = new Supervisor({ specs: childSpecs(home), statusFile: files.status, log });
   sup.start();
@@ -190,7 +223,15 @@ export async function runSupervisor(home = routerHome()): Promise<void> {
       log('supervisor stopping', { why });
       void sup.stop().then(resolve);
     };
-    const poll = setInterval(() => { if (fs.existsSync(files.stop)) finish('stop requested'); }, 500);
+    let reloading = false;
+    const poll = setInterval(() => {
+      if (fs.existsSync(files.stop)) return finish('stop requested');
+      if (reloading || !fs.existsSync(files.reload)) return;
+      reloading = true;
+      fs.rmSync(files.reload, { force: true });
+      void sup.reconcile(childSpecs(home)).then(r => { log('mode change applied', r); }, e => { log('mode change failed', { error: String(e) }); })
+        .finally(() => { reloading = false; });
+    }, 500);
     process.on('SIGINT', () => finish('SIGINT'));
     process.on('SIGTERM', () => finish('SIGTERM'));
   });

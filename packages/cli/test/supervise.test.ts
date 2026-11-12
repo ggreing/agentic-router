@@ -72,6 +72,28 @@ async function ownPort(): Promise<void> {
   writeConfig({ ...readConfig()!, daemonPort: port });
 }
 
+test('a mode switch: reconcile stops the child no longer wanted (no restart) and starts a new one, leaving the rest running', async () => {
+  const listen = "process.on('message', m => { if (m && m.type === 'stop') process.exit(0); }); setInterval(() => {}, 1000);";
+  const daemon = nodeChild('daemon', listen), proxy = nodeChild('proxy', listen);
+  const sup = new Supervisor({ specs: [daemon, proxy], statusFile: path.join(tmp, 's.json'), backoffMs: [20] });
+  sup.start();
+  try {
+    await sleep(400);
+    const daemonPid = sup.states().daemon!.pid;
+    const proxyPid = sup.states().proxy!.pid!;
+    assert.deepEqual(await sup.reconcile([daemon]), { stopped: ['proxy'], started: [] });
+    assert.deepEqual(Object.keys(sup.states()), ['daemon']);
+    assert.throws(() => process.kill(proxyPid, 0), 'the proxy is gone');
+    await sleep(200);
+    assert.deepEqual(Object.keys(sup.states()), ['daemon'], 'and not restarted');
+    assert.equal(sup.states().daemon!.pid, daemonPid, 'the daemon kept running');
+    assert.deepEqual(await sup.reconcile([daemon, nodeChild('proxy', listen)]), { stopped: [], started: ['proxy'] });
+    await sleep(300);
+    assert.equal(sup.states().proxy!.state, 'running');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 's.json'), 'utf8')).children.proxy.state, 'running');
+  } finally { await sup.stop(); }
+});
+
 test('start and stop run the real daemon under the supervisor', async () => {
   const { ensureLocalState, readConfig } = await import('../src/setup.ts');
   const { start, status, stop, runningSupervisor } = await import('../src/daemonctl.ts');

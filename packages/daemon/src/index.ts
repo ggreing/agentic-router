@@ -3,6 +3,7 @@
 // port and close(). main.ts is the process entry point.
 import fs from 'node:fs';
 import type http from 'node:http';
+import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Level, TeamPreset } from '@agentic-router/core';
 import { loadClaudeCodeAdapter, type ClientAdapter } from './adapter.ts';
@@ -83,6 +84,8 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
     const srv = createHttpServer({
       router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, ...(opts.now ? { now: opts.now } : {}),
+      // data export (spec 4.4): stored prompts only with recordPrompts; the proxy token is masked like the daemon's
+      data: { recordPrompts: config.recordPrompts === true, secrets: () => { try { return [fs.readFileSync(path.join(home.root, 'proxy-token'), 'utf8').trim()]; } catch { return []; } } },
       onShutdown: () => void close().catch(() => {}),
     });
     server = srv;
@@ -125,3 +128,4 @@ export type { ClientAdapter } from './adapter.ts';
 export { runVerify, checkScope, type VerifyCommand, type VerifyPlan } from './verify.ts';
 export { SessionQueue } from './queue.ts';
 export { API, MAX_BODY_BYTES } from './server.ts';
+export { exportLines, isoTime, purge, REQUEST_TABLES, type ExportOptions, type PurgeOptions, type PurgeResult } from './data.ts';

@@ -86,6 +86,12 @@ function readPid(file = pidFile()): number | undefined {
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
+/** Whether the daemon.pid process is alive and ours, answering or not. */
+export function daemonProcessAlive(): boolean {
+  const pid = readPid();
+  return pid !== undefined && isAlive(pid) && isOurDaemon(pid);
+}
+
 /** This CLI's entry (src in dev, dist when built): what `start` runs as `<entry> supervise`. */
 export function cliEntry(): string {
   const self = fileURLToPath(import.meta.url);

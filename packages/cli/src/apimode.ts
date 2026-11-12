@@ -73,6 +73,38 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
   };
 }
 
+/**
+ * `mode subscription` (spec 2.1): takes out of Claude Code's settings only what API-key mode put in: our
+ * ANTHROPIC_BASE_URL, the hint-headers variable and the router's apiKeyHelper. A helper or gateway of the
+ * user's own is left alone (a helper API-key mode replaced is in the settings backup, not restored: it would
+ * keep Claude Code off the subscription). Null when there is nothing to take out.
+ */
+export function planSubscriptionSettings(settingsFile: string): PlannedChange | null {
+  const settings = readJsonFile<Record<string, any>>(settingsFile, {});
+  const env: Record<string, unknown> = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
+  const notes: string[] = [];
+  const ours = isRouterHelper(settings.apiKeyHelper);
+  if (ours) notes.push('apiKeyHelper: remove the router\'s helper');
+  if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove (back to the claude.ai login)'); }
+  if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
+  if (!notes.length) return null;
+  const backup = settingsFile + '.agentic-router.bak';
+  if (ours && fs.existsSync(backup)) {
+    const before = readJsonFile<Record<string, any>>(backup, {}).apiKeyHelper;
+    if (before !== undefined && !isRouterHelper(before)) notes.push(`your earlier apiKeyHelper "${String(before)}" is in ${path.basename(backup)}; it is not put back`);
+  }
+  return {
+    file: settingsFile,
+    summary: `subscription mode: ${notes.join('; ')}`,
+    apply() {
+      const next: Record<string, any> = { ...settings };
+      if (ours) delete next.apiKeyHelper;
+      if (Object.keys(env).length) next.env = env; else delete next.env;
+      writeJsonAtomic(settingsFile, next);
+    },
+  };
+}
+
 // ------------------------------------------------------------------ saved Claude login
 
 export type LoginState = 'saved_login' | 'none' | 'unknown';

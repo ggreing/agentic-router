@@ -12,6 +12,8 @@
 // - POST /router/v1/limits takes the status line's rate_limits for a session (spec 3.8): { stored }.
 // - POST /router/v1/routing/reset (`agentic-router routing reset`, decision 138): every released level is
 //   delegated again; answers { cleared }. No body.
+// - Data management (spec 3.7, 4.4; data.ts): GET /router/v1/data/export?since=&until= answers JSON lines
+//   (application/x-ndjson); POST /router/v1/data/purge { before | all, dryRun? } answers the counts.
 // - /dashboard/* and /router/v1/metrics/* belong to the dashboard module (decision 132), which runs first and
 //   has its own rules (same-origin browser pages with a session cookie). Every other route still refuses any
 //   Origin header.
@@ -20,6 +22,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import type { ClientAdapter } from './adapter.ts';
 import { createDashboard, type Dashboard } from './dashboard.ts';
+import { exportLines, isoTime, purge } from './data.ts';
 import type { Ledger } from './ledger.ts';
 import { recordLimits } from './limits.ts';
 import { errorText, type Logger } from './log.ts';
@@ -37,6 +40,8 @@ export const API = {
   budget: '/router/v1/budget',
   limits: '/router/v1/limits',
   routingReset: '/router/v1/routing/reset',
+  dataExport: '/router/v1/data/export',
+  dataPurge: '/router/v1/data/purge',
 } as const;
 
 /** The built dashboard (packages/dashboard/dist) next to this package in the workspace. */
@@ -58,6 +63,8 @@ export interface ServerDeps {
   /** The built dashboard; default DEFAULT_DASHBOARD_DIST. */
   dashboardDir?: string;
   now?: () => Date;
+  /** Data export: whether stored prompts go out (config.recordPrompts) and the token values to mask. */
+  data?: { recordPrompts: boolean; secrets: () => string[] };
 }
 
 class HttpError extends Error {
@@ -145,6 +152,28 @@ export function createHttpServer(d: ServerDeps): http.Server {
       return send(res, 200, d.router.status(sessionId || undefined));
     }
 
+    // ------------------------------------------------------------------ data management (spec 3.7, 4.4)
+    if (route === API.dataExport) {
+      if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
+      if (!d.ledger) throw new HttpError(404, 'not found');
+      const range = (k: string) => {
+        const raw = url.searchParams.get(k);
+        if (raw === null || raw === '') return undefined;
+        const v = isoTime(raw);
+        if (!v) throw new HttpError(400, `${k} is not a date`);
+        return v;
+      };
+      const since = range('since'), until = range('until');
+      // built at once (no read statement kept open across writes), then sent
+      const lines = [...exportLines(d.ledger.db, {
+        ...(since ? { since } : {}), ...(until ? { until } : {}),
+        includePrompts: d.data?.recordPrompts === true, secrets: [d.token, ...(d.data?.secrets() ?? [])], now,
+      })];
+      const text = `${lines.join('\n')}\n`;
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'content-length': Buffer.byteLength(text), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return void res.end(text);
+    }
+
     // ------------------------------------------------------------------ API-key mode proxy (decision 130)
     if (route === API.budget) {
       if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
@@ -159,6 +188,17 @@ export function createHttpServer(d: ServerDeps): http.Server {
     if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
     const body = await readJson(req, maxBody);
     if (route === API.tools) return send(res, 200, await d.router.tool(body));
+    if (route === API.dataPurge) {
+      if (!d.ledger) throw new HttpError(404, 'not found');
+      const all = body.all === true;
+      const before = body.before === undefined ? undefined : isoTime(body.before);
+      if (body.before !== undefined && !before) throw new HttpError(400, 'before is not a date');
+      if (all === !!before) throw new HttpError(400, 'give either before or all');
+      await d.router.drain();                         // a request being closed writes its record first
+      const result = purge(d.ledger.db, { ...(before ? { before } : {}), all, dryRun: body.dryRun === true });
+      if (!result.dryRun) d.logger.info('data purged', { before: before ?? 'all', requests: result.requests, keptOpen: result.keptOpen });
+      return send(res, 200, result);
+    }
     if (route === API.limits) {
       if (!d.ledger) throw new HttpError(404, 'not found');
       const sessionId = typeof body.sessionId === 'string' && /^[\x21-\x7e]{1,128}$/.test(body.sessionId) ? body.sessionId : '';
