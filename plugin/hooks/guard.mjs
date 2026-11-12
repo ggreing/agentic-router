@@ -161,6 +161,65 @@ function canonicalForms(p) {
   return lex === real ? [lex] : [lex, real];
 }
 
+// ---------------------------------------------------------------- Git Bash (MSYS) paths on Windows
+//
+// On Windows the Bash tool is Git Bash, where a path that starts with "/" is not a Windows path:
+//   /c/Users/x   -> C:\Users\x            (any single letter is a drive)
+//   /tmp/x       -> %TEMP%\x
+//   /usr/x, /etc/x, /home/x, /x  -> <Git install directory>\...
+// and the two kinds of program a command can start read the same text differently:
+//   - bash itself and its own tools (cd, cat, ls, …) collapse ".." first, then map:  /tmp/../x -> <Git>\x
+//   - a native program (git, node, rg, npm, …) gets the argument mapped by its prefix, ".." left in place:
+//     /tmp/../x -> %TEMP%\..\x
+// A check that resolves such an argument the Windows way (/tmp/x -> C:\tmp\x) looks at a file the command
+// never opens. So for Bash every reading is produced and all of them are checked.
+// The file tools (Read, Edit, Glob, …) are not Git Bash: they take the text as a Windows path. There such a
+// path is refused with the Windows spelling in the message, never mapped and allowed.
+let gitRootCache;
+/** The Git for Windows install directory ("/" in Git Bash), or null when it cannot be found. */
+function msysRoot() {
+  if (gitRootCache !== undefined) return gitRootCache;
+  gitRootCache = null;
+  try {
+    const exe = process.env.EXEPATH;                       // set inside Git Bash: <Git>\bin or <Git>
+    if (exe && fs.existsSync(path.join(exe, '..', 'usr', 'bin'))) return (gitRootCache = path.resolve(exe, '..'));
+    if (exe && fs.existsSync(path.join(exe, 'usr', 'bin'))) return (gitRootCache = path.resolve(exe));
+    const r = spawnSync('git', ['--exec-path'], { encoding: 'utf8', timeout: 2000 });   // <Git>/mingw64/libexec/git-core
+    const p = r.status === 0 ? r.stdout.trim() : '';
+    const m = /^(.*?)[\\/](?:mingw64|mingw32|clangarm64|usr)[\\/]/i.exec(p);
+    if (m && fs.existsSync(path.join(m[1], 'usr', 'bin'))) gitRootCache = path.resolve(m[1]);
+  } catch { /* not found */ }
+  return gitRootCache;
+}
+/** True for a Git Bash absolute path that is not already a drive form the file tools understand. */
+function isMsysOnlyPath(p, platform = process.platform) {
+  return platform === 'win32' && /^\/(?![\\/])/.test(p) && !/^\/[A-Za-z](?:\/|$)/.test(p) && !/^\/(?:proc\/)?cygdrive\//.test(p);
+}
+/** One Git Bash absolute path (already a POSIX string) to the Windows path its mount gives; null for /dev and /proc. */
+function msysMount(posixPath, env) {
+  if (/^\/(?:dev|proc)(?:\/|$)/.test(posixPath)) return null;
+  const drive = /^\/([A-Za-z])(?:\/(.*))?$/.exec(posixPath);
+  if (drive) return path.win32.normalize(`${drive[1].toUpperCase()}:\\${drive[2] ?? ''}`);
+  const tmp = /^\/tmp(?:\/(.*))?$/.exec(posixPath);
+  if (tmp) return path.win32.join(env.tmp, tmp[1] ?? '');
+  return env.root ? path.win32.join(env.root, posixPath) : null;
+}
+/**
+ * The Windows paths a Git Bash absolute path can mean: as bash and its tools read it, and as a native
+ * program started from bash gets it. `env`: { tmp, root } (tests pass fixed values).
+ */
+export function msysPathForms(p, env = {}) {
+  const e = { tmp: env.tmp ?? os.tmpdir(), root: env.root !== undefined ? env.root : msysRoot() };
+  const out = [];
+  const add = w => { if (w && !out.includes(w)) out.push(w); };
+  add(msysMount(path.posix.normalize(p), e));              // bash, cat, ls: ".." collapsed first
+  // native programs: the longest mount prefix is replaced, the rest (".." included) is appended
+  const m = /^\/(tmp|[A-Za-z])(?=\/|$)(.*)$/.exec(p);
+  if (m) add(path.win32.resolve((m[1].length === 1 ? `${m[1].toUpperCase()}:\\` : e.tmp) + m[2]));
+  else if (e.root && !/^\/(?:dev|proc)(?:\/|$)/.test(p)) add(path.win32.resolve(e.root + p));
+  return out;
+}
+
 // ---------------------------------------------------------------- glob matching
 export function globToRegExp(glob, nocase = true) {
   let re = '';
@@ -437,13 +496,24 @@ function isCredentialPath(abs, userHome) {
   if (/\/proc\/[^/\s]+\/(?:task\/[^/\s]+\/)?environ/.test(abs)) return true;
   return credentialHit(abs, userHome) || overlapsCredential(abs, userHome);
 }
-/** Resolves a shell path argument against the virtual cwd the way bash would (drive-normalised posix). */
-function resolvePathArg(raw, vcwd, userHome) {
+/**
+ * Every file a shell path argument can name, resolved against the virtual cwd (drive-normalised posix).
+ * Usually one. On Windows a Git Bash absolute path has two readings (see msysPathForms); the first entry is
+ * bash's own, which is what `cd` follows.
+ */
+function resolvePathArgForms(raw, vcwd, userHome, msys) {
   let e = expandTilde(stripOuterQuotes(raw), userHome);
   // Windows opens ".env." and ".env " as ".env": drop trailing dots and spaces of each segment before matching
   if (process.platform === 'win32') e = e.split(/([\\/]+)/).map(seg => (/^[\\/]+$/.test(seg) || seg === '.' || seg === '..' ? seg : seg.replace(/[. ]+$/, ''))).join('');
+  if (process.platform === 'win32' && /^\/(?![\\/])/.test(e) && !/^\/(?:proc\/)?cygdrive\//.test(e)) {
+    const forms = msysPathForms(toPosix(e), msys).map(w => canonicalForms(w)[0]);
+    if (forms.length) return [...new Set(forms)];
+  }
   const abs = path.isAbsolute(e) || /^[A-Za-z]:/.test(e) || /^[\\/]/.test(e) ? e : path.resolve(vcwd, e);
-  return canonicalForms(abs)[0];
+  return [canonicalForms(abs)[0]];
+}
+function resolvePathArg(raw, vcwd, userHome, msys) {
+  return resolvePathArgForms(raw, vcwd, userHome, msys)[0];
 }
 /** True if a Bash command reads/writes any path argument that resolves OUTSIDE the repo root (decision 96 detail). */
 export function bashTouchesOutsideRepo(command, { userHome = os.homedir(), cwd = process.cwd(), root = cwd } = {}) {
@@ -458,7 +528,7 @@ export function bashTouchesOutsideRepo(command, { userHome = os.homedir(), cwd =
     for (let i = 1; i < words.length; i++) {
       const raw = words[i];
       if (!pathLikeArg(raw) || unsafePathArg(raw)) continue;   // unsafe args are denied elsewhere
-      if (!isUnder(resolvePathArg(raw, vcwd, userHome), root)) return true;
+      if (resolvePathArgForms(raw, vcwd, userHome).some(abs => !isUnder(abs, root))) return true;
     }
   }
   return false;
@@ -545,7 +615,8 @@ function deniedOption(tok, denied) {
 /**
  * Returns a deny reason for a router subagent's Bash command, or null when nothing recognised as bad was
  * found (which is not a statement that the command is safe).
- * opts: { userHome, routerHome, bashAllow, cwd, root, denyExec } (bashAllow = the accepted project policy's extension).
+ * opts: { userHome, routerHome, bashAllow, cwd, root, denyExec, msys } (bashAllow = the accepted project policy's
+ * extension; msys = { tmp, root } overrides where Git Bash's /tmp and / point, for tests).
  */
 export function classifyBash(command, opts = {}) {
   const userHome = opts.userHome ?? os.homedir();
@@ -579,11 +650,12 @@ export function classifyBash(command, opts = {}) {
           if (w && !/^[a-z][a-z0-9+.-]*:\/\//i.test(cand)) return `this command has a path argument with ${w}, which is not allowed.`;
         }
         if (/\\/.test(cand) && (/^~/.test(cand) || cand.includes('/'))) return 'this command has a path argument with a backslash escape in a POSIX-style path, which cannot be checked safely; it is not allowed.';
-        const abs = resolvePathArg(cand, vcwd, userHome);
-        if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
-        if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
-        if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
-          return 'this command touches the router proxy binaries, which is not allowed.';
+        for (const abs of resolvePathArgForms(cand, vcwd, userHome, opts.msys)) {
+          if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
+          if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
+          if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
+            return 'this command touches the router proxy binaries, which is not allowed.';
+        }
       }
     }
     return null;
@@ -605,7 +677,7 @@ export function classifyBash(command, opts = {}) {
       if (t === '-' || /[$`*?[{]/.test(t) || /^~[^/\\]/.test(t) || /['"]/.test(t)) return 'this command has a cd target that cannot be checked safely; it is not allowed.';
       const w = windowsPathProblem(t);
       if (w) return `this command has a cd target with ${w}, which is not allowed.`;
-      vcwd = resolvePathArg(t, vcwd, userHome);
+      vcwd = resolvePathArg(t, vcwd, userHome, opts.msys);
       if (credentialHit(vcwd, userHome) || credentialDirs(userHome).some(d => vcwd.toLowerCase() === d || vcwd.toLowerCase().startsWith(d + '/')))
         return 'this command changes into a credential directory, which is not allowed.';
       if (isUnder(vcwd, stateHome)) return 'this command changes into the router state folder (~/.agentic-router), which is not allowed.';
@@ -654,7 +726,7 @@ export function classifyBash(command, opts = {}) {
     }
     // a recursive grep opens every file below its start, dotfiles included
     if (cmd0 === 'grep' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return /^--(?:rec|dereference-rec|directories=recurse)/.test(t) || (/^-[A-Za-z]+$/.test(t) && /[rR]/.test(t)); })) {
-      const dirs = words.slice(2).map(w => stripOuterQuotes(w)).filter(w => !w.startsWith('-') && !GLOB_CHARS.test(w)).map(w => resolvePathArg(w, vcwd, userHome))
+      const dirs = words.slice(2).map(w => stripOuterQuotes(w)).filter(w => !w.startsWith('-') && !GLOB_CHARS.test(w)).map(w => resolvePathArg(w, vcwd, userHome, opts.msys))
         .filter(p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
       if ((dirs.length ? dirs : [vcwd]).some(dirHoldsCredentialFile))
         return 'this recursive grep would read a credential file (.env, .npmrc, …) under its start directory; use rg or the Grep tool, which skip hidden files, or name the files.';
@@ -944,6 +1016,17 @@ function relForms(root, p) {
   return out;
 }
 
+/**
+ * A file tool was given a Git Bash path (/tmp/..., /usr/...). The tool would read it as a Windows path and
+ * open another file than the one meant, so it is refused, with the path to use instead.
+ */
+function msysPathHint(p, msys) {
+  if (typeof p !== 'string' || !isMsysOnlyPath(p)) return null;
+  const meant = msysPathForms(toPosix(p), msys)[0];
+  return `[router] blocked: ${p} is a Git Bash path; Read, Edit, Write, Grep and Glob take Windows paths. `
+    + (meant ? `Use ${meant} (or a path relative to the working directory).` : 'Use the Windows path (or a path relative to the working directory).');
+}
+
 export function evaluate(hookInput, opts = {}) {
   // userHome (base for '~' in CREDENTIAL_PATHS) and the router state folder are DIFFERENT dirs;
   // conflating them was a real bug (~/.ssh became ~/.agentic-router/.ssh). opts.home is a test alias for both.
@@ -982,6 +1065,8 @@ export function evaluate(hookInput, opts = {}) {
   if (READ_TOOLS.has(tool)) {
     const targets = targetPaths(input);
     for (const p of targets) {
+      const m = msysPathHint(p, opts.msys);
+      if (m) return { deny: m };
       const w = windowsPathProblem(p);
       if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
     }
@@ -1034,6 +1119,8 @@ export function evaluate(hookInput, opts = {}) {
     // `.git` as a FILE (a worktree or submodule pointer) redirects git; the mirrored list only has `.git/**`
     const extraProtected = [...scope.extraProtected, '.git', '**/.git', ...(scope.unscoped ? UNSCOPED_PROTECTED_PATHS : [])];
     for (const p of targets) {
+      const m = msysPathHint(p, opts.msys);
+      if (m) return { deny: m };
       const w = windowsPathProblem(p);
       if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
       if (credentialHit(p, userHome))

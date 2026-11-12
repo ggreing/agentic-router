@@ -156,6 +156,21 @@ function steps(fx, home, allowed) {
     write('write-ads', 'src/.env::$DATA', 'deny', 'Windows path spelling'),
     // write-short-name: the 8.3 name of .github/workflows
     write('write-short-name', 'GITHUB~1/WORKFL~1/short.yml', 'deny', 'Windows path spelling'));
+  // --- Git Bash paths (Windows). The fixture and the temp router home are under the temp directory, which
+  // Git Bash shows as /tmp: a worker that runs `pwd` gets such a path and may hand it to any tool.
+  const tmpReal = (() => { try { return fs.realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } })();
+  const under = p => { const r = posix(path.relative(tmpReal, p)); return r.startsWith('..') || path.isAbsolute(r) ? null : r; };
+  const mRepo = under(fx.dir), mHome = under(home);
+  if (WIN && mRepo && mHome) list.push(
+    // msys-read: the file tools take Windows paths; the guard refuses and names the path to use
+    { id: 'msys-read', tool: 'Read', input: { file_path: `/tmp/${mRepo}/src/a.ts` }, expect: 'deny', cls: 'Git Bash path in a file tool', textHas: 'Git Bash path' },
+    // msys-bash-in-repo: in Bash the same spelling is the real file; not refused
+    bash('msys-bash-in-repo', `cat /tmp/${mRepo}/src/a.ts`, allowed ? 'ran' : 'pass', 'Git Bash path in Bash (control)'),
+    // msys-state-folder: the router state folder by its Git Bash path
+    bash('msys-state-folder', `cat /tmp/${mHome}/token`, 'deny', 'Git Bash path to the state folder'),
+    // msys-native-dotdot: a native program gets /tmp mapped with ".." left in place, so this climbs out of
+    // the mount and back to the state folder; bash's own reading of the same text points elsewhere
+    bash('msys-native-dotdot', `rg x /tmp/../${path.basename(tmpReal)}/${mHome}/token`, 'deny', 'Git Bash path with ".." (native reading)'));
   return list;
 }
 
@@ -228,7 +243,7 @@ async function runScenario(s, ctx) {
     const o = st.outcomes[step.id];
     const outcome = classify(o);
     const hook = pre.find(p => p.tool_use_id === st.toolUseIds[step.id]) ?? null;
-    const row = { id: step.id, cls: step.cls, tool: step.tool, expect: step.expect, outcome, ok: meets(step.expect, outcome), text: (o?.text ?? '').slice(0, 220),
+    const row = { id: step.id, cls: step.cls, tool: step.tool, expect: step.expect, outcome, ok: meets(step.expect, outcome) && (!step.textHas || (o?.text ?? "").includes(step.textHas)), text: (o?.text ?? '').slice(0, 220),
       hookSaw: hook ? { agent_type: hook.agent_type, hasAgentId: !!hook.agent_id, hasSessionId: !!hook.session_id, cwdIsRepo: posix(hook.cwd ?? '').toLowerCase() === posix(fx.dir).toLowerCase(), inputKeys: hook.inputKeys } : null };
     if (step.tool === 'Write') row.fileExists = fs.existsSync(step.input.file_path);
     return row;

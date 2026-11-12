@@ -379,3 +379,73 @@ test('the guard still does nothing for callers that are not router subagents', (
     }
   } finally { done(w); }
 });
+
+// Git Bash (MSYS) paths: the Bash tool on Windows reads "/tmp/x" as %TEMP%\x and "/x" as <Git>\x.
+test('msysPathForms: bash collapses ".." before it maps; a native program gets the mapped prefix with ".." left in', () => {
+  const env = { tmp: 'C:\\Users\\u\\AppData\\Local\\Temp', root: 'C:\\Program Files\\Git' };
+  const f = (p: string) => guard.msysPathForms(p, env);
+  assert.deepEqual(f('/tmp/work/a.txt'), ['C:\\Users\\u\\AppData\\Local\\Temp\\work\\a.txt']);
+  assert.deepEqual(f('/tmp'), ['C:\\Users\\u\\AppData\\Local\\Temp']);
+  assert.deepEqual(f('/c/Users/u/x'), ['C:\\Users\\u\\x']);
+  assert.deepEqual(f('/usr/share/x'), ['C:\\Program Files\\Git\\usr\\share\\x']);
+  assert.deepEqual(f('/home/u/.ssh/id_rsa'), ['C:\\Program Files\\Git\\home\\u\\.ssh\\id_rsa']);
+  // the two readings differ once ".." climbs out of the mount
+  assert.deepEqual(f('/tmp/../../../.ssh/id_rsa'), ['C:\\Program Files\\Git\\.ssh\\id_rsa', 'C:\\Users\\u\\.ssh\\id_rsa']);
+  assert.deepEqual(f('/tmp/../xy'), ['C:\\Program Files\\Git\\xy', 'C:\\Users\\u\\AppData\\Local\\xy']);
+  assert.deepEqual(f('/tmp/../x'), ['X:\\', 'C:\\Users\\u\\AppData\\Local\\x'], 'a single letter at the top is a drive');
+  assert.deepEqual(f('/c/../d/x'), ['D:\\x', 'C:\\d\\x']);
+  assert.deepEqual(f('/dev/null'), []);
+  assert.deepEqual(f('/proc/self/environ'), []);
+  // without a known Git directory only the mounts that do not need it are mapped
+  assert.deepEqual(guard.msysPathForms('/tmp/a', { tmp: 'C:\\T', root: null }), ['C:\\T\\a']);
+  assert.deepEqual(guard.msysPathForms('/usr/a', { tmp: 'C:\\T', root: null }), []);
+});
+
+test('Git Bash paths in Bash commands are checked in every reading (Windows)', { skip: !WIN }, () => {
+  const w = world();
+  try {
+    // /tmp is mounted at <base>/tmp for this test; the home (credentials, state folder) is its sibling
+    const tmp = path.join(w.base, 'tmp');
+    fs.mkdirSync(path.join(tmp, 'work'), { recursive: true });
+    const msys = { tmp, root: path.join(w.base, 'gitroot') };
+    const c = (command: string) => guard.classifyBash(command, { ...w.opts, cwd: w.repo, root: w.repo, msys });
+    // a native program reads /tmp/../home/.ssh/id_rsa as <tmp>\..\home\.ssh\id_rsa
+    assert.match(c('rg x /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
+    assert.match(c('git grep x /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
+    assert.match(c('cat /tmp/../home/.agentic-router/token') ?? '', /credential path|router state folder/);
+    assert.match(c('head --lines=3 /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
+    assert.match(c('cat /tmp/.env') ?? '', /credential path/);
+    assert.match(c('grep --file=/tmp/../home/.ssh/id_rsa x src/a.ts') ?? '', /credential path/);
+    // ordinary uses are not refused
+    for (const ok of ['cat /tmp/work/a.txt', 'ls /tmp', 'cd /tmp/work && ls', 'cat /usr/share/doc/x', 'ls /dev/null', 'cd /tmp/work && cat a.txt'])
+      assert.equal(c(ok), null, ok);
+    // cd follows bash's own reading, so what comes after it is resolved in the right directory
+    fs.writeFileSync(path.join(tmp, 'work', '.env'), 'X=1\n');
+    assert.match(c('cd /tmp/work && cat .env') ?? '', /credential path/);
+    // bash collapses /tmp/.. to / first, so this cd lands in <Git>/home, which is not the user's home
+    assert.equal(c('cd /tmp/../home && cat .ssh/id_rsa'), null);
+  } finally { done(w); }
+});
+
+test('a file tool given a Git Bash path is refused with the Windows path to use (Windows)', { skip: !WIN }, () => {
+  const w = world();
+  try {
+    // the fixture lives under the real temp directory, so /tmp/<name>/repo/... is its Git Bash spelling
+    const rel = path.relative(fs.realpathSync(os.tmpdir()), w.repo).replace(/\\/g, '/');
+    assert.ok(!rel.startsWith('..'), 'the fixture is under the temp directory');
+    const p = `/tmp/${rel}/src/a.ts`;
+    for (const [tool, input] of [['Read', { file_path: p }], ['Glob', { pattern: '**/*', path: `/tmp/${rel}` }], ['Grep', { pattern: 'x', path: `/tmp/${rel}/src` }],
+      ['Write', { file_path: p, content: 'x' }], ['Edit', { file_path: p, old_string: 'a', new_string: 'b' }]] as Array<[string, Record<string, unknown>]>) {
+      const d = call(w, tool, input)?.deny ?? '(not denied)';
+      assert.match(d, /is a Git Bash path; Read, Edit, Write, Grep and Glob take Windows paths/, tool);
+      assert.ok(d.toLowerCase().includes(path.join(w.repo, tool === 'Glob' ? '' : 'src').toLowerCase()), `${tool}: the message gives the Windows path (${d})`);
+    }
+    assert.match(call(w, 'Read', { file_path: '/usr/share/x' })!.deny!, /Git Bash path/);
+    assert.match(call(w, 'Read', { file_path: '/home/u/.ssh/id_rsa' })!.deny!, /Git Bash path/);
+    // drive forms and Windows paths are handled as before
+    assert.ok(call(w, 'Read', { file_path: path.join(w.repo, 'src', 'a.ts') })!.allow);
+    assert.ok(call(w, 'Read', { file_path: 'src/a.ts' }) === null || call(w, 'Read', { file_path: 'src/a.ts' })!.allow !== undefined);
+    const driveForm = '/' + w.repo[0]!.toLowerCase() + w.repo.slice(2).replace(/\\/g, '/') + '/src/a.ts';
+    assert.ok(call(w, 'Read', { file_path: driveForm })!.allow, 'the /c/... form is still understood');
+  } finally { done(w); }
+});
