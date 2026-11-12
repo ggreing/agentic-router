@@ -72,4 +72,4 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
-[0.1.0]: https://github.com/OWNER/agentic-router/releases/tag/v0.1.0
+[0.1.0]: https://github.com/ggreing/agentic-router/releases/tag/v0.1.0

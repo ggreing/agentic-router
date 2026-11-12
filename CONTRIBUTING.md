@@ -22,7 +22,7 @@ open an issue to discuss anything substantial before you start.
 - Before every PR, all of these must pass:
   - `npm test` — the unit tests (`node --test`).
   - `npx tsc -b` — the TypeScript build.
-  - `npm run -w @agentic-router/dashboard build` — the dashboard type-check and build.
+  - `npm run build:dashboard` — the dashboard type-check and build.
 - For a change to the subagent guard (`plugin/hooks/guard.mjs`, `plugin/hooks/hooks.json`, the scope
   records, or `plugin/agents/`), also run:
   - `node --test packages/adapter-claude-code/test/guard.test.ts packages/adapter-claude-code/test/guard-hardening.test.ts`
