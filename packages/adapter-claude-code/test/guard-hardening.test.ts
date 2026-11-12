@@ -260,6 +260,17 @@ test('A3: a project policy.json counts only after the user accepted that exact c
     assert.equal(bash(w, 'deno test'), null);
     assert.deepEqual(guard.acceptedVerifyEnvNames(path.join(w.repo, 'src'), w.state), ['DATABASE_URL'], 'from a subdirectory, keyed by the repository root');
     assert.equal(JSON.parse(fs.readFileSync(path.join(w.state, guard.POLICY_ACCEPT_FILE), 'utf8')).version, 1);
+    // acceptance is of the content that was shown: with the hash of what the user saw, a file that changed
+    // while the question was open is not recorded
+    guard.revokePolicy(w.repo, w.state);
+    const shown = guard.policyStatus(w.repo, w.state);
+    fs.writeFileSync(file, JSON.stringify({ bashAllow: ['curl', 'bash'], verifyEnv: ['AWS_SECRET_ACCESS_KEY'] }));
+    const swapped = guard.acceptPolicy(w.repo, w.state, new Date(), shown.hash);
+    assert.deepEqual([swapped.accepted, swapped.changed], [false, true]);
+    assert.equal(guard.readAcceptedPolicy(w.repo, w.state), null);
+    assert.ok(bash(w, 'curl http://127.0.0.1:9/x')?.deny);
+    fs.writeFileSync(file, JSON.stringify({ bashAllow: ['deno test', 'curl'], verifyEnv: ['DATABASE_URL'] }));
+    assert.equal(guard.acceptPolicy(w.repo, w.state, new Date(), shown.hash).accepted, true, 'the content that was shown');
     // changed after acceptance: ignored again until it is accepted again
     fs.writeFileSync(file, JSON.stringify({ bashAllow: ['deno test', 'curl', 'bash'] }));
     s = guard.policyStatus(w.repo, w.state);
@@ -352,6 +363,45 @@ test('B3: a Grep over a directory is denied when a credential file git does not 
     assert.deepEqual(guard.unignoredCredentialFiles(plain), ['.env']);
     // the router state folder is never searched
     assert.match(grep({ path: w.state })!.deny!, /router state folder|credential path/);
+  } finally { done(w); }
+});
+
+// Delta audit: the index forms of git's path syntax, brace expansions without end, very long command lines.
+test('git show :path and :N:path are read as paths, like rev:path', () => {
+  const w = world();
+  try {
+    for (const command of ['git show :.env', 'git show :0:.env', 'git show :2:.env', 'git show :./.env', 'git show HEAD:.env', 'git diff :.env', 'git show :src/../.env'])
+      assert.match(bash(w, command)?.deny ?? '(not denied)', /credential/, command);
+    for (const command of ['git show :src/a.ts', 'git show :0:src/a.ts', 'git show HEAD:src/a.ts', 'git log --format=%h:%s'])
+      assert.equal(bash(w, command), null, command);
+  } finally { done(w); }
+});
+
+test('a brace expansion beyond what is checked is refused, quickly', () => {
+  const w = world();
+  try {
+    const many = '{a,b}'.repeat(30);
+    const t0 = performance.now();
+    assert.match(bash(w, `echo ${many}`)!.deny!, /brace expansion with more alternatives than can be checked/);
+    assert.match(call(w, 'Glob', { pattern: many })!.deny!, /brace expansion/);
+    assert.match(call(w, 'Grep', { pattern: 'x', glob: many })!.deny!, /brace expansion/);
+    assert.match(bash(w, `cat {${Array.from({ length: 100 }, (_, i) => `f${i}`).join(',')}}`)!.deny!, /brace expansion/, 'one group with a hundred alternatives');
+    assert.ok(performance.now() - t0 < 2000, `took ${Math.round(performance.now() - t0)} ms`);
+    // ordinary expansions are still followed
+    assert.equal(bash(w, 'cat src/{a,b}.ts'), null);
+    assert.equal(bash(w, 'ls {src,docs}/{a,b,c}.{ts,js}'), null);
+    assert.match(bash(w, 'cat {src/a.ts,.env}')!.deny!, /credential/);
+    assert.match(bash(w, 'cat {a,b}/{c,d}/{.env,x}')!.deny!, /credential/);
+  } finally { done(w); }
+});
+
+test('a command line longer than is checked is refused', () => {
+  const w = world();
+  try {
+    const t0 = performance.now();
+    assert.match(bash(w, 'echo a; '.repeat(4000))!.deny!, /longer than 20000 characters/);
+    assert.ok(performance.now() - t0 < 1000);
+    assert.equal(bash(w, 'echo a; '.repeat(100)), null);
   } finally { done(w); }
 });
 

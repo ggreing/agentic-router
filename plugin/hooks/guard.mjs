@@ -366,11 +366,25 @@ function sensitiveSegment(text) {
   return null;
 }
 /** `{a,b}` alternatives of a word, one level, bounded. */
-function expandBraces(word) {
+function expandBraces(word, budget = { left: MAX_BRACE_WORK }) {
+  if (budget.left-- <= 0) return null;
   const m = /^(.*?)\{([^{}]*)\}(.*)$/.exec(word);
   if (!m) return [word];
-  return m[2].split(',').slice(0, 32).flatMap(alt => expandBraces(`${m[1]}${alt}${m[3]}`)).slice(0, 64);
+  const out = [];
+  for (const alt of m[2].split(',')) {
+    const more = expandBraces(`${m[1]}${alt}${m[3]}`, budget);
+    if (more === null || out.length + more.length > MAX_BRACE_WORDS) return null;
+    out.push(...more);
+  }
+  return out;
 }
+/**
+ * A word's brace alternatives, or null when there are more than the guard will go through (the caller then
+ * refuses). The bound is on the work, not only on the result: `{a,b}` twenty times over is a million words.
+ */
+const MAX_BRACE_WORDS = 64;
+const MAX_BRACE_WORK = 256;
+const TOO_MANY_BRACES = 'a brace expansion with more alternatives than can be checked';
 
 // ---------------------------------------------------------------- Bash checks (decisions 90, 142)
 //
@@ -380,6 +394,7 @@ function expandBraces(word) {
 // passes is NOT declared safe: the guard stays silent and Claude Code's own permission rules decide (decision
 // 142; the guard never answers "allow" for Bash). Commands on the allowlist that run code the worker may have
 // written (test runners, package scripts, installs) are exactly that: allowed to be asked about, never vouched for.
+const MAX_COMMAND_CHARS = 20_000;
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.']);
 /** The secret-looking part of a variable name; mirrors core/security.ts (a test asserts equality). */
 export const SECRET_VAR_NAME_PATTERN = 'ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN';
@@ -586,7 +601,8 @@ export function unignoredCredentialFiles(dir) {
 /** Whether a Grep `glob` narrows the search to named files (a bare "*" or "**\/*" does not, nor does an exclusion). */
 function narrowingGlob(g) {
   if (typeof g !== 'string' || g.trim() === '') return false;
-  return expandBraces(g.trim()).every(alt => !alt.startsWith('!') && alt.split('/').some(seg => seg !== '' && !/^\*+$/.test(seg)));
+  const alts = expandBraces(g.trim());
+  return alts !== null && alts.every(alt => !alt.startsWith('!') && alt.split('/').some(seg => seg !== '' && !/^\*+$/.test(seg)));
 }
 
 const NPM_NAME_RE = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.^~<>=*|-]+)?$/i;
@@ -625,13 +641,16 @@ export function classifyBash(command, opts = {}) {
   const baseCwd = opts.cwd ?? process.cwd();
   const allow = [...ROUTER_BASH_ALLOW, ...(Array.isArray(opts.bashAllow) ? opts.bashAllow : [])];
 
+  if (String(command).length > MAX_COMMAND_CHARS) return `${DENY_NOT_ALLOWED} (the command line is longer than ${MAX_COMMAND_CHARS} characters, which is more than is checked)`;
   const { commands, refuse } = lexBash(String(command));
   if (refuse) return `${DENY_NOT_ALLOWED} (it contains ${refuse})`;
   if (SECRET_VAR_RE.test(String(command))) return 'this command references a secret environment variable, which is not allowed.';
 
   /** One argument (or the value of --opt=value) looked at as a possible path, in the directory the command runs in. */
   const checkArg = (cmd0, raw, vcwd) => {
-    for (const word of expandBraces(stripOuterQuotes(raw))) {
+    const words = expandBraces(stripOuterQuotes(raw));
+    if (words === null) return `this command has ${TOO_MANY_BRACES}; it is not allowed.`;
+    for (const word of words) {
       if (word === '') continue;
       if (/\$/.test(word)) {
         if (pathLikeArg(word) || READER_COMMANDS.has(cmd0)) return 'this command has a file argument with a variable reference ($), which cannot be checked; it is not allowed.';
@@ -641,13 +660,15 @@ export function classifyBash(command, opts = {}) {
       if (/['"]/.test(inner) && pathLikeArg(inner.replace(/['"]/g, ''))) return 'this command has a path argument with a quote inside the word, which cannot be checked safely; it is not allowed.';
       if (/^~[^/\\]/.test(word)) return 'this command has a path argument with a ~user reference, which cannot be checked safely; it is not allowed.';
       // `git show HEAD:.env` and the like: the part after the colon is a path in the repository
-      const candidates = cmd0 === 'git' && /^[^:\\/]+:(?![\\/]{2})./.test(word) && !/^[A-Za-z]:[\\/]/.test(word) ? [word, word.slice(word.indexOf(':') + 1)] : [word];
+      const staged = cmd0 === 'git' ? /^:(?:[0-3]:)?(?![\\/:])(.+)$/.exec(word) : null;   // ":.env", ":0:.env" (not ":/text", a commit search)
+      const candidates = staged ? [word, staged[1]]
+        : cmd0 === 'git' && /^[^:\\/]+:(?![\\/]{2})./.test(word) && !/^[A-Za-z]:[\\/]/.test(word) ? [word, word.slice(word.indexOf(':') + 1)] : [word];
       for (const cand of candidates) {
         const named = sensitiveSegment(cand);
         if (named && (GLOB_CHARS.test(cand) || candidates.length > 1)) return `this command names ${named}, which is not allowed.`;
         if (GLOB_CHARS.test(cand)) continue;                 // a glob without a credential name: nothing to resolve
         if (/[\\/]/.test(cand) || /^\./.test(cand)) {
-          const w = windowsPathProblem(cmd0 === 'git' ? cand.replace(/^[^:\\/]+:(?![\\/])/, '') : cand);
+          const w = windowsPathProblem(cmd0 === 'git' ? cand.replace(/^(?::(?:[0-3]:)?|[^:\\/]+:)(?![\\/])/, '') : cand);
           if (w && !/^[a-z][a-z0-9+.-]*:\/\//i.test(cand)) return `this command has a path argument with ${w}, which is not allowed.`;
         }
         if (/\\/.test(cand) && (/^~/.test(cand) || cand.includes('/'))) return 'this command has a path argument with a backslash escape in a POSIX-style path, which cannot be checked safely; it is not allowed.';
@@ -949,10 +970,16 @@ export function readAcceptedPolicy(root, stateHome = routerHome()) {
   const s = policyStatus(root, stateHome);
   return s.accepted ? s.policy : null;
 }
-/** Records the user's acceptance of the policy file as it is now. For the CLI, after it showed the user the content. */
-export function acceptPolicy(root, stateHome = routerHome(), now = new Date()) {
+/**
+ * Records the user's acceptance of the policy file. For the CLI, after it showed the user the content:
+ * pass the hash of what was shown as `expectedHash`, so that only that content can be accepted.
+ */
+export function acceptPolicy(root, stateHome = routerHome(), now = new Date(), expectedHash = undefined) {
   const s = policyStatus(root, stateHome);
   if (!s.present || !s.valid) return s;
+  // The caller showed the user a policy and passes that policy's hash: a file that changed while the
+  // question was open is not what the user agreed to, and is not recorded.
+  if (expectedHash !== undefined && s.hash !== expectedHash) return { ...s, accepted: false, changed: true };
   const roots = readAccepted(stateHome);
   roots[policyKey(root)] = { hash: s.hash, acceptedAt: now.toISOString() };
   fs.mkdirSync(stateHome, { recursive: true, mode: 0o700 });
@@ -1091,7 +1118,9 @@ export function evaluate(hookInput, opts = {}) {
       // a search aimed at credential files by its glob (Grep `glob`, Glob `pattern`), whatever the root
       for (const g of [input.glob, tool === 'Glob' ? input.pattern : undefined]) {
         if (typeof g !== 'string') continue;
-        const named = expandBraces(g).map(sensitiveSegment).find(Boolean);
+        const alts = expandBraces(g);
+        if (alts === null) return { deny: `[router] blocked: this ${tool} uses ${TOO_MANY_BRACES}.` };
+        const named = alts.map(sensitiveSegment).find(Boolean);
         if (named) return { deny: `[router] blocked: this ${tool} uses ${named}; credential files may not be searched or listed.` };
       }
     }
