@@ -43,6 +43,8 @@ for (const role of ROLES) {
     assert.equal(f.maxTurns, role === 'coder' ? 40 : 30);
     for (const h of ['## Work unit', '## Responsibilities', '## Forbidden', '## Report format']) assert.ok(f.body.includes(h), `${role}: missing ${h}`);
     for (const item of ['Changed files:', 'Checks run:', 'Scope request:', 'Remaining issues:']) assert.ok(f.body.includes(`- ${item}`), `${role}: report item ${item}`);
+    // decision 145 item 4: every role with file tools tells Windows workers not to feed a Bash `pwd` path to Read/Glob
+    assert.match(f.body, /Do not use the path that `pwd` prints in Bash/, `${role}: Windows path guidance`);
   });
 }
 

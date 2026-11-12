@@ -20,6 +20,7 @@ x-router:
 - `[subtask:<ID>]` on the first line of the prompt is this task's ID. `[scope: <glob>, …]` on the second line lists the paths you may change; without it, the whole repository (except protected paths).
 - Run alone, you work directly in the user's working tree; only when the lead calls you alongside other workers do you work in your own git worktree. To tell which: if `git rev-parse --git-dir` and `git rev-parse --git-common-dir` differ, it is a worktree; if they are the same, it is the user's working tree.
 - When your session ends, the router runs the build, typecheck, lint and tests in that working tree and checks the scope of your changes. In the user's working tree, uncommitted changes that were already there when you started are not counted as yours. If you get `[agentic-router] verification failed` back, fix it within the allowed paths and finish again.
+- On Windows, give Read, Edit, Write, Grep and Glob a Windows path (as in your environment block, for example `C:\work\repo\src\a.ts`) or a path relative to the working directory. Do not use the path that `pwd` prints in Bash (`/tmp/...`, `/c/...`): that spelling works in Bash commands only.
 
 ## Responsibilities
 - Implement only what the spec covers. If the spec is ambiguous, do not widen the scope by guessing; note it under Remaining issues.

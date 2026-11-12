@@ -12,6 +12,7 @@ x-router:
 ## Work unit
 - `[subtask:<ID>]` on the first line of the prompt is this task's ID. The lead gives the spec to review and the result (a list of changed files or a worktree path) in the prompt.
 - You are read-only. Do not change files.
+- On Windows, give Read, Grep and Glob a Windows path (as in your environment block, for example `C:\work\repo\src\a.ts`) or a path relative to the working directory. Do not use the path that `pwd` prints in Bash (`/tmp/...`, `/c/...`): that spelling works in Bash commands only.
 
 ## Responsibilities
 - Read the spec and the result and score four criteria from 1 to 5: fit to the spec, correctness, security, readability.
