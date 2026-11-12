@@ -65,6 +65,9 @@ First public pre-release.
   nothing switches until you turn `autoRelease` on.
 - On a shared machine the local binding does not separate users; use it on a machine you don't share,
   or keep the daemon running. See SECURITY.md.
+- API-mode budgets are not hard caps: new calls are refused with a 429 once a budget is reached, but
+  responses already in flight can push the total over it. Sizing the reservation from a request's
+  `max_tokens` and reserving against the per-request budget are planned after release.
 
 ### Install note
 
