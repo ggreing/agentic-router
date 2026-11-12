@@ -22,7 +22,10 @@ export function rmrf(dir: string): void {
 export function makeHome(config: Record<string, unknown> = {}): string {
   const home = tmpDir('home');
   fs.writeFileSync(path.join(home, 'token'), TOKEN + '\n');
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: 0, fableOptIn: false, holdoutRate: 0, ...config }));
+  // holdoutRate 0: no random holdout. delegateFrom.other L2: test daemons have no transcript, so the lead model is
+  // unknown; most flows here were written for an L1 request that starts lead-direct (decision 88). Decision 144
+  // made the real default L1 for an unknown lead; its own tests pass `delegateFrom: undefined` to get it.
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: 0, fableOptIn: false, holdoutRate: 0, delegateFrom: { other: 'L2' }, ...config }));
   return home;
 }
 

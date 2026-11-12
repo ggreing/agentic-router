@@ -17,7 +17,8 @@ function hookInputs(file: string): Record<string, unknown>[] {
 const inputs = hookInputs('spike-leadmodel.jsonl');
 const bySource = (src: string) => inputs.find(i => i.hook_event_name === 'SessionStart' && i.source === src)!;
 
-test('decision 117: SessionStart that carries a top-level model fills RouterEvent.leadModel', () => {
+// Decision 144: the recorded fixture's startup line names a model; Claude Code 2.1.322 -p sends none (below).
+test('decision 117: a SessionStart that names a model (if a build sends one) fills RouterEvent.leadModel', () => {
   const ev = toRouterEvent(bySource('startup'));
   assert.equal(ev.type, 'session_start');
   assert.equal(ev.leadModel, 'claude-opus-4-8');
@@ -76,4 +77,18 @@ test('the resolved lead model drives core delegation tiers end to end (decision 
   assert.equal(haikuPresets.L1.leadDirect, true, 'Haiku lead: L1 is handled directly');
   // L0 is always lead-direct regardless of lead model.
   assert.equal(opusPresets.L0.leadDirect, true);
+});
+
+test('decision 144: the real Claude Code 2.1.322 SessionStart (no model) and UserPromptSubmit leave leadModel unknown', () => {
+  // the shape the contract spike recorded for -p runs: no model field at all
+  const start = toRouterEvent({ session_id: '00000000-0000-0000-0000-000000000144', transcript_path: '/home/u/.claude/projects/p/x.jsonl', cwd: '/home/u/p',
+    hook_event_name: 'SessionStart', source: 'startup', context_tokens: 0 });
+  assert.equal(start.type, 'session_start');
+  assert.equal(start.leadModel, undefined);
+  const prompt = toRouterEvent({ session_id: 's', transcript_path: '/x.jsonl', cwd: '/p', hook_event_name: 'UserPromptSubmit', prompt: 'fix it', prompt_id: 'p-1' });
+  assert.equal(prompt.leadModel, undefined);
+  // unknown is the 'other' class, which delegates from L1 like Opus and Sonnet; a known Haiku lead keeps L2
+  assert.equal(leadModelClass(start.leadModel), 'other');
+  assert.equal(withLeadModel(DEFAULT_PRESETS, undefined).L1.leadDirect, undefined);
+  assert.equal(withLeadModel(DEFAULT_PRESETS, 'claude-haiku-5-5').L1.leadDirect, true);
 });

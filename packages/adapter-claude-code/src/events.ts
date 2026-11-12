@@ -85,10 +85,11 @@ export function toRouterEvent(hookInput: unknown, opts: ToRouterEventOptions = {
   if (cwd) ev.cwd = cwd;
   const transcriptPath = str(hookInput.transcript_path);
   if (transcriptPath) ev.transcriptPath = transcriptPath;
-  // Main-session model (decision 117). Per Claude Code 2.1.322 only SessionStart carries a top-level
-  // `model`, and not on every start; UserPromptSubmit and the other events omit it, and a subagent
-  // event has none. Read it generically where present; for a per-request value that follows a mid-session
-  // /model switch, the daemon falls back to leadModelFromTranscript() below.
+  // Main-session model (decisions 117, 144). Claude Code 2.1.322 (contract spike, -p runs) sends no `model`
+  // in SessionStart (cwd, hook_event_name, session_id, source, transcript_path, sometimes context_tokens) nor in
+  // UserPromptSubmit or any other hook event. It is read generically here in case a build does send one; the
+  // daemon learns the model from the status line (its input has model.id) and from the main transcript
+  // (leadModelFromTranscript below), which follows a /model switch.
   const leadModel = str(hookInput.model);
   if (leadModel) ev.leadModel = leadModel;
 
@@ -335,8 +336,8 @@ export function subtaskTagFromTranscript(agentTranscriptPath: string | undefined
 /**
  * The main session's current model id, read from the LAST `assistant` line of the MAIN transcript
  * (`RouterEvent.transcriptPath`) as `message.model`. Only the model id is taken; message content is
- * never inspected. This is the per-request fallback for RouterEvent.leadModel: UserPromptSubmit carries
- * no model and SessionStart's `model` is optional and goes stale after a /model switch, so the daemon
+ * never inspected. This is the per-request fallback for RouterEvent.leadModel: no hook event carries the
+ * model in Claude Code 2.1.322 (decision 144), and one that did would go stale after a /model switch, so the daemon
  * resolves the lead model at each request from here (core's leadModelClass maps the id to a tier).
  * Scans from the end so a mid-session switch is reflected. Returns null when the path is missing,
  * unreadable, or has no assistant line with a model yet (e.g. before the first reply).

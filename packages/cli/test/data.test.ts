@@ -3,11 +3,11 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { paths } from '@agentic-router/core';
 import { dataExport, dataPurge, realDataDeps, type DataDeps } from '../src/data.ts';
+import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
@@ -73,11 +73,7 @@ test('against the real daemon, then with it stopped: export and purge reach the 
   const { ensureLocalState, readConfig, writeConfig } = await import('../src/setup.ts');
   const { localRequest, start, stop } = await import('../src/daemonctl.ts');
   await ensureLocalState();
-  const port = await new Promise<number>((resolve, reject) => {
-    const s = net.createServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => resolve(p)); });
-  });
+  const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
   writeConfig({ ...readConfig()!, daemonPort: port });
   const token = fs.readFileSync(paths.token(), 'utf8').trim();
   const hook = (sid: string, h: Record<string, unknown>) => localRequest(port, 'POST', '/router/v1/hooks/claude-code', {

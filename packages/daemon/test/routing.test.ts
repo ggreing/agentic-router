@@ -77,7 +77,8 @@ test('the view and the rule: observe shows what it would do, on applies it, off 
   const l = new Ledger(':memory:');
   many(l, 30, { usd: 0.4 });
   many(l, 10, { leadDirect: true, holdout: 'direct', usd: 0.1 });
-  const cfg = { holdoutRate: 0.1 };
+  // the records are of an L2-delegating class (decision 144 made an unknown lead delegate from L1 by default)
+  const cfg = { holdoutRate: 0.1, delegateFrom: { other: 'L2' as const } };
   assert.deepEqual([routingMode(cfg), routingHoldoutRate(cfg), routingHoldoutRate({ ...cfg, autoRelease: 'off' }), routingHoldoutRate({})], ['observe', 0.1, 0, 0]);
   const v = routingView(l, cfg, NOW);
   assert.deepEqual([v.mode, v.holdoutRate, v.classes.map(c => c.leadClass)], ['observe', 0.1, ['opus', 'sonnet', 'haiku', 'other']]);

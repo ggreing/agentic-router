@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PROMPT_MEMORY_TTL_MS, PromptMemory } from '../src/accept.ts';
+import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { metricsSummary } from '../src/metrics.ts';
 import { checkEndState, requestEndState, takeRequestSnapshot, CLEAN } from '../src/record.ts';
 import { git, makeRepo, postHook, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
@@ -180,4 +181,58 @@ test('the KPI reads acceptance: a rejected request costs, and does not count as 
   const m = metricsSummary(d.ledger);
   assert.deepEqual([m.total, m.successful], [3, 2]);
   assert.deepEqual((a => [a.accepted, a.notAccepted, a.unobserved, a.notApplicable, a.unknown, a.unobservedShare, a.signals])(m.acceptance), [0, 1, 1, 1, 0, 0.5, { reverted: 1 }]);
+}));
+
+// Integration round 5: the change was reverted the moment the turn ended, before the daemon had looked.
+test('a revert right after the turn ends is still seen: the end state is taken at Stop, before the hook answers', () => withDaemon(async (d, repo, s) => {
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: ASK });
+  await d.router.drain();
+  write(repo, 'src/parse.ts', 'export const parse = () => 2;\n');
+  write(repo, 'src/new.ts', 'export const n = 1;\n');
+  await s.post({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Done.' });
+  // no drain: `git checkout -- .` and the clean-up run while the daemon's work after the answer is still going
+  git(repo, 'checkout', '--', '.');
+  fs.rmSync(path.join(repo, 'src', 'new.ts'));
+  await d.router.drain();
+  assert.deepEqual(seen(d), [['unobserved', '']], 'the request did change files; it is not "n/a"');
+  const end = JSON.parse(String(rows(d, "SELECT end_state FROM requests WHERE session_id = 'acc'")[0]!.end_state));
+  assert.deepEqual(end.files.map((f: any) => f.path), ['src/new.ts', 'src/parse.ts']);
+  assert.equal(end.changes.changedFiles, 2);
+  assert.equal(typeof end.takenAt, 'string');
+  const rec = d.ledger.getRecord(rows(d, "SELECT id FROM requests WHERE session_id = 'acc'")[0]!.id as string) as any;
+  assert.equal(rec.changes.changedFiles, 2, 'the record counts what the request changed, not what is left of it');
+
+  await s.turn('Looks good, thank you.');
+  assert.deepEqual(seen(d), [['not_accepted', 'reverted'], ['n/a', '']]);
+}));
+
+test('the latest turn end wins: a request that stays open over two turns is recorded as its last turn left it', () => withDaemon(async (d, repo, s) => {
+  // the lead asks the user something: the request stays open
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: ASK });
+  await d.router.drain();
+  write(repo, 'src/parse.ts', 'export const parse = () => 2;\n');
+  await s.post({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: `Return null or throw for empty input? ${AWAITING_USER_MARKER}` });
+  await d.router.drain();
+  const first = () => rows(d, "SELECT id, status, end_state FROM requests WHERE session_id = 'acc' ORDER BY created_at, rowid")[0]!;
+  const taken1 = JSON.parse(String(first().end_state));
+  assert.deepEqual([first().status, taken1.files.map((x: any) => x.path), taken1.changes.changedFiles], ['awaiting_user', ['src/parse.ts'], 1]);
+  // the answer continues the same request; its second turn changes another file and is reverted at once
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: 'throw' });
+  await d.router.drain();
+  write(repo, 'src/other.ts', 'y\n');
+  await s.post({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Done.' });
+  git(repo, 'checkout', '--', '.');
+  await d.router.drain();
+  assert.equal(rows(d, "SELECT COUNT(*) AS n FROM requests WHERE session_id = 'acc'")[0]!.n, 1);
+  const taken2 = JSON.parse(String(first().end_state));
+  assert.deepEqual([first().status, taken2.files.map((x: any) => x.path)], ['closed', ['src/other.ts', 'src/parse.ts']]);
+  assert.ok(taken2.takenAt >= taken1.takenAt);
+  assert.equal((d.ledger.getRecord(first().id as string) as any).changes.changedFiles, 2);
+  assert.deepEqual(seen(d), [['unobserved', '']]);
+}));
+
+test('a turn that changed nothing leaves no end state behind', () => withDaemon(async (d, _repo, s) => {
+  await s.turn(ASK);
+  assert.deepEqual(seen(d), [['n/a', '']]);
+  assert.equal(state(d)[0]!.hasEndState, false);
 }));

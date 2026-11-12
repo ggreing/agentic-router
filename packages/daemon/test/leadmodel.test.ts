@@ -28,7 +28,7 @@ const ask = async (d: TestDaemon, sid: string, prompt: string, transcriptPath?: 
 };
 const req = async (d: TestDaemon, sid: string) => ((await getStatus(d.port, sid)).body as StatusView).request!;
 
-test('decisions 117, 124: an Opus- or Sonnet-class lead delegates from L1, a Haiku or unknown lead from L2; L0 is always the lead\'s', () => withDaemon(async d => {
+test('decisions 117, 124, 144: an Opus- or Sonnet-class lead, and an unknown one, delegates from L1, a Haiku lead from L2; L0 is always the lead\'s', () => withDaemon(async d => {
   await ask(d, 'opus', L1_PROMPT, transcript(d, 'opus', 'claude-opus-5-5'));
   let r = await req(d, 'opus');
   assert.deepEqual([r.level, r.leadDirect, r.leadModel, r.leadClass], ['L1', false, 'claude-opus-5-5', 'opus']);
@@ -43,8 +43,8 @@ test('decisions 117, 124: an Opus- or Sonnet-class lead delegates from L1, a Hai
   assert.deepEqual([r.leadDirect, r.leadClass], [true, 'haiku']);
   await ask(d, 'unknown', L1_PROMPT);
   r = await req(d, 'unknown');
-  assert.deepEqual([r.leadDirect, r.leadModel, r.leadClass], [true, null, 'other']);
-}));
+  assert.deepEqual([r.leadDirect, r.leadModel, r.leadClass], [false, null, 'other'], 'decision 144: an unknown lead delegates from L1, like Opus and Sonnet');
+}, { delegateFrom: undefined }));   // the real defaults (the test homes pin other: L2)
 
 test('decision 117: the lead model is decided at each request (a /model switch), else from the session\'s SessionStart', () => withDaemon(async d => {
   // SessionStart names the model; the first prompt has no transcript yet

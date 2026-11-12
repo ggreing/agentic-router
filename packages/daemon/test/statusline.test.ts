@@ -141,3 +141,23 @@ test('runs when the plugin is reached through a junction or symlink (environment
     rmrf(home);
   }
 });
+
+test('decision 144: the status line\'s model.id reaches the daemon, so the session\'s first prompt knows its lead model', () => withDaemon(async d => {
+  const L1 = 'Fix the bug where parse() fails on empty input in src/a.ts';
+  const req = (sid: string) => d.ledger.db.prepare('SELECT level, lead_model AS m, lead_class AS c, team FROM requests WHERE session_id = ?').get(sid) as { level: string; m: string | null; c: string; team: string };
+  // no status line yet: the hooks name no model, the first prompt has no transcript
+  assert.equal((await postHook(d.port, { session_id: 'blind', cwd: d.home, hook_event_name: 'UserPromptSubmit', prompt: L1 })).status, 200);
+  assert.deepEqual([req('blind').m, req('blind').c], [null, 'other']);
+  // the status line renders before the first prompt (interactive sessions) and posts model.id, without rate_limits
+  await run(d.home, { session_id: 'seen', model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet' } });
+  assert.equal(d.ledger.sessionLeadModel('seen'), 'claude-sonnet-5-5');
+  assert.equal((await postHook(d.port, { session_id: 'seen', cwd: d.home, hook_event_name: 'UserPromptSubmit', prompt: L1 })).status, 200);
+  const r = req('seen');
+  assert.deepEqual([r.m, r.c], ['claude-sonnet-5-5', 'sonnet']);
+  if (r.level === 'L1') assert.equal(JSON.parse(r.team).leadDirect, undefined, 'a Sonnet lead delegates L1');
+  // a bad model id is not stored
+  assert.deepEqual((await (await import('./helpers.ts')).request(d.port, {
+    method: 'POST', path: '/router/v1/limits', body: JSON.stringify({ sessionId: 'odd', model: 'not a model id' }),
+    headers: { authorization: `Bearer ${fs.readFileSync(path.join(d.home, 'token'), 'utf8').trim()}`, 'content-type': 'application/json' },
+  })).body, { stored: false, model: false });
+}));

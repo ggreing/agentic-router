@@ -16,6 +16,8 @@ import { proxyHealth, readSuperviseStatus, superviseFiles } from './supervise.ts
 const pidFile = () => path.join(routerHome(), 'daemon.pid');
 const startLock = () => path.join(routerHome(), 'daemon.start.lock');
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** How long `start` waits for the daemon (and proxy) to answer before it reports them as not up yet. */
+export const START_WAIT_MS = 30_000;
 
 /**
  * Talks to the daemon with node:http, never fetch: with NODE_USE_ENV_PROXY / --use-env-proxy and an
@@ -136,14 +138,23 @@ export async function start(): Promise<string> {
     child.unref();
     let daemonUp = false;
     let proxyUp = !proxy;
-    for (let i = 0; i < 80 && !(daemonUp && proxyUp); i++) {
+    // Wait for the daemon (and proxy) to answer. A cold start loads every module twice over (supervisor, daemon)
+    // and takes seconds on a busy machine, so the wait is bounded by START_WAIT_MS, not by a count of polls; it
+    // ends early when this supervisor reports that the daemon exited (a port taken, a bad config).
+    const deadline = Date.now() + START_WAIT_MS;
+    let daemonExit: { code: number | null } | undefined;
+    while (!(daemonUp && proxyUp) && Date.now() < deadline) {
       daemonUp ||= !!(await health(cfg.daemonPort, 300))?.ok;
       if (proxy && !proxyUp) proxyUp = !!(await proxyHealth(proxy, proxyToken(), 300))?.ok;
       if (exited !== undefined) break;
+      const st = readSuperviseStatus();
+      const lastExit = st && st.pid === child.pid ? st.children.daemon?.lastExit : undefined;
+      if (!daemonUp && lastExit) { daemonExit = lastExit; break; }
       if (!(daemonUp && proxyUp)) await sleep(100);
     }
     const where = `daemon on 127.0.0.1:${cfg.daemonPort}${proxy ? `, proxy on 127.0.0.1:${proxy}` : ''}`;
     if (exited !== undefined && !(daemonUp && proxyUp)) return `the supervisor exited during start${exited != null ? ` (code ${exited})` : ''}; see ${paths.logsDir()}`;
+    if (daemonExit) return `started (supervisor pid ${child.pid}) but the daemon exited during start (code ${daemonExit.code ?? '?'}); it is restarted with backoff. See ${paths.logsDir()}`;
     if (daemonUp && proxyUp) return `started (supervisor pid ${child.pid}; ${where})`;
     const down = [daemonUp ? '' : 'daemon', proxyUp ? '' : 'proxy'].filter(Boolean).join(' and ');
     return `started (supervisor pid ${child.pid}) but the ${down} did not answer yet; it is restarted when it exits. See ${paths.logsDir()}`

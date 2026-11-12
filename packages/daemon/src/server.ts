@@ -9,7 +9,8 @@
 //   200 with { ok, ... }: a refused call is a tool result for the lead, not a transport error.
 // - API-key mode proxy (decision 130): POST /router/v1/usage takes usage rows ({ accepted, duplicates,
 //   rejected }); GET /router/v1/budget?session_id=&prompt_id= answers { requestId, budgetUsd, spentUsd } or 404.
-// - POST /router/v1/limits takes the status line's rate_limits for a session (spec 3.8): { stored }.
+// - POST /router/v1/limits takes the status line's rate_limits and model.id for a session (spec 3.8, decision
+//   144): { stored, model }.
 // - POST /router/v1/routing/reset (`agentic-router routing reset`, decision 138): every released level is
 //   delegated again; answers { cleared }. No body.
 // - Data management (spec 3.7, 4.4; data.ts): GET /router/v1/data/export?since=&until= answers JSON lines
@@ -207,7 +208,11 @@ export function createHttpServer(d: ServerDeps): http.Server {
       if (!d.ledger) throw new HttpError(404, 'not found');
       const sessionId = typeof body.sessionId === 'string' && /^[\x21-\x7e]{1,128}$/.test(body.sessionId) ? body.sessionId : '';
       if (!sessionId) throw new HttpError(400, 'sessionId is required');
-      return send(res, 200, { stored: recordLimits(d.ledger.db, { sessionId, rateLimits: body.rateLimits, at: now().toISOString() }) });
+      const at = now().toISOString();
+      // decision 144: the status line names the session's model; hooks do not, so the first prompt can use it
+      const model = typeof body.model === 'string' && /^[A-Za-z0-9._:\[\]-]{1,128}$/.test(body.model) ? body.model : undefined;
+      if (model) d.ledger.setSessionLeadModel(sessionId, model, at);
+      return send(res, 200, { stored: body.rateLimits === undefined ? false : recordLimits(d.ledger.db, { sessionId, rateLimits: body.rateLimits, at }), model: !!model });
     }
     if (route === API.usage) {
       if (!d.proxyUsage) throw new HttpError(404, 'not found');

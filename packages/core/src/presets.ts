@@ -76,12 +76,15 @@ export function leadModelClass(modelId?: string): LeadModelClass {
 
 /**
  * First level that is delegated, per lead model tier (decisions 117, 124). Below it the lead handles the
- * request itself. L0 is always lead-direct. Unknown lead model -> 'other' (the conservative L2).
+ * request itself. L0 is always lead-direct. Unknown lead model -> 'other', which delegates from L1 as well
+ * (decision 144): both measured lead classes do, a Haiku main session is rare, and being wrong for one costs
+ * little. Claude Code 2.1.322 sends no model in SessionStart or UserPromptSubmit, so the first prompt of a
+ * session often has no lead model yet.
  * Decision-107 measurement: delegating L1 cost 49% less with an Opus lead at the same speed, and 42% less
  * with a Sonnet lead (about 20 s slower per request), so both delegate from L1. A Haiku lead is not
  * measured: its workers would run the same model, so it keeps L1 itself.
  */
-export const DEFAULT_DELEGATE_FROM: Record<LeadModelClass, Level> = { opus: 'L1', sonnet: 'L1', haiku: 'L2', other: 'L2' };
+export const DEFAULT_DELEGATE_FROM: Record<LeadModelClass, Level> = { opus: 'L1', sonnet: 'L1', haiku: 'L2', other: 'L1' };
 
 const ORDER: Level[] = ['L0', 'L1', 'L2', 'L3'];
 

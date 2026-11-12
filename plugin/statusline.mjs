@@ -36,19 +36,28 @@ export const LIMITS_MIN_INTERVAL_MS = 60_000;
 const LIMITS_POST_TIMEOUT_MS = 500;
 const safeName = s => String(s).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128);
 const limitsHash = rateLimits => { try { return JSON.stringify(rateLimits); } catch { return ''; } };
+// Decision 144: the status line input names the session's model (model.id); Claude Code's hooks do not, so this is
+// how the daemon learns the lead model before the first prompt's transcript has one. Sent with the limits.
+const MODEL_ID = /^[A-Za-z0-9._:\[\]-]{1,128}$/;   // e.g. claude-sonnet-5-5, claude-opus-5-5[1m]
+export const modelIdOf = parsed => (typeof parsed?.model?.id === 'string' && MODEL_ID.test(parsed.model.id) ? parsed.model.id : undefined);
+const stampHash = (rateLimits, model) => {
+  const r = rateLimits === undefined || rateLimits === null ? '' : limitsHash(rateLimits);
+  const base = r === '{}' ? '' : r;
+  return model ? `${base}|model:${model}` : base;
+};
 
-/** Whether to post rate_limits now, given the last send stamp ({hash, at}). Pure, for the rate limiter. */
-export function shouldSendLimits(stamp, rateLimits, now, minIntervalMs = LIMITS_MIN_INTERVAL_MS) {
-  const hash = limitsHash(rateLimits);
-  if (!hash || hash === '{}' || rateLimits === undefined || rateLimits === null) return false;
+/** Whether to post now (rate_limits and/or the model), given the last send stamp ({hash, at}). Pure, for the rate limiter. */
+export function shouldSendLimits(stamp, rateLimits, now, minIntervalMs = LIMITS_MIN_INTERVAL_MS, model = undefined) {
+  const hash = stampHash(rateLimits, model);
+  if (!hash) return false;
   if (!stamp || typeof stamp !== 'object') return true;
   if (stamp.hash !== hash) return true;
   return now - (Number(stamp.at) || 0) >= minIntervalMs;
 }
 
-function postLimits({ port, token, sessionId, rateLimits, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
+function postLimits({ port, token, sessionId, rateLimits, model, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ sessionId, rateLimits, at: new Date().toISOString() });
+    const body = JSON.stringify({ sessionId, rateLimits, ...(model ? { model } : {}), at: new Date().toISOString() });
     const req = http.request({
       host: '127.0.0.1', port, path: LIMITS_ENDPOINT, method: 'POST',
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: `Bearer ${token}`, host: `127.0.0.1:${port}` },
@@ -62,16 +71,16 @@ function postLimits({ port, token, sessionId, rateLimits, timeoutMs = LIMITS_POS
 }
 
 /** Reads the per-session stamp, decides via shouldSendLimits, posts if due, and updates the stamp. Never throws. */
-export async function maybeSendLimits({ home, port, token, sessionId, rateLimits, now = Date.now() }) {
+export async function maybeSendLimits({ home, port, token, sessionId, rateLimits, model, now = Date.now() }) {
   if (!Number.isInteger(port) || port <= 0 || !token || !sessionId) return;
   const dir = path.join(home, 'limits-cache');
   const file = path.join(dir, `${safeName(sessionId)}.json`);
   let stamp;
   try { stamp = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* no stamp yet */ }
-  if (!shouldSendLimits(stamp, rateLimits, now)) return;
+  if (!shouldSendLimits(stamp, rateLimits, now, LIMITS_MIN_INTERVAL_MS, model)) return;
   // Stamp before the POST so rapid renders don't queue duplicate requests even if the POST is slow.
-  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify({ hash: limitsHash(rateLimits), at: now })); } catch { /* best effort */ }
-  try { await postLimits({ port, token, sessionId, rateLimits }); } catch { /* daemon down/slow: the status line still prints */ }
+  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify({ hash: stampHash(rateLimits, model), at: now })); } catch { /* best effort */ }
+  try { await postLimits({ port, token, sessionId, rateLimits, model }); } catch { /* daemon down/slow: the status line still prints */ }
 }
 
 /** One line from a /router/v1/status response; roles with the same step are grouped (coder×2 s1). */
@@ -166,8 +175,9 @@ export async function statusLine(input, env = process.env) {
   const token = readText(path.join(home, 'token'));
   // Forward subscription rate limits to the daemon (rate-limited); runs alongside the status fetch so it
   // adds no latency beyond its own short timeout, and never affects the printed line.
-  const limits = (!env[NESTED_ENV] && sessionId && parsed.rate_limits)
-    ? maybeSendLimits({ home, port: config.daemonPort, token, sessionId, rateLimits: parsed.rate_limits })
+  const model = modelIdOf(parsed);
+  const limits = (!env[NESTED_ENV] && sessionId && (parsed.rate_limits || model))
+    ? maybeSendLimits({ home, port: config.daemonPort, token, sessionId, rateLimits: parsed.rate_limits, model })
     : Promise.resolve();
   const [view, wrapped] = await Promise.all([
     fetchStatus({ port: config.daemonPort, token, sessionId }),

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { paths } from '@agentic-router/core';
 import { browserCommand, openDashboard } from '../src/dashboard.ts';
+import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
@@ -61,12 +62,7 @@ test('opened, printed or refused: the code is shown only when it has to be typed
 /** An OS-assigned free port: test files run in parallel, and two temp homes must not pick the same one. */
 async function ownPort(): Promise<void> {
   const { readConfig, writeConfig } = await import('../src/setup.ts');
-  const net = await import('node:net');
-  const port = await new Promise<number>((resolve, reject) => {
-    const s = net.createServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => resolve(p)); });
-  });
+  const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
   writeConfig({ ...readConfig()!, daemonPort: port });
 }
 

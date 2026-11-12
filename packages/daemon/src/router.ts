@@ -171,7 +171,7 @@ export class Router {
         case 'subagent_stop': return this.#subagentStop(ev, ctx);
         case 'post_tool_use': return this.#postToolUse(ev, ctx);
         case 'session_start': return this.#sessionStart(ev, ctx);
-        case 'stop': return this.#stop(ev, ctx);
+        case 'stop': return await this.#stop(ev, ctx);
         case 'pre_compact': return this.#preCompact(ev, ctx);
         default: return NONE;
       }
@@ -264,7 +264,7 @@ export class Router {
   /**
    * Decision 117: the lead's model for a new request: the hook input's, else the model of the main
    * transcript's latest assistant message (a /model switch shows there), else the last one a hook input
-   * of the session named. Undefined: not known ('other', delegation from L2).
+   * of the session named. Undefined: not known ('other', delegation from L1, decision 144).
    */
   #leadModelFor(ev: RouterEvent): string | undefined {
     return ev.leadModel ?? readLastModel(str(ev.raw.transcript_path)) ?? this.ledger.sessionLeadModel(ev.sessionId);
@@ -344,17 +344,23 @@ export class Router {
         from: req.createdAt, to: req.closedAt ?? this.#at(),
       };
       await waitForQuiet(transcript);
-      const [changes, lead, agents] = await Promise.all([
-        snap ? requestChanges(snap).catch(e => { this.#log.warn('request changes not counted', { requestId, error: errorText(e) }); return null; }) : Promise.resolve(null),
+      // What the request changed is what the work tree showed at the end of its last turn (#takeTurnEnd), not
+      // what it shows now: by now the user may have reverted the change, or the next request may be editing.
+      // Read here only when no turn end was seen (a turn that was interrupted, a spooled stop).
+      const turnEnd = this.ledger.getEndState<RequestEndState>(requestId);
+      const taken = turnEnd?.takenAt !== undefined;
+      const [fresh, lead, agents] = await Promise.all([
+        taken || !snap ? Promise.resolve(null) : this.#readTurnEnd(requestId, snap),
         readLeadUsage(transcript, span),
         this.#rereadAgents(requestId, transcript),
       ]);
-      // decision 137: the files this request changed, for the checks of its acceptance window
-      const endState = snap ? await requestEndState(snap).catch(() => null) : null;
       await this.#queue.run(ev.sessionId || '_', () => {
         for (const a of agents) this.#applyReread(a, requestId);
-        if (endState?.files.length && !this.ledger.getAcceptState(requestId)?.done) this.ledger.setEndState(requestId, endState);
-        this.#writeRecord(requestId, changes, lead, prompts);
+        const settled = this.ledger.getAcceptState(requestId)?.done === true;
+        const end = taken ? turnEnd! : fresh;
+        if (!taken && end?.files.length && !settled) this.ledger.setEndState(requestId, end);
+        this.#writeRecord(requestId, end?.changes ?? null, lead, prompts);
+        if (taken && !turnEnd!.files.length && !settled) this.ledger.setEndState(requestId, null);   // nothing to look at again
       });
     })());
   }
@@ -1122,13 +1128,14 @@ export class Router {
     return { context: this.#summary(latest.id, ev.source === 'compact' ? 'after compaction' : 'resumed session') };
   }
 
-  #stop(ev: RouterEvent, ctx: Ctx): RouterDecision {
+  async #stop(ev: RouterEvent, ctx: Ctx): Promise<RouterDecision> {
     if (ev.agentId) return NONE;
     const latest = this.ledger.latestRequest(ev.sessionId);
     ctx.requestId = latest?.id ?? null;
     this.#expireStale(ev.sessionId);
     if (!ev.spooled) this.#acceptOnTurnEnd(ev.sessionId, true);   // decision 137
     if (!latest || latest.status === 'closed') return NONE;
+    if (!ev.spooled) await this.#takeTurnEnd(latest.id, ev);   // decision 137: before the hook answers
     // Audit #13: a turn the lead spent on a task notification does not answer an open question to the user.
     if (latest.status === 'awaiting_user' && this.#turnStartedByNotification(ev.sessionId)) return NONE;
     const next = awaitsUser(ev.lastAssistantMessage) ? 'awaiting_user' : 'closed';   // decision 56
@@ -1704,6 +1711,44 @@ export class Router {
     }
   }
 
+  /** The files a request has changed and their counts, as the work tree shows them now. */
+  async #readTurnEnd(requestId: string, snap: RequestSnapshot): Promise<RequestEndState | null> {
+    const [changes, end] = await Promise.all([
+      requestChanges(snap).catch(e => { this.#log.warn('request changes not counted', { requestId, error: errorText(e) }); return null; }),
+      requestEndState(snap).catch(() => null),
+    ]);
+    return end ? { ...end, changes, takenAt: this.#at() } : null;
+  }
+
+  /**
+   * The end of a turn of an open request: what it has changed so far is read now, while the hook is still
+   * being answered, and kept (the latest turn wins). The request's record and its acceptance window work
+   * from this state. Reading after the answer was too late: the user (or a script) can revert the change the
+   * moment the turn ends, and the request then looked as if it had changed nothing (acceptance "n/a").
+   * The wait is bounded; a read that takes longer is stored when it finishes.
+   */
+  async #takeTurnEnd(requestId: string, ev: RouterEvent): Promise<void> {
+    const store = (end: RequestEndState | null): void => {
+      if (!end || this.ledger.getAcceptState(requestId)?.done) return;
+      const prev = this.ledger.getEndState<RequestEndState>(requestId);
+      if (prev?.takenAt !== undefined && prev.takenAt > end.takenAt!) return;   // a later turn was stored first
+      this.ledger.setEndState(requestId, end);
+    };
+    try {
+      const snap = (await this.#snapshots.get(requestId)) ?? this.ledger.getRequestSnapshot<RequestSnapshot>(requestId);
+      if (!snap) return;
+      const read = this.#readTurnEnd(requestId, snap);
+      let timer: NodeJS.Timeout | undefined;
+      const late = Symbol('late');
+      const got = await Promise.race([read, new Promise<typeof late>(r => { timer = setTimeout(() => r(late), TURN_END_WAIT_MS); })]);
+      clearTimeout(timer);
+      if (got === late) this.#track(read.then(end => this.#queue.run(ev.sessionId || '_', () => store(end))));
+      else store(got);
+    } catch (e) {
+      this.#log.warn('turn end state not recorded', { requestId, error: errorText(e) });
+    }
+  }
+
   /** A turn ended (or the session was resumed): the files of the requests in their window are looked at again. */
   #acceptOnTurnEnd(sessionId: string, closing: boolean): void {
     for (const w of this.ledger.acceptWindows(sessionId)) {
@@ -1715,7 +1760,7 @@ export class Router {
   /** Reads the request's files again, after the hook answers; the result is written back through the session queue. */
   #checkFiles(sessionId: string, requestId: string, turn: number, closing: boolean): void {
     const es = this.ledger.getEndState<RequestEndState>(requestId);
-    if (!es) {
+    if (!es || !es.files.length) {
       if (closing) this.#closeWindow(sessionId, requestId);
       return;
     }
@@ -1895,6 +1940,8 @@ export function outputRateEstimate(modelId: string, tokens: number): number | nu
   const long = p.longPromptOver !== undefined && p.longPromptOutput !== undefined && tokens > p.longPromptOver;
   return round6(tokens * (long ? p.longPromptOutput! : p.output) / 1e6);
 }
+/** How long a Stop waits for the request's turn-end state before it is answered (the hook's own limit is 10 s). */
+const TURN_END_WAIT_MS = 4000;
 const MAX_COMPACT_SUBTASKS = 20;
 /** Audit #11: an allowed subtask whose subagent has not started after this long never will. */
 const STALE_PENDING_MS = 30_000;

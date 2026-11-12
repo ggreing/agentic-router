@@ -125,7 +125,12 @@ export async function requestChanges(snap: RequestSnapshot): Promise<ChangeStats
  * or CLEAN for a file that was as in the start commit. No file content is kept.
  */
 export interface EndFile extends FileEnd { addedBefore: number }
-export interface RequestEndState { root: string; head?: string; files: EndFile[]; truncated?: boolean }
+export interface RequestEndState {
+  root: string; head?: string; files: EndFile[]; truncated?: boolean;
+  /** What the request had changed when this state was taken (the end of a turn), for its record. */
+  changes?: ChangeStats | null;
+  takenAt?: string;
+}
 export const CLEAN = 'clean';
 
 export async function requestEndState(snap: RequestSnapshot): Promise<RequestEndState> {

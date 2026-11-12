@@ -39,8 +39,8 @@ test('spec 3.8: POST /router/v1/limits stores a session\'s latest rate limits (t
   assert.equal((await post('wrong', { sessionId: 's1', rateLimits: LIMITS })).status, 401);
   assert.equal((await post(TOKEN, { rateLimits: LIMITS })).status, 400);
   assert.equal((await post(TOKEN, { sessionId: 'has space', rateLimits: LIMITS })).status, 400);
-  assert.deepEqual((await post(TOKEN, { sessionId: 's1', rateLimits: { five_hour: { resets_at: 1 } } })).body, { stored: false });
-  assert.deepEqual((await post(TOKEN, { sessionId: 's1', rateLimits: LIMITS, at: '1999-01-01T00:00:00.000Z' })).body, { stored: true });
+  assert.deepEqual((await post(TOKEN, { sessionId: 's1', rateLimits: { five_hour: { resets_at: 1 } } })).body, { stored: false, model: false });
+  assert.deepEqual((await post(TOKEN, { sessionId: 's1', rateLimits: LIMITS, at: '1999-01-01T00:00:00.000Z' })).body, { stored: true, model: false });
   assert.deepEqual(rows(d, 'SELECT session_id, five_hour_pct, seven_day_pct, spend_pct, updated_at FROM session_limits'),
     [{ session_id: 's1', five_hour_pct: 23.5, seven_day_pct: 41.2, spend_pct: null, updated_at: '2026-11-12T12:00:00.000Z' }]);   // the daemon's clock
   assert.equal((await request(d.port, { path: '/router/v1/limits', headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);

@@ -3,12 +3,12 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { paths } from '@agentic-router/core';
 import type { StatusView } from '@agentic-router/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks, routingReset } from '../src/routing.ts';
+import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
@@ -71,11 +71,7 @@ test('against the real daemon: a released level shows in doctor\'s lines, and ro
   const { localRequest, start, stop } = await import('../src/daemonctl.ts');
   const { Ledger } = await import('@agentic-router/daemon');
   await ensureLocalState();
-  const port = await new Promise<number>((resolve, reject) => {
-    const s = net.createServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => resolve(p)); });
-  });
+  const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
   writeConfig({ ...readConfig()!, daemonPort: port, autoRelease: 'on' });
   const l = new Ledger(paths.db());
   l.setRelease('opus', { autoDelegateFrom: 'L2' }, new Date().toISOString());
