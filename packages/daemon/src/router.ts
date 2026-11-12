@@ -18,7 +18,7 @@ import { writeJsonAtomic, type HomeLayout } from './home.ts';
 import type { AcceptState, AgentRow, ClientRow, Holdout, Ledger, RequestRow, SlotRow, SubtaskReview, SubtaskRow } from './ledger.ts';
 import { errorText, nullLogger, type Logger } from './log.ts';
 import { cleanVerifyEnv, verifyEnv, withoutEnvValues } from './env.ts';
-import { eventPayload, tailText } from './payload.ts';
+import { eventPayload, minimalPayload, storedPromptKind, tailText } from './payload.ts';
 import { PresetResolver } from './presets.ts';
 import { crossCheck, type CrossCheck } from './proxyusage.ts';
 import { checkEndState, requestChanges, requestEndState, takeRequestSnapshot, type ChangeStats, type RequestEndState, type RequestSnapshot } from './record.ts';
@@ -99,6 +99,8 @@ export class Router {
   readonly #resolver: PresetResolver;
   readonly #verify: VerifySettings;
   readonly #secrets: string[];
+  /** Decision 142: each agent's forwarded verify variables, for its lifetime; the ledger keeps the names only. */
+  readonly #agentEnv = new Map<string, Record<string, string>>();
   readonly #now: () => Date;
   readonly #queue = new SessionQueue();
   readonly #abort = new AbortController();
@@ -186,11 +188,20 @@ export class Router {
       this.ledger.insertEvent({
         sessionId: ev.sessionId, requestId: ctx.requestId, agentId: ev.agentId ?? null, type: ev.type,
         toolName: ev.toolName ?? null, receivedAt: ev.receivedAt || this.#at(), spooled: ev.spooled === true,
-        payload: eventPayload(withoutEnvValues(ev.raw), this.#secrets),   // decision 99: env names only
+        // decision 99: env names only; decisions 141-142: the minimal form unless recordPrompts is on
+        payload: eventPayload(this.#config.recordPrompts === true ? withoutEnvValues(ev.raw) : minimalPayload(withoutEnvValues(ev.raw)), this.#secrets),
       });
     } catch (e) {
       this.#log.error('event record failed', { type: ev.type, error: errorText(e) });
     }
+  }
+
+  /** Decision 142: verify variables stay in memory (at most 500 agents); the ledger records their names. */
+  #rememberEnv(agentId: string, env: Record<string, string>): void {
+    this.#agentEnv.delete(agentId);
+    this.#agentEnv.set(agentId, env);
+    while (this.#agentEnv.size > 500) this.#agentEnv.delete(this.#agentEnv.keys().next().value!);
+    this.ledger.updateAgent(agentId, { verifyEnv: Object.keys(env).sort() });
   }
 
   // ------------------------------------------------------------------ prompt_submit
@@ -321,6 +332,7 @@ export class Router {
    * the main session's transcript. Runs after the hook answers.
    */
   #recordClose(requestId: string, ev: RouterEvent): void {
+    for (const a of this.ledger.listAgents(requestId)) this.#agentEnv.delete(a.agentId);   // decision 142: their lifetime ends here
     const transcript = str(ev.raw.transcript_path);
     this.#track((async () => {
       const req = this.ledger.getRequest(requestId);
@@ -622,7 +634,7 @@ export class Router {
     // Decision 99: the toolchain variables the relay forwarded from this subagent's hook environment.
     const env = cleanVerifyEnv(ev.raw.verifyEnv ?? (ev as { verifyEnv?: unknown }).verifyEnv);
     if (known) {
-      if (env) this.ledger.updateAgent(agentId, { verifyEnv: env });
+      if (env) this.#rememberEnv(agentId, env);
       // With async Agent runs, PostToolUse(Agent) ("async_launched") can arrive before SubagentStart and has
       // already confirmed the pairing (integration run 3, E2). The start state belongs to this event: keep
       // the cwd and take the work-tree snapshot now, so the stop check has its baseline.
@@ -661,13 +673,13 @@ export class Router {
     if (!sub) {
       ctx.requestId = this.ledger.latestRequest(ev.sessionId)?.id ?? null;
       this.ledger.insertAgent({ ...base, requestId: ctx.requestId, subtaskId: null, role, slot: null, step: null, snapshot: snapshot ?? null, pairing: 'unmatched' });
-      if (env) this.ledger.updateAgent(agentId, { verifyEnv: env });
+      if (env) this.#rememberEnv(agentId, env);
       this.#log.warn('subagent started without a pending subtask', { agentId, agentType: ev.agentType });
       return NONE;
     }
     ctx.requestId = sub.requestId;
     this.ledger.insertAgent({ ...base, requestId: sub.requestId, subtaskId: sub.id, role: sub.role, slot: sub.slot, step: sub.step, snapshot: snapshot ?? null, pairing: byTag ? 'confirmed' : 'order' });
-    if (env) this.ledger.updateAgent(agentId, { verifyEnv: env });
+    if (env) this.#rememberEnv(agentId, env);
     this.ledger.updateSubtask(sub.requestId, sub.id, { agentId, status: 'running' }, this.#at());
     this.#writeAgentFile(agentId, ev.sessionId, sub);
     return NONE;
@@ -930,7 +942,7 @@ export class Router {
       : [];
     return {
       cwd, ...(root ? { root } : {}), commands: [], secrets: this.#secrets, signal: this.#abort.signal,
-      env: verifyEnv(agent.verifyEnv ?? undefined),
+      env: verifyEnv(this.#agentEnv.get(agent.agentId)),   // decision 142: values from memory (gone after a daemon restart)
       commandTimeoutMs: this.#verify.commandTimeoutMs, totalTimeoutMs: this.#verify.totalTimeoutMs,
       ...(this.#verify.shell ? { shell: this.#verify.shell } : {}),
       scope: {
@@ -1175,12 +1187,7 @@ export class Router {
   /** Whether the session's latest prompt was a task notification (read from the recorded events). */
   #turnStartedByNotification(sessionId: string): boolean {
     const payload = this.ledger.lastEventPayload(sessionId, 'prompt_submit');
-    if (!payload) return false;
-    try {
-      return classifyPrompt(String((JSON.parse(payload) as { prompt?: unknown }).prompt ?? '')).kind === 'notification';
-    } catch {
-      return false;
-    }
+    return !!payload && storedPromptKind(payload) === 'notification';   // decision 141: the stored kind, not the text
   }
 
   /** Audit #11: a subtask the router allowed but whose subagent never started is cancelled after a while. */

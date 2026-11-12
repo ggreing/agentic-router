@@ -5,7 +5,7 @@ export {
   ConfigError, checkTlsEnv, checkUpstream, loadSettings, type ProxySettings,
 } from './config.ts';
 export { proxyPaths, routerHome, type ProxyPaths } from './paths.ts';
-export { LocalTokens, ROTATION_GRACE_MS, newToken, tokenId, writeTokenFile } from './token.ts';
+export { LocalTokens, ROTATION_GRACE_MS, newToken, tokenId, writeRotationMeta, writeTokenFile } from './token.ts';
 export { VAULT_ACCOUNT, VAULT_SERVICE, VaultError, deleteKey, keyStatus, loadKey, readKey, storeKey, type Runner, type VaultErrorCode, type VaultOptions } from './vault.ts';
 export { Budget, BUDGET_PATH, type Block, type RequestBudget } from './budget.ts';
 export { USAGE_PATH, UsageReporter, type UsageRow } from './usage.ts';

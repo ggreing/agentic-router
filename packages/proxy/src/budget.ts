@@ -8,6 +8,7 @@
 // Daily totals live in proxy.db (node:sqlite); a day is the local calendar day.
 // Overshoot is bounded by the responses already in flight when a cap is reached.
 import type { BudgetAnswer } from '@agentic-router/core';
+import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import type { DaemonTarget } from './usage.ts';
@@ -60,6 +61,8 @@ export class Budget {
   readonly #source: BudgetSource;
   readonly #now: () => Date;
   readonly #cache = new Map<string, { at: number; value: RequestBudget | undefined; added: number }>();
+  // A6: a worst-case amount reserved against the daily caps at check time and replaced with the actual at settle.
+  readonly #pending = new Map<string, { tokenId: string; sessionId: string | null; promptId: string | null; reserved: number; day: string }>();
 
   constructor(o: { dbFile: string; tokenDailyCapUsd: number; dailyCapUsd: number; source: BudgetSource; now?: () => Date }) {
     this.#db = new DatabaseSync(o.dbFile);
@@ -78,23 +81,36 @@ export class Budget {
     return { token: Number(t?.usd ?? 0), day: Number(all.usd) };
   }
 
-  /** Null when the request may go upstream. */
-  async check(a: { tokenId: string; sessionId: string | null; promptId: string | null }): Promise<Block | null> {
+  /**
+   * A6: checks the caps and, if clear, RESERVES a worst-case amount synchronously so a concurrent burst
+   * cannot all pass one cap (the reservation is in the daily totals that the next check reads). Returns a
+   * reservation id to settle() after the response, or a Block. The reservation is released if the request
+   * budget blocks. `spent()` already includes outstanding reservations.
+   */
+  async check(a: { tokenId: string; sessionId: string | null; promptId: string | null; reserveUsd: number }): Promise<{ block: Block } | { reservationId: string }> {
+    // synchronous critical section — no await before the reserve, so concurrent checks see each other's holds
     const s = this.spent(a.tokenId);
     if (s.token >= this.#tokenCap) {
-      return { kind: 'token_daily', message: `agentic-router: the daily cap for this local token is reached (${usd(s.token)} of ${usd(this.#tokenCap)}). It resets at local midnight; change proxy.tokenDailyCapUsd in config.json to raise it.` };
+      return { block: { kind: 'token_daily', message: `agentic-router: the daily cap for this local token is reached (${usd(s.token)} of ${usd(this.#tokenCap)}). It resets at local midnight; change proxy.tokenDailyCapUsd in config.json to raise it.` } };
     }
     if (s.day >= this.#dailyCap) {
-      return { kind: 'daily', message: `agentic-router: the daily API budget is reached (${usd(s.day)} of ${usd(this.#dailyCap)}). It resets at local midnight; change proxy.dailyCapUsd in config.json to raise it.` };
+      return { block: { kind: 'daily', message: `agentic-router: the daily API budget is reached (${usd(s.day)} of ${usd(this.#dailyCap)}). It resets at local midnight; change proxy.dailyCapUsd in config.json to raise it.` } };
     }
+    const reservationId = randomUUID();
+    const day = localDay(this.#now());
+    const reserved = a.reserveUsd > 0 ? a.reserveUsd : 0;
+    this.#addDaily(day, a.tokenId, reserved);
+    this.#pending.set(reservationId, { tokenId: a.tokenId, sessionId: a.sessionId, promptId: a.promptId, reserved, day });
+    // request budget (async): if it blocks, release the reservation
     if (a.sessionId && a.promptId) {
       const r = await this.#request(a.sessionId, a.promptId);
       if (r && r.value && r.value.spentUsd + r.added >= r.value.budgetUsd) {
+        this.settle(reservationId, 0);
         const spent = r.value.spentUsd + r.added;
-        return { kind: 'request', message: `agentic-router: the budget of this request is reached (${usd(spent)} of ${usd(r.value.budgetUsd)}). Raise it with /router level, or start a new request.` };
+        return { block: { kind: 'request', message: `agentic-router: the budget of this request is reached (${usd(spent)} of ${usd(r.value.budgetUsd)}). Raise it with /router level, or start a new request.` } };
       }
     }
-    return null;
+    return { reservationId };
   }
 
   async #request(sessionId: string, promptId: string): Promise<{ value: RequestBudget | undefined; added: number } | undefined> {
@@ -111,12 +127,31 @@ export class Budget {
     return entry;
   }
 
-  /** Counts a priced row against the caps (and the cached request budget until the daemon answers again). */
+  /** Adds (or, with a negative usd, removes) to a day's token total. */
+  #addDaily(day: string, tokenId: string, usd: number): void {
+    if (usd === 0) return;
+    this.#db.prepare(`INSERT INTO daily (day, token_id, usd) VALUES (?, ?, ?)
+      ON CONFLICT (day, token_id) DO UPDATE SET usd = MAX(0, usd + excluded.usd)`).run(day, tokenId, usd);
+  }
+
+  /** A6: replaces a reservation with the actual (or an estimate) cost. A 2xx that could not be priced should
+   *  still pass a positive estimate here so an unparsed success or a partial stream is charged, not free. */
+  settle(reservationId: string, actualUsd: number): void {
+    const p = this.#pending.get(reservationId);
+    if (!p) return;
+    this.#pending.delete(reservationId);
+    const actual = actualUsd > 0 ? actualUsd : 0;
+    this.#addDaily(p.day, p.tokenId, actual - p.reserved);   // net: the reservation becomes the real cost
+    if (actual > 0 && p.sessionId && p.promptId) {
+      const hit = this.#cache.get(`${p.sessionId}\n${p.promptId}`);
+      if (hit) hit.added += actual;
+    }
+  }
+
+  /** Directly counts a priced amount against the caps (seeding, and any non-reserving caller). */
   add(a: { tokenId: string; sessionId: string | null; promptId: string | null; usd: number }): void {
     if (!(a.usd > 0)) return;
-    const day = localDay(this.#now());
-    this.#db.prepare(`INSERT INTO daily (day, token_id, usd) VALUES (?, ?, ?)
-      ON CONFLICT (day, token_id) DO UPDATE SET usd = usd + excluded.usd`).run(day, a.tokenId, a.usd);
+    this.#addDaily(localDay(this.#now()), a.tokenId, a.usd);
     if (a.sessionId && a.promptId) {
       const hit = this.#cache.get(`${a.sessionId}\n${a.promptId}`);
       if (hit) hit.added += a.usd;

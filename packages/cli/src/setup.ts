@@ -41,15 +41,24 @@ export function readJsonFile<T>(file: string, fallback: T): T {
   catch (e) { throw new SettingsParseError(`cannot parse ${file} as JSON (${(e as Error).message}); comments and trailing commas are not supported`); }
 }
 
-/** Writes via a temp file + rename so an interrupted write never leaves a truncated file. */
-export function writeJsonAtomic(file: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+/**
+ * Writes via a temp file + rename so an interrupted write never leaves a truncated file. Audit C4: a symlinked
+ * file (a dotfiles setup) is written at its real target, so the link stays a link; the file keeps its mode
+ * (a new one gets `mode`, 0600 unless said otherwise).
+ */
+export function writeJsonAtomic(file: string, data: unknown, opts: { mode?: number } = {}): void {
+  let target = file;
+  try { target = fs.realpathSync(file); } catch { /* new file */ }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  let mode = opts.mode ?? 0o600;
+  try { mode = fs.statSync(target).mode & 0o777; } catch { /* new file */ }
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode });
+  if (process.platform !== 'win32') fs.chmodSync(tmp, mode);   // the umask may have narrowed or widened it
   // Windows: an antivirus scanner or indexer holding the target open makes rename fail with
   // EPERM/EACCES/EBUSY for a moment (env audit #9). Retry for about a second, then clean up.
   for (let attempt = 0; ; attempt++) {
-    try { fs.renameSync(tmp, file); return; }
+    try { fs.renameSync(tmp, target); return; }
     catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (attempt < 10 && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY')) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); continue; }
@@ -83,7 +92,61 @@ export function readConfig(): CliConfig | null {
 }
 
 export function writeConfig(c: CliConfig): void {
-  writeJsonAtomic(paths.config(), c);
+  writeJsonAtomic(paths.config(), c, { mode: 0o600 });
+  if (process.platform !== 'win32') fs.chmodSync(paths.config(), 0o600);   // audit C4: config.json is 0600 whatever it was
+}
+
+// ------------------------------------------------------------------ settings backups (decision 142)
+
+/** Settings env names that look like credentials: a backup never keeps their values. */
+export const isCredentialName = (name: string): boolean => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH/i.test(name);
+export const backupFile = (settingsFile: string): string => `${settingsFile}.agentic-router.bak`;
+
+function credentialNames(settings: unknown): string[] {
+  const env = (settings as { env?: unknown } | null)?.env;
+  return env && typeof env === 'object' && !Array.isArray(env) ? Object.keys(env).filter(isCredentialName).sort() : [];
+}
+function withoutCredentials<T extends Record<string, any>>(settings: T): T {
+  const names = credentialNames(settings);
+  if (!names.length) return settings;
+  const env = { ...settings.env };
+  for (const k of names) delete env[k];
+  const next: Record<string, any> = { ...settings };
+  if (Object.keys(env).length) next.env = env; else delete next.env;
+  return next as T;
+}
+
+/** For a plan summary: what the one-time backup about to be made leaves out. */
+export function backupNote(settingsFile: string): string {
+  if (!fs.existsSync(settingsFile) || fs.existsSync(backupFile(settingsFile))) return '';
+  const names = credentialNames(readJsonFile<Record<string, any>>(settingsFile, {}));
+  return names.length ? ` (the one-time backup leaves out ${names.map(n => `env.${n}`).join(', ')}: credentials are not copied)` : '';
+}
+
+/** The one-time backup of a settings file (0600), without credential env values. A backup that exists is kept. */
+export function writeBackup(settingsFile: string): void {
+  const bak = backupFile(settingsFile);
+  if (!fs.existsSync(settingsFile) || fs.existsSync(bak)) return;
+  writeJsonAtomic(bak, withoutCredentials(readJsonFile<Record<string, any>>(settingsFile, {})), { mode: 0o600 });
+}
+
+/** Credential env names an existing backup still holds (made before decision 142). */
+export function backupCredentials(settingsFile: string): string[] {
+  const bak = backupFile(settingsFile);
+  if (!fs.existsSync(bak)) return [];
+  try { return credentialNames(readJsonFile<unknown>(bak, {})); } catch { return []; }
+}
+
+/** init offers this when an existing backup holds credentials: the backup rewritten without them. */
+export function planBackupClean(settingsFile: string): PlannedChange | null {
+  const names = backupCredentials(settingsFile);
+  if (!names.length) return null;
+  const bak = backupFile(settingsFile);
+  return {
+    file: bak,
+    summary: `remove ${names.map(n => `env.${n}`).join(', ')} from the backup (a credential kept in plain text)`,
+    apply() { writeJsonAtomic(bak, withoutCredentials(readJsonFile<Record<string, any>>(bak, {})), { mode: 0o600 }); },
+  };
 }
 
 /** Creates the local auth token once (mode 0600 where the OS supports it). Never prints it. */
@@ -152,12 +215,11 @@ export function planStatusLine(settingsFile: string, statuslineScript: string, c
   const existing = !ours && current?.type === 'command' ? current : undefined;
   return {
     file: settingsFile,
-    summary: ours ? 'statusLine: point the router status line at this install (the wrapped original is kept)'
+    summary: (ours ? 'statusLine: point the router status line at this install (the wrapped original is kept)'
       : existing ? `statusLine: wrap the existing "${existing.command}" and append the router segment`
-      : 'statusLine: add the router status line',
+      : 'statusLine: add the router status line') + backupNote(settingsFile),
     apply() {
-      const bak = settingsFile + '.agentic-router.bak';
-      if (fs.existsSync(settingsFile) && !fs.existsSync(bak)) fs.copyFileSync(settingsFile, bak);
+      writeBackup(settingsFile);
       if (existing) { config.wrappedStatusLine = existing; writeConfig(config); }
       settings.statusLine = { type: 'command', command, ...(typeof current?.padding === 'number' ? { padding: current.padding } : {}) };
       writeJsonAtomic(settingsFile, settings);
@@ -182,4 +244,11 @@ export function planProject(projectDir: string): PlannedChange[] {
     apply() { fs.writeFileSync(gi, text + (text && !text.endsWith('\n') ? '\n' : '') + '.claude/worktrees/\n'); },
   });
   return out;
+}
+
+/** Decisions 109, 141-142: what happens to prompt text, for init and doctor. */
+export function promptStorageSummary(recordPrompts: boolean | undefined): string {
+  return recordPrompts === true
+    ? 'recordPrompts is on: a redacted copy of each prompt is kept in its request record (local only). Switching it off deletes the stored prompt text at the next daemon start.'
+    : 'recordPrompts is off: no prompt or conversation text is stored. Switching it on keeps a redacted copy per request; switching it off again deletes that text at the next daemon start.';
 }

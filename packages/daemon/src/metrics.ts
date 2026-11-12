@@ -236,7 +236,11 @@ export interface RequestDetail {
 }
 
 /** One request's full T7 record plus its verify/review signals, masked. `null` when the request is unknown. */
-export function metricsRequestDetail(ledger: Ledger, requestId: string): RequestDetail | null {
+/**
+ * One request for the dashboard. The stored prompt is returned only while recordPrompts is on now (decision 142:
+ * turning the option off hides what was kept), masked with the token values too.
+ */
+export function metricsRequestDetail(ledger: Ledger, requestId: string, o: { includePrompt?: boolean; secrets?: string[] } = {}): RequestDetail | null {
   const row = ledger.db.prepare('SELECT record, prompt FROM request_records WHERE request_id = ?').get(requestId) as Row | undefined;
   if (!row) return null;
   const record = parse<Record<string, unknown>>(row.record, {});
@@ -244,8 +248,8 @@ export function metricsRequestDetail(ledger: Ledger, requestId: string): Request
     subtaskId: x.subtaskId, attempt: x.attempt, kind: String(x.kind), ok: x.ok,
     ...(x.detail === undefined ? {} : { detail: redact(x.detail) }),
   }));
-  // prompt is null unless recordPrompts was on; redact defensively even then.
-  const prompt = row.prompt === null || row.prompt === undefined ? null : redact(String(row.prompt));
+  // prompt is null unless recordPrompts was on then and is on now; redact defensively even then.
+  const prompt = o.includePrompt !== true || row.prompt === null || row.prompt === undefined ? null : redact(String(row.prompt), o.secrets ?? []);
   return { requestId, record: maskRecord(record), signals, prompt };
 }
 

@@ -57,7 +57,7 @@ const positive = (v: unknown, fallback: number, name: string, warnings: string[]
   return fallback;
 };
 
-export function loadSettings(configFile: string, env: NodeJS.ProcessEnv = process.env, warnings: string[] = []): ProxySettings {
+export function loadSettings(configFile: string, warnings: string[] = []): ProxySettings {
   let raw: Record<string, unknown> = {};
   try {
     const v: unknown = JSON.parse(fs.readFileSync(configFile, 'utf8'));
@@ -69,9 +69,9 @@ export function loadSettings(configFile: string, env: NodeJS.ProcessEnv = proces
   const port = raw.proxyPort;
   if (!Number.isInteger(port) || (port as number) <= 0 || (port as number) > 65535) throw new ConfigError('config.proxyPort must be a port number (run agentic-router init --mode api)');
   const allowed = Array.isArray(p.allowedUpstreams) ? p.allowedUpstreams.filter((x): x is string => typeof x === 'string') : [];
-  const testUpstream = env[TEST_UPSTREAM_ENV];
-  const { url, test } = checkUpstream(typeof p.upstream === 'string' ? p.upstream : DEFAULT_UPSTREAM, allowed, testUpstream || undefined);
-  if (test) warnings.push(`${TEST_UPSTREAM_ENV} is set: forwarding to the test upstream ${url.origin}`);
+  // B1: the settings loader never honours a test-upstream environment switch in production. Tests inject a
+  // loopback http upstream by constructing ProxySettings with checkUpstream('', [], 'http://127.0.0.1:<port>').
+  const { url, test } = checkUpstream(typeof p.upstream === 'string' ? p.upstream : DEFAULT_UPSTREAM, allowed);
   const daemonPort = raw.daemonPort;
   return {
     port: port as number,

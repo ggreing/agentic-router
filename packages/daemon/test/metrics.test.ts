@@ -150,12 +150,13 @@ test('metricsRequestDetail: returns record + signals, masks secrets, honors prom
   l.close();
 });
 
-test('metricsRequestDetail: returns a redacted prompt when recordPrompts stored one', () => {
+test('metricsRequestDetail: a stored prompt comes back (redacted, token values too) only while recordPrompts is on (decision 142)', () => {
   const l = new Ledger(':memory:');
-  seed(l, { id: 'p1', closedAt: iso(10), prompt: 'fix login, key sk-ant-zzzzzzzz99999999', subtasks: [{ status: 'passed' }] });
-  const d = metricsRequestDetail(l, 'p1')!;
+  seed(l, { id: 'p1', closedAt: iso(10), prompt: 'fix login, key sk-ant-zzzzzzzz99999999, token local-token-0123456789', subtasks: [{ status: 'passed' }] });
+  assert.equal(metricsRequestDetail(l, 'p1')!.prompt, null, 'off now: hidden, though stored');
+  const d = metricsRequestDetail(l, 'p1', { includePrompt: true, secrets: ['local-token-0123456789'] })!;
   assert.ok(d.prompt && d.prompt.includes('[REDACTED]'));
-  assert.ok(!d.prompt.includes('sk-ant-zzzzzzzz99999999'));
+  assert.ok(!d.prompt.includes('sk-ant-zzzzzzzz99999999') && !d.prompt.includes('local-token-0123456789'));
   l.close();
 });
 

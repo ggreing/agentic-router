@@ -13,9 +13,14 @@
 // terminal itself (interactive) or from its stdin. It is never put in argv or in an environment variable.
 // Children get a minimal environment.
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export const VAULT_SERVICE = 'agentic-router';
 export const VAULT_ACCOUNT = 'anthropic-api-key';
+
+/** D: a real upstream key is long; refuse an implausibly short one rather than accept an 8-character string. */
+export const MIN_KEY_LENGTH = 20;
+export const MAX_KEY_LENGTH = 512;
 
 export type VaultErrorCode = 'not_found' | 'unavailable' | 'constrained_language' | 'invalid_key' | 'failed';
 export class VaultError extends Error {
@@ -51,9 +56,9 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
 
 const NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** Checks a key's shape (never its value against anything): one printable token. */
+/** Checks a key's shape (never its value against anything): one printable token of a plausible length. */
 export function validKey(key: string): boolean {
-  return key.length >= 8 && key.length <= 512 && /^[\x21-\x7e]+$/.test(key);
+  return key.length >= MIN_KEY_LENGTH && key.length <= MAX_KEY_LENGTH && /^[\x21-\x7e]+$/.test(key);
 }
 
 function defaultRunner(env: NodeJS.ProcessEnv): Runner {
@@ -230,7 +235,7 @@ export async function readKey(o: VaultOptions = {}): Promise<string> {
   const r = await run(plan.command, plan.args, { timeoutMs: READ_TIMEOUT_MS });
   if (r.code !== 0) throw failure(platform, r, 'reading the keychain');
   const key = r.stdout.replace(/^﻿/, '').trim();
-  if (!validKey(key)) throw new VaultError('invalid_key', 'the keychain entry is not a valid key (empty, too long or with spaces)');
+  if (!validKey(key)) throw new VaultError('invalid_key', 'the keychain entry is not a valid key (empty, too short, too long or with spaces)');
   return key;
 }
 
@@ -242,7 +247,7 @@ export async function storeKey(o: VaultOptions & { interactive: true } | VaultOp
   const { service, account, platform, run } = names(o);
   if (!o.interactive) {
     if (platform === 'darwin') throw new VaultError('failed', 'on macOS the key is stored interactively (security prompts for it)');
-    if (!validKey(o.key)) throw new VaultError('invalid_key', 'not a valid key (empty, too long or with spaces)');
+    if (!validKey(o.key)) throw new VaultError('invalid_key', 'not a valid key (empty, too short, too long or with spaces)');
   }
   const plan = storePlan(platform, service, account, o.interactive);
   const r = await run(plan.command, plan.args, o.interactive ? { inheritStdio: true, timeoutMs: 10 * 60_000 } : { input: o.key, timeoutMs: READ_TIMEOUT_MS });
@@ -292,5 +297,7 @@ export async function keyStatus(o: VaultOptions = {}): Promise<'present' | Vault
  */
 export async function loadKey(o: VaultOptions = {}): Promise<{ get: () => string; masked: string }> {
   const key = await readKey(o);
-  return { get: () => key, masked: `${key.slice(0, 7)}…${key.slice(-4)}` };
+  // D: log no part of the key. A short hash prefix lets logs correlate the key without revealing any of it.
+  const masked = `sha256:${createHash('sha256').update(key).digest('hex').slice(0, 8)}`;
+  return { get: () => key, masked };
 }

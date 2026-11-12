@@ -13,6 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+// decision 142: a project's verifyEnv names count only once the user accepted its policy (importing does not run the guard)
+import { acceptedVerifyEnvNames } from './guard.mjs';
 
 const EVENT = process.argv[2] || '';
 const ENDPOINT = '/router/v1/hooks/claude-code';
@@ -25,21 +27,22 @@ function routerHome() {
   return process.env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
 }
 
-// ---------------------------------------------------------------- masking (mirrors core/security.ts redact)
-// Kept in sync with core/security.ts SECRET_PATTERNS (relay has no dependencies, so it carries its own copy).
-const SECRET_PATTERNS = [
-  /sk-ant-[A-Za-z0-9_-]{8,}/g,
-  // header or JSON field holding a credential, with or without quotes and an auth scheme
-  /(authorization|x-api-key|api[-_]?key|access[-_]?token|auth[-_]?token|secret)["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s"',}]{8,}/gi,
-  /\b(bearer|basic|token)\s+[A-Za-z0-9+/=._~-]{12,}/gi,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,              // GitHub tokens
-  /\bAKIA[0-9A-Z]{16}\b/g,                      // AWS access key id
-  /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g,      // JWT
-  /\bANTHROPIC_[A-Z_]*\s*=\s*\S+/g,             // ANTHROPIC_API_KEY=..., ANTHROPIC_AUTH_TOKEN=...
-];
+// ---------------------------------------------------------------- masking (core/security.ts redact)
+// The patterns come from secret-patterns.json next to this file, generated from core SECRET_PATTERN_SPECS (decision
+// 142; a test keeps it current), applied the way core's redact applies them. Without the file nothing is spooled.
+function loadPatterns() {
+  try {
+    const specs = JSON.parse(fs.readFileSync(new URL('./secret-patterns.json', import.meta.url), 'utf8'));
+    return specs.map(s => ({ re: new RegExp(s.source, s.flags), lead: s.lead === true }));
+  } catch { return null; }
+}
+const SECRET_PATTERNS = loadPatterns();
 export function redact(text) {
+  if (!SECRET_PATTERNS) throw new Error('secret-patterns.json is missing: nothing can be masked');
   let out = String(text);
-  for (const re of SECRET_PATTERNS) out = out.replace(re, m => m.slice(0, 7) + '…[REDACTED]');
+  for (const p of SECRET_PATTERNS) {
+    out = p.lead ? out.replace(p.re, (_m, g1) => `${g1}[REDACTED]`) : out.replace(p.re, m => m.slice(0, 7) + '…[REDACTED]');
+  }
   return out;
 }
 
@@ -54,15 +57,8 @@ export const VERIFY_ENV_PASSTHROUGH = [
 ];
 const SECRET_NAME_RE = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
 
-function projectVerifyEnvNames() {
-  const base = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  try {
-    const j = JSON.parse(fs.readFileSync(path.join(base, '.agentic-router', 'policy.json'), 'utf8'));
-    return Array.isArray(j.verifyEnv) ? j.verifyEnv.filter(x => typeof x === 'string') : [];
-  } catch { return []; }
-}
 /** { name: value } for the allowed verify env vars present in this process, excluding secret-looking names. */
-export function buildVerifyEnv(env = process.env, extraNames = projectVerifyEnvNames()) {
+export function buildVerifyEnv(env = process.env, extraNames = acceptedVerifyEnvNames()) {
   const out = {};
   for (const name of [...VERIFY_ENV_PASSTHROUGH, ...extraNames]) {
     if (name === 'NODE_OPTIONS' || SECRET_NAME_RE.test(name)) continue;
@@ -87,6 +83,103 @@ function readToken(home) {
   catch { return null; }
 }
 
+// ---------------------------------------------------------------- minimal form (decisions 141-142)
+// A copy of the daemon's minimalPayload (packages/daemon/src/payload.ts; relay is dependency-free). A test runs
+// both on the same inputs and requires equal output. With recordPrompts off the spool holds this form: ids,
+// tool name, model, effort, paths, flags, verify-env names, a task notification's structured tags, the Agent
+// prompt's [subtask:]/[scope:] lines and the awaiting-user marker; no prompt, spec, report or message text.
+const MINIMAL_MARK = '_min';
+const AWAITING_USER_MARKER = '[router:awaiting-user]';
+const KEEP = ['hook_event_name', 'session_id', 'agent_id', 'agent_type', 'prompt_id', 'tool_name', 'tool_use_id', 'permission_mode', 'cwd',
+  'transcript_path', 'agent_transcript_path', 'source', 'model', 'trigger', 'stop_hook_active', 'routerClient'];
+const AGENT_INPUT = ['subagent_type', 'model', 'effort', 'isolation', 'run_in_background'];
+const AGENT_RESPONSE = ['status', 'agentId', 'agentType', 'resolvedModel', 'isAsync', 'totalTokens', 'totalDurationMs', 'totalToolUseCount',
+  'worktreePath', 'worktreeBranch', 'outputFile', 'usage'];
+const ROUTER_TOOL = /^mcp__plugin_agentic-router_router__/;
+// the dispatch lines the router parses (daemon policy.ts): the tag that starts line 1, the scope that is line 2
+const TAG_LINE = /^\s*\[subtask:\s*([A-Za-z0-9_.-]{1,64})\s*\]/;
+const SCOPE_LINE = /^\s*\[scope:[^\]]*\]\s*$/;
+const NOTIFICATION_TAGS = ['task-id', 'tool-use-id', 'output-file', 'status'];
+const PATH_LIKE = /^[^<>\n]{1,1024}$/;
+const TASK_NOTIFICATION = /^\s*<task-notification[\s>]/;
+const promptKind = p => (TASK_NOTIFICATION.test(p) ? 'notification' : /^\s*\//.test(p) ? 'command' : 'user');
+const tagOf = (src, name) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(src)?.[1]?.trim();
+
+export function notificationSkeleton(prompt) {
+  const lines = ['<task-notification>'];
+  for (const t of NOTIFICATION_TAGS) { const v = tagOf(prompt, t); if (v && PATH_LIKE.test(v)) lines.push(`<${t}>${v}</${t}>`); }
+  const wt = tagOf(prompt, 'worktree');
+  if (wt) {
+    const parts = ['worktreePath', 'worktreeBranch'].map(t => [t, tagOf(wt, t)]).filter(([, v]) => v && PATH_LIKE.test(v));
+    if (parts.length) lines.push(`<worktree>${parts.map(([t, v]) => `<${t}>${v}</${t}>`).join('')}</worktree>`);
+  }
+  const usage = tagOf(prompt, 'usage');
+  if (usage) {
+    const parts = ['subagent_tokens', 'tool_uses', 'duration_ms'].map(t => [t, tagOf(usage, t)]).filter(([, v]) => v && /^\d{1,12}$/.test(v));
+    if (parts.length) lines.push(`<usage>${parts.map(([t, v]) => `<${t}>${v}</${t}>`).join('')}</usage>`);
+  }
+  lines.push('</task-notification>');
+  return lines.join('\n');
+}
+
+export function minimalHookInput(raw) {
+  if (!isRecord(raw)) return raw;
+  const again = raw[MINIMAL_MARK] === 1;
+  const size = (o, k) => (again && typeof o[`${k}_chars`] === 'number' ? o[`${k}_chars`] : typeof o[k] === 'string' ? o[k].length : undefined);
+  const out = { [MINIMAL_MARK]: 1 };
+  for (const k of KEEP) if (raw[k] !== undefined) out[k] = raw[k];
+  if (raw.verifyEnv !== undefined) {
+    out.verifyEnv = (isRecord(raw.verifyEnv) ? Object.keys(raw.verifyEnv) : Array.isArray(raw.verifyEnv) ? raw.verifyEnv : []).filter(k => typeof k === 'string').sort();
+  }
+  const event = String(raw.hook_event_name ?? '');
+  if (event === 'UserPromptSubmit' || raw.prompt !== undefined || raw.prompt_chars !== undefined) {
+    const kind = again && (raw.prompt_kind === 'user' || raw.prompt_kind === 'notification' || raw.prompt_kind === 'command')
+      ? raw.prompt_kind : promptKind(typeof raw.prompt === 'string' ? raw.prompt : '');
+    const n = size(raw, 'prompt');
+    if (n !== undefined) out.prompt_chars = n;
+    out.prompt_kind = kind;
+    if (kind === 'notification' && typeof raw.prompt === 'string') out.prompt = notificationSkeleton(raw.prompt);
+  }
+  for (const k of ['custom_instructions', 'last_assistant_message']) {
+    const n = size(raw, k);
+    if (n !== undefined) out[`${k}_chars`] = n;
+  }
+  if (typeof raw.last_assistant_message === 'string' && raw.last_assistant_message.includes(AWAITING_USER_MARKER)) out.last_assistant_message = AWAITING_USER_MARKER;
+  const tool = typeof raw.tool_name === 'string' ? raw.tool_name : '';
+  if (isRecord(raw.tool_input)) {
+    if (tool === 'Agent') {
+      const ti = raw.tool_input;
+      const t = {};
+      for (const k of AGENT_INPUT) if (ti[k] !== undefined) t[k] = ti[k];
+      const n = size(ti, 'prompt');
+      if (n !== undefined) t.prompt_chars = n;
+      const ls = typeof ti.prompt === 'string' ? ti.prompt.split(/\r?\n/) : [];
+      const tag = TAG_LINE.exec(ls[0] ?? '')?.[1];
+      const scope = SCOPE_LINE.test(ls[1] ?? '') ? ls[1].trim() : undefined;
+      if (tag || scope) t.prompt = scope ? `${tag ? `[subtask:${tag}]` : ''}\n${scope}` : `[subtask:${tag}]`;
+      out.tool_input = t;
+    } else if (ROUTER_TOOL.test(tool)) out.tool_input = raw.tool_input;
+    else out.tool_input = {};
+  }
+  if (isRecord(raw.tool_response) && tool === 'Agent') {
+    const tr = raw.tool_response;
+    const r = {};
+    for (const k of AGENT_RESPONSE) if (tr[k] !== undefined) r[k] = tr[k];
+    const text = Array.isArray(tr.content) ? tr.content.reduce((a, b) => a + (isRecord(b) && typeof b.text === 'string' ? b.text.length : 0), 0) : undefined;
+    const n = again && typeof tr.text_chars === 'number' ? tr.text_chars : text;
+    if (n !== undefined) r.text_chars = n;
+    out.tool_response = r;
+  }
+  return out;
+}
+
+/** What goes to the spool: the minimal form, or (recordPrompts on) the input with verify-env names only. */
+export function spoolForm(input, recordPrompts) {
+  if (!recordPrompts) return minimalHookInput(input);
+  if (!isRecord(input) || !isRecord(input.verifyEnv)) return input;
+  return { ...input, verifyEnv: Object.keys(input.verifyEnv).sort() };
+}
+
 // ---------------------------------------------------------------- spool (decision 100)
 const SPOOL_MAX_AGE_MS = 24 * 60 * 60 * 1000;     // drop events older than 24h
 const SPOOL_MAX_BYTES = 20 * 1024 * 1024;         // keep the whole spool under 20MB
@@ -109,16 +202,20 @@ export function cleanSpool(dir) {
   }
 }
 
-/** Appends one masked event to spool/<ISO>-<event>-<rand>.jsonl: one line `{receivedAt, input}`. */
-export function spool(home, eventInput, receivedAt) {
+/**
+ * Appends one masked event to spool/<ISO>-<event>-<rand>.jsonl: one line `{receivedAt, input}`, the input in
+ * its spool form (decision 142). The folder is 0700 and the file 0600.
+ */
+export function spool(home, eventInput, receivedAt, recordPrompts = false) {
   const dir = path.join(home, 'spool');
   try {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') { try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ } }
     cleanSpool(dir);                              // prune before writing (decision 100)
     const stamp = receivedAt.replace(/[:.]/g, '-');
     const file = path.join(dir, `${stamp}-${EVENT || 'event'}-${Math.random().toString(36).slice(2, 8)}.jsonl`);
-    const line = redact(JSON.stringify({ receivedAt, input: eventInput })) + '\n';
-    fs.writeFileSync(file, line);
+    const line = redact(JSON.stringify({ receivedAt, input: spoolForm(eventInput, recordPrompts) })) + '\n';
+    fs.writeFileSync(file, line, { mode: 0o600 });
   } catch { /* spool is best-effort; never block the hook on a spool failure */ }
 }
 
@@ -188,7 +285,7 @@ export async function relay(raw, { home = routerHome(), write = s => process.std
     const response = await post({ port, token, body, timeoutMs });
     write(response);                        // verbatim: JSON for most events, text/plain for pre_compact
   } catch {
-    spool(home, input, receivedAt);         // daemon down / slow / error: queue for replay, then pass
+    spool(home, input, receivedAt, cfg.recordPrompts === true);   // daemon down / slow / error: queue for replay, then pass
     write(fallbackOutput(EVENT));
   }
 }

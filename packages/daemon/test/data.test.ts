@@ -3,9 +3,12 @@
 // anything of its session; VACUUM after). Temp homes, loopback.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
+import { scopeKey } from '@agentic-router/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { REQUEST_TABLES, exportLines, isoTime, purge } from '../src/data.ts';
+import { homeLayout } from '../src/home.ts';
 import { TOKEN, postHook, request, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
 
 type Rec = Record<string, any>;   // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -141,4 +144,30 @@ test('purge covers every ledger table with a request id; isoTime takes a date or
   // the shared functions run on a bare ledger too (the CLI uses them when the daemon is not running)
   assert.deepEqual([...exportLines(d.ledger.db, { includePrompts: false, secrets: [] })].length, 1);
   assert.deepEqual(purge(d.ledger.db, { all: true }), { dryRun: false, requests: 0, keptOpen: 0, rows: {}, compacted: false });
+}));
+
+test('decision 142: purge --all also clears the spool, the logs and the scope/agent files and session rows of sessions that are not live', () => withDaemon({}, async (d, clock) => {
+  await scene(d, clock);
+  const h = homeLayout(d.home);
+  for (const dir of [h.spoolDir, h.scopesDir, h.agentsDir, h.logsDir]) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(h.spoolDir, 'x-event-1.jsonl'), '{}\n');
+  fs.writeFileSync(path.join(h.scopesDir, `${scopeKey('old', 'A')}.json`), '{}');
+  fs.writeFileSync(path.join(h.scopesDir, `${scopeKey('live', 'B')}.json`), '{}');
+  fs.writeFileSync(path.join(h.agentsDir, 'a-old.json'), JSON.stringify({ sessionId: 'old' }));
+  fs.writeFileSync(path.join(h.agentsDir, 'a-live.json'), JSON.stringify({ sessionId: 'live' }));
+  fs.writeFileSync(path.join(h.logsDir, 'proxy.log'), 'a line with a path\n');
+  d.ledger.db.exec("INSERT INTO clients (session_id, node, seen_at) VALUES ('old', 'n', 't'), ('live', 'n', 't'); INSERT INTO pending_levels (session_id, level, set_at) VALUES ('old', 'L2', 't')");
+  const dry = (await purgePost(d, { all: true, dryRun: true })).body as Rec;
+  assert.equal(dry.files.spool, 1);
+  assert.ok(fs.existsSync(path.join(h.spoolDir, 'x-event-1.jsonl')), 'a dry run removes nothing');
+  const r = (await purgePost(d, { all: true })).body as Rec;
+  assert.deepEqual([r.files.spool, r.files.scopes, r.files.agents], [1, 1, 1]);
+  assert.ok(r.files.logs >= 1);
+  assert.deepEqual(fs.readdirSync(h.spoolDir), []);
+  assert.deepEqual(fs.readdirSync(h.scopesDir), [`${scopeKey('live', 'B')}.json`]);
+  assert.deepEqual(fs.readdirSync(h.agentsDir), ['a-live.json']);
+  assert.equal(fs.statSync(path.join(h.logsDir, 'proxy.log')).size, 0);
+  assert.deepEqual(rows(d, 'SELECT session_id FROM clients').map(x => x.session_id), ['live']);
+  assert.deepEqual(rows(d, 'SELECT COUNT(*) AS c FROM pending_levels')[0]!.c, 0);
+  assert.ok(rows(d, "SELECT COUNT(*) AS c FROM sessions WHERE session_id = 'old'")[0]!.c === 0);
 }));

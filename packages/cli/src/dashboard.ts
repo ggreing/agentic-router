@@ -2,10 +2,12 @@
 // token (POST /dashboard/register-code) and opens http://127.0.0.1:<port>/dashboard#code=<code> in the
 // browser; the page trades the code for a session cookie. The token stays in this process: it is sent only
 // in the Authorization header to 127.0.0.1, never put in a URL, an argument or a log line. The code is
-// single-use and expires in a minute, so the URL is printed when no browser can be opened.
+// single-use and expires in a minute, so the URL is printed when no browser can be opened. The browser is
+// pointed at a local page holding the URL (audit C1), so the code never shows in a process list.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { paths } from '@agentic-router/core';
+import path from 'node:path';
+import { paths, routerHome } from '@agentic-router/core';
 import { localRequest } from './daemonctl.ts';
 import { readConfig } from './setup.ts';
 
@@ -15,20 +17,40 @@ const URL_ENV = 'AGENTIC_ROUTER_DASHBOARD_URL';
 export type Opener = (url: string) => Promise<boolean>;
 
 /**
- * How to hand a URL to the default browser. No shell parses the URL: on Windows it goes to Start-Process
+ * How to hand a file or URL to the default browser. No shell parses it: on Windows it goes to Start-Process
  * through an environment variable (cmd's `start` would read `&` and `^`); elsewhere it is a single argument.
  */
-export function browserCommand(url: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[]; env?: Record<string, string> } {
+export function browserCommand(target: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[]; env?: Record<string, string> } {
   if (platform === 'win32') {
-    return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath $env:${URL_ENV}`], env: { [URL_ENV]: url } };
+    return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath $env:${URL_ENV}`], env: { [URL_ENV]: target } };
   }
-  if (platform === 'darwin') return { command: 'open', args: [url] };
-  return { command: 'xdg-open', args: [url] };
+  if (platform === 'darwin') return { command: 'open', args: [target] };
+  return { command: 'xdg-open', args: [target] };
 }
 
-/** Opens a URL in the default browser; false when the opener is missing, fails or hangs. */
+/** The page the browser is pointed at: it holds the URL with the code, so the code is in no process's arguments. */
+export const launchPage = (home: string = routerHome()): string => path.join(home, 'dashboard-open.html');
+
+/**
+ * Audit C1: writes a page (0600, in the router home) that sends the browser on to `url`, and returns its path.
+ * The opener gets only the path; process lists show no code. The code is single-use and expires in a minute;
+ * the page is replaced or removed by the next `agentic-router dashboard`.
+ */
+export function writeLaunchPage(url: string, home: string = routerHome()): string {
+  const file = launchPage(home);
+  fs.rmSync(file, { force: true });
+  const u = JSON.stringify(url).replace(/</g, '\\u003c');
+  fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>agentic-router dashboard</title>
+<script>location.replace(${u})</script><p>Opening the dashboard…</p>\n`, { mode: 0o600 });
+  if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+  return file;
+}
+
+/** Opens a URL in the default browser by way of the launch page; false when the opener is missing, fails or hangs. */
 export const openBrowser: Opener = url => new Promise(resolve => {
-  const c = browserCommand(url);
+  let page: string;
+  try { page = writeLaunchPage(url); } catch { resolve(false); return; }
+  const c = browserCommand(page);
   let done = false;
   const finish = (ok: boolean) => { if (!done) { done = true; resolve(ok); } };
   try {

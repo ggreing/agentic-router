@@ -46,11 +46,14 @@ export function realDataDeps(o: { confirm(q: string): Promise<boolean>; isTTY: b
       };
     },
     daemonStuck: () => daemonProcessAlive(),
-    openLedger: async () => ({
-      ledger: new (await lib()).Ledger(paths.db()),
-      recordPrompts: readConfig()?.recordPrompts === true,
+    openLedger: async () => {
+      const recordPrompts = readConfig()?.recordPrompts === true;
+      return {
+      ledger: new (await lib()).Ledger(paths.db(), { keepPrompts: recordPrompts }),   // decision 141
+      recordPrompts,
       secrets: [read(paths.token()), read(path.join(routerHome(), 'proxy-token'))].filter(Boolean),
-    }),
+      };
+    },
     out: line => console.log(line),
     err: line => console.error(line),
     writeStdout: text => process.stdout.write(text),
@@ -101,7 +104,13 @@ export async function dataExport(f: Flags, d: DataDeps): Promise<number> {
 
 function describe(r: PurgeResult, scope: string): string {
   const rows = Object.values(r.rows).reduce((a, b) => a + b, 0);
-  return `${r.requests} closed request(s) ${scope} and ${rows} row(s) in all (subtasks, events, signals, costs, proxy rows)`;
+  const f = r.files ?? {};
+  const files = Object.entries(f).filter(([k]) => k !== 'logs').reduce((a, [, n]) => a + n, 0);
+  const parts = [`${r.requests} closed request(s) ${scope}`];
+  if (rows) parts.push(`${rows} row(s) in all (subtasks, events, signals, costs, proxy rows, session records)`);
+  if (files) parts.push(`${files} file(s) (spool, scope and agent files)`);
+  if (f.logs) parts.push(`${f.logs} log file(s) emptied`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]!;
 }
 
 /** `data purge (--before <date> | --all) [--yes]`: counts first, asks, then removes and compacts. */
@@ -121,13 +130,17 @@ export async function dataPurge(f: Flags, d: DataDeps): Promise<number> {
       return JSON.parse(r.body) as PurgeResult;
     }
     const o = await d.openLedger();
-    const { purge } = await lib();
-    try { return purge(o.ledger.db, { ...(all ? { all } : { before: before.value! }), dryRun }); } finally { o.ledger.close(); }
+    const { liveSessions, purge, purgeFiles } = await lib();
+    try {
+      const r = purge(o.ledger.db, { ...(all ? { all } : { before: before.value! }), dryRun });
+      if (all) r.files = purgeFiles({ spoolDir: paths.spoolDir(), scopesDir: paths.scopesDir(), agentsDir: paths.agentsDir(), logsDir: paths.logsDir() }, liveSessions(o.ledger.db), dryRun);
+      return r;
+    } finally { o.ledger.close(); }
   };
   const plan = await run(true);
   if (!plan) return 1;
   const kept = plan.keptOpen ? ` ${plan.keptOpen} open or waiting request(s) and everything of their sessions are kept.` : '';
-  if (!Object.keys(plan.rows).length) { d.out(`Nothing to remove.${kept}`); return 0; }
+  if (!Object.keys(plan.rows).length && !Object.keys(plan.files ?? {}).length) { d.out(`Nothing to remove.${kept}`); return 0; }
   d.out(`This removes ${describe(plan, scope)}.${kept} It cannot be undone; \`agentic-router data export\` first keeps a copy.`);
   if (f.yes !== true) {
     if (!d.isTTY) { d.out('Not a terminal: re-run with --yes to purge.'); return 1; }

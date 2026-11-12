@@ -321,7 +321,9 @@ function expandBraces(word) {
 // 142; the guard never answers "allow" for Bash). Commands on the allowlist that run code the worker may have
 // written (test runners, package scripts, installs) are exactly that: allowed to be asked about, never vouched for.
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.']);
-const SECRET_VAR_RE = /(?:\$\{?!?|\$env:|%)[A-Za-z0-9_]*(?:ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN)[A-Za-z0-9_]*\}?/i;
+/** The secret-looking part of a variable name; mirrors core/security.ts (a test asserts equality). */
+export const SECRET_VAR_NAME_PATTERN = 'ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN';
+const SECRET_VAR_RE = new RegExp(String.raw`(?:\$\{?!?|\$env:|%)[A-Za-z0-9_]*(?:${SECRET_VAR_NAME_PATTERN})[A-Za-z0-9_]*\}?`, 'i');
 
 /** Options refused on top of ROUTER_BASH_DENY_OPTIONS (which mirrors core): they read hidden or ignored files, or set a variable. */
 export const GUARD_EXTRA_DENY_OPTIONS = {
@@ -480,6 +482,40 @@ function dirHoldsCredentialFile(dir) {
     return false;
   };
   return walk(dir, 0);
+}
+
+/**
+ * Credential files below `dir` that a search honouring .gitignore would still open: found by the same
+ * bounded walk, then without those git ignores (tracked or not, as the search tools decide by pattern).
+ * Outside a git repository nothing is ignored. Returns paths relative to `dir`, at most 20.
+ */
+export function unignoredCredentialFiles(dir) {
+  const found = [];
+  let seen = 0;
+  const walk = (d, depth) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (++seen > 3000 || found.length >= 20) return;
+      if (CREDENTIAL_FILE_RE.test(e.name) && !ENV_TEMPLATE_RE.test(e.name) && !e.isDirectory()) found.push(toPosix(path.relative(dir, path.join(d, e.name))));
+      else if (e.isDirectory() && depth < 4 && !WALK_SKIP.has(e.name)) walk(path.join(d, e.name), depth + 1);
+    }
+  };
+  walk(dir, 0);
+  if (!found.length) return [];
+  try {
+    const r = spawnSync('git', ['-C', dir, 'check-ignore', '--no-index', '-z', '--stdin'], { input: found.join('\0') + '\0', encoding: 'utf8', timeout: 3000 });
+    if (r.status === 0 || r.status === 1) {
+      const ignored = new Set(String(r.stdout).split('\0').filter(Boolean));
+      return found.filter(f => !ignored.has(f));
+    }
+  } catch { /* git missing: nothing is known to be ignored */ }
+  return found;
+}
+/** Whether a Grep `glob` narrows the search to named files (a bare "*" or "**\/*" does not, nor does an exclusion). */
+function narrowingGlob(g) {
+  if (typeof g !== 'string' || g.trim() === '') return false;
+  return expandBraces(g.trim()).every(alt => !alt.startsWith('!') && alt.split('/').some(seg => seg !== '' && !/^\*+$/.test(seg)));
 }
 
 const NPM_NAME_RE = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.^~<>=*|-]+)?$/i;
@@ -963,6 +999,21 @@ export function evaluate(hookInput, opts = {}) {
     for (const p of targets)
       if (credentialHit(p, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be read.` };
+    // A Grep over a directory that names no files opens whatever lies below it, hidden files included, except
+    // what git ignores. With a credential file there that git does not ignore, it is denied; without one the
+    // guard says nothing (the walk is bounded, so it does not vouch for the directory).
+    if (tool === 'Grep' && !narrowingGlob(input.glob) && typeof input.type !== 'string') {
+      const dir = typeof input.path === 'string' && input.path !== '' ? (path.isAbsolute(input.path) ? input.path : path.resolve(cwd, input.path)) : cwd;
+      let isDir = false;
+      try { isDir = fs.statSync(dir).isDirectory(); } catch { /* not there: nothing to open */ }
+      if (isDir) {
+        if (isUnder(dir, stateHome)) return { deny: `[router] blocked: ${toPosix(dir)} is inside the router state folder and may not be searched.` };
+        const open = unignoredCredentialFiles(dir);
+        if (open.length)
+          return { deny: `[router] blocked: this Grep would read ${open.slice(0, 3).join(', ')}${open.length > 3 ? ', …' : ''} below ${toPosix(dir)}: a credential file that git does not ignore. Add a glob or a type (for example glob "*.ts"), search a subdirectory, or name the files.` };
+        return null;
+      }
+    }
     // The router state folder holds the local token and the proxy token (decision 130); off-limits to subagents.
     for (const p of targets)
       if (isUnder(p, stateHome))

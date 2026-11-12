@@ -301,7 +301,7 @@ test('B3: Grep and Glob aimed at credential files; default protected files of an
     ];
     for (const [tool, input] of denied) assert.ok(call(w, tool, input)?.deny, `${tool} ${JSON.stringify(input)}`);
     for (const [tool, input] of [
-      ['Grep', { pattern: 'TODO', path: w.repo, glob: '*.ts' }], ['Grep', { pattern: 'TODO', path: path.join(w.repo, 'src') }], ['Glob', { pattern: 'src/**/*.ts', path: w.repo }],
+      ['Grep', { pattern: 'TODO', path: w.repo, glob: '*.ts' }], ['Grep', { pattern: 'TODO', path: w.repo, type: 'ts' }], ['Grep', { pattern: 'TODO', path: path.join(w.repo, 'src', 'a.ts') }], ['Glob', { pattern: 'src/**/*.ts', path: w.repo }],
       ['Glob', { pattern: '**/*.env.example' }], ['Read', { file_path: path.join(w.repo, '.env.example') }],
     ] as Array<[string, Record<string, unknown>]>) assert.ok(call(w, tool, input)?.allow, `${tool} ${JSON.stringify(input)}`);
 
@@ -312,6 +312,46 @@ test('B3: Grep and Glob aimed at credential files; default protected files of an
     for (const rel of ['src/a.ts', 'README.md', 'docs/guide.md', 'package.json']) assert.ok(unscoped(rel)!.allow, rel);
     // with a scope line the scope decides; a `.git` file is refused even inside it
     assert.match(call(w, 'Write', { file_path: path.join(w.repo, 'src', '.git'), content: 'x' })!.deny!, /protected path/);
+  } finally { done(w); }
+});
+
+test('B3: a Grep over a directory is denied when a credential file git does not ignore lies below it', () => {
+  const w = world();
+  try {
+    const grep = (input: Record<string, unknown>) => call(w, 'Grep', { pattern: 'x', ...input });
+    // the fixture's .env is not ignored: a search of the repository that names no files would open it
+    assert.match(grep({ path: w.repo })!.deny!, /would read \.env below .*git does not ignore/);
+    assert.match(grep({})!.deny!, /would read \.env/, 'no path = the working directory');
+    assert.match(grep({ path: w.repo, glob: '*' })!.deny!, /would read \.env/, 'a bare * narrows nothing');
+    assert.match(grep({ path: w.repo, glob: '**/*' })!.deny!, /would read \.env/);
+    assert.match(grep({ path: w.repo, glob: '!*.md' })!.deny!, /would read \.env/, 'an exclusion narrows nothing');
+    assert.match(grep({ path: '.' })!.deny!, /would read \.env/, 'a relative path is resolved in the working directory');
+    // a directory without one: no decision either way
+    assert.equal(grep({ path: path.join(w.repo, 'src') }), null);
+    // named files, a glob or a type: as before
+    assert.ok(grep({ path: w.repo, glob: '*.ts' })!.allow);
+    assert.ok(grep({ path: w.repo, type: 'js' })!.allow);
+    assert.ok(grep({ path: path.join(w.repo, 'src', 'a.ts') })!.allow);
+    // nested, and other credential file names
+    fs.mkdirSync(path.join(w.repo, 'src', 'conf'));
+    fs.writeFileSync(path.join(w.repo, 'src', 'conf', '.npmrc'), '//registry/:_authToken=x\n');
+    assert.match(grep({ path: path.join(w.repo, 'src') })!.deny!, /would read conf\/\.npmrc/);
+    assert.deepEqual(guard.unignoredCredentialFiles(w.repo).sort(), ['.env', 'src/conf/.npmrc']);
+    // ignored by git: the search skips them, so it is not denied (and not vouched for)
+    fs.writeFileSync(path.join(w.repo, '.gitignore'), '.env\n.npmrc\n');
+    assert.deepEqual(guard.unignoredCredentialFiles(w.repo), []);
+    assert.equal(grep({ path: w.repo }), null);
+    assert.equal(grep({ path: path.join(w.repo, 'src') }), null);
+    // an env template is not a credential file
+    assert.deepEqual(guard.unignoredCredentialFiles(path.join(w.repo)), []);
+    // outside a git repository nothing is ignored
+    const plain = path.join(w.base, 'plain');
+    fs.mkdirSync(plain);
+    fs.writeFileSync(path.join(plain, '.gitignore'), '.env\n');
+    fs.writeFileSync(path.join(plain, '.env'), 'FAKE=1\n');
+    assert.deepEqual(guard.unignoredCredentialFiles(plain), ['.env']);
+    // the router state folder is never searched
+    assert.match(grep({ path: w.state })!.deny!, /router state folder|credential path/);
   } finally { done(w); }
 });
 

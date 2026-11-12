@@ -22,7 +22,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import type { ClientAdapter } from './adapter.ts';
 import { createDashboard, type Dashboard } from './dashboard.ts';
-import { exportLines, isoTime, purge } from './data.ts';
+import { exportLines, isoTime, liveSessions, purge, purgeFiles, type DataHome } from './data.ts';
 import type { Ledger } from './ledger.ts';
 import { recordLimits } from './limits.ts';
 import { errorText, type Logger } from './log.ts';
@@ -65,6 +65,8 @@ export interface ServerDeps {
   now?: () => Date;
   /** Data export: whether stored prompts go out (config.recordPrompts) and the token values to mask. */
   data?: { recordPrompts: boolean; secrets: () => string[] };
+  /** The router home's folders, for purge --all (spool, scopes, agents, logs). */
+  home?: DataHome;
 }
 
 class HttpError extends Error {
@@ -104,6 +106,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       ledger: d.ledger, token: d.token, distDir: d.dashboardDir ?? DEFAULT_DASHBOARD_DIST,
       port: () => { const a = server.address(); return a && typeof a !== 'string' ? a.port : null; },
       statusView: sessionId => d.router.status(sessionId),
+      recordPrompts: d.data?.recordPrompts === true,   // decision 142: a stored prompt shows only while the option is on
     });
   }
 
@@ -196,6 +199,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       if (all === !!before) throw new HttpError(400, 'give either before or all');
       await d.router.drain();                         // a request being closed writes its record first
       const result = purge(d.ledger.db, { ...(before ? { before } : {}), all, dryRun: body.dryRun === true });
+      if (all && d.home) result.files = purgeFiles(d.home, liveSessions(d.ledger.db), result.dryRun);   // decision 142
       if (!result.dryRun) d.logger.info('data purged', { before: before ?? 'all', requests: result.requests, keptOpen: result.keptOpen });
       return send(res, 200, result);
     }

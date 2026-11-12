@@ -98,3 +98,17 @@ test('against the real daemon: the opened URL\'s code logs the page in once', as
     assert.equal((await auth(code!)).status, 401, 'single use');
   } finally { await stop(); }
 });
+
+test('audit C1: the browser is pointed at a 0600 page in the router home, so the code is in no process argument', async () => {
+  const { writeLaunchPage, launchPage } = await import('../src/dashboard.ts');
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  const url = `http://127.0.0.1:4000/dashboard#code=${CODE}`;
+  const page = writeLaunchPage(url, home);
+  assert.equal(page, launchPage(home));
+  assert.ok(fs.readFileSync(page, 'utf8').includes(`location.replace("http://127.0.0.1:4000/dashboard#code=${CODE}")`));
+  if (process.platform !== 'win32') assert.equal(fs.statSync(page).mode & 0o777, 0o600);
+  for (const p of ['darwin', 'linux', 'win32'] as const) assert.ok(!browserCommand(page, p).args.join(' ').includes(CODE), p);
+  // a script-breaking URL cannot end the script early
+  assert.ok(!fs.readFileSync(writeLaunchPage('http://127.0.0.1:1/dashboard#code=</script><b>', home), 'utf8').includes('</script><b>'));
+});

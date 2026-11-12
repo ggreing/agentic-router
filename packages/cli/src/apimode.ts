@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readJsonFile, writeJsonAtomic, type PlannedChange } from './setup.ts';
+import { backupNote, readJsonFile, writeBackup, writeJsonAtomic, type PlannedChange } from './setup.ts';
 
 export type ApiMode = 'proxy' | 'direct';
 
@@ -32,7 +32,7 @@ export const proxyBaseUrl = (port: number) => `http://127.0.0.1:${port}`;
 export function isRouterHelper(command: unknown): boolean {
   return typeof command === 'string' && /(local-token|key-helper)\.mjs/.test(command) && /agentic-router|[\\/]proxy[\\/]bin[\\/]/i.test(command);
 }
-const isOurBaseUrl = (v: unknown) => typeof v === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
+export const isOurBaseUrl = (v: unknown): boolean => typeof v === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
 
 /** What Claude Code's user settings should hold in a mode, as a planned change (null: already so). */
 export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: number, pkgDir = proxyPackageDir()): PlannedChange | null {
@@ -62,10 +62,9 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
   if (unchanged) return null;
   return {
     file: settingsFile,
-    summary: `API-key mode (${mode}): ${notes.join('; ')}`,
+    summary: `API-key mode (${mode}): ${notes.join('; ')}${backupNote(settingsFile)}`,
     apply() {
-      const bak = settingsFile + '.agentic-router.bak';
-      if (fs.existsSync(settingsFile) && !fs.existsSync(bak)) fs.copyFileSync(settingsFile, bak);
+      writeBackup(settingsFile);   // decision 142: without credential env values
       const next: Record<string, any> = { ...settings, apiKeyHelper: helper };
       if (Object.keys(env).length) next.env = env; else delete next.env;
       writeJsonAtomic(settingsFile, next);

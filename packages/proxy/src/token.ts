@@ -27,6 +27,19 @@ export function writeTokenFile(file: string, token: string): void {
   fs.renameSync(tmp, file);
 }
 
+// C3: the rotation grace is measured from rotation time, not from when the proxy next reads the file. The
+// rotator (this class, or the CLI's `token rotate`) records the moment and whether a grace applies in a
+// side file; the proxy reads it when it notices the new token. `grace: false` (token rotate --no-grace)
+// invalidates the previous token at once.
+const metaFile = (file: string): string => `${file}.rotated`;
+export function writeRotationMeta(file: string, at: number, grace: boolean): void {
+  try { fs.writeFileSync(metaFile(file), JSON.stringify({ at, grace }), { mode: 0o600 }); } catch { /* best effort */ }
+}
+function readRotationMeta(file: string): { at?: number; grace?: boolean } | null {
+  try { const v = JSON.parse(fs.readFileSync(metaFile(file), 'utf8')) as unknown; return v && typeof v === 'object' ? v as { at?: number; grace?: boolean } : null; }
+  catch { return null; }
+}
+
 const same = (a: string, b: string): boolean => {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -64,7 +77,13 @@ export class LocalTokens {
     if (token.length < MIN_TOKEN_LENGTH) { if (initial) throw new Error(`local token in ${this.#file} is too short`); return; }
     if (token === this.#current) return;
     const old = this.#current;
-    if (old) this.#previous = { token: old, until: this.#now() + this.#graceMs };
+    if (old) {
+      const meta = readRotationMeta(this.#file);
+      const graceMs = meta && meta.grace === false ? 0 : this.#graceMs;
+      // measure from the recorded rotation time, clamped to now so a future-dated meta can't extend the window
+      const at = Math.min(typeof meta?.at === 'number' ? meta.at : this.#now(), this.#now());
+      this.#previous = graceMs > 0 ? { token: old, until: at + graceMs } : undefined;
+    }
     this.#current = token;
     this.#onChange?.(token, undefined);
   }
@@ -83,9 +102,11 @@ export class LocalTokens {
     return null;
   }
 
-  /** Writes a new token now (what `token rotate` does from the CLI); the old one stays valid for the grace window. */
-  rotate(): string {
+  /** Writes a new token now (what `token rotate` does); the old one stays valid for the grace window unless
+   *  `grace: false` (token rotate --no-grace). The rotation time is recorded so the grace starts now (C3). */
+  rotate(opts: { grace?: boolean } = {}): string {
     const token = newToken();
+    writeRotationMeta(this.#file, this.#now(), opts.grace !== false);
     writeTokenFile(this.#file, token);
     this.#mtimeMs = -1;
     this.#reload();

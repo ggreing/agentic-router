@@ -40,22 +40,22 @@ const qs = (params: Record<string, string | number | undefined>): string => {
 export const api = {
   summary(window: { since?: string; until?: string } = {}): Promise<MetricsSummary> {
     if (USE_MOCK) return Promise.resolve(mockSummary());
-    return getJSON(`/router/v1/metrics/summary${qs(window)}`);
+    return getJSON(`/dashboard/metrics/summary${qs(window)}`);
   },
   requests(opts: { limit?: number; before?: Cursor | null; level?: string } = {}): Promise<RequestsPage> {
     if (USE_MOCK) return Promise.resolve(mockRequests(opts));
-    return getJSON(`/router/v1/metrics/requests${qs({ limit: opts.limit, level: opts.level, before: opts.before ? `${opts.before.closedAt},${opts.before.requestId}` : undefined })}`);
+    return getJSON(`/dashboard/metrics/requests${qs({ limit: opts.limit, level: opts.level, before: opts.before ? `${opts.before.closedAt},${opts.before.requestId}` : undefined })}`);
   },
   detail(requestId: string): Promise<RequestDetail> {
     if (USE_MOCK) return Promise.resolve(mockDetail(requestId));
-    return getJSON(`/router/v1/metrics/requests/${encodeURIComponent(requestId)}`);
+    return getJSON(`/dashboard/metrics/requests/${encodeURIComponent(requestId)}`);
   },
   triage(window: { since?: string } = {}): Promise<TriageReport> {
     if (USE_MOCK) return Promise.resolve(mockTriage());
-    return getJSON(`/router/v1/metrics/triage-report${qs(window)}`);
+    return getJSON(`/dashboard/metrics/triage-report${qs(window)}`);
   },
   now(): Promise<NowView> {
     if (USE_MOCK) return Promise.resolve(mockNow());
-    return getJSON(`/router/v1/metrics/now`);
+    return getJSON(`/dashboard/metrics/now`);
   },
 };

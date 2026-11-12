@@ -22,7 +22,12 @@ export class Masker {
   }
   mask(text: string): string {
     let out = text;
-    for (const s of this.#secrets) out = out.split(s).join('[REDACTED]');
+    for (const s of this.#secrets) {
+      out = out.split(s).join('[REDACTED]');
+      // the line is already JSON, so a secret with a quote or backslash appears escaped — mask that form too (D)
+      const esc = JSON.stringify(s).slice(1, -1);
+      if (esc !== s) out = out.split(esc).join('[REDACTED]');
+    }
     for (const re of PATTERNS) out = out.replace(re, m => (/^bearer/i.test(m) ? 'Bearer [REDACTED]' : '[REDACTED]'));
     return out;
   }

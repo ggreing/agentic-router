@@ -17,7 +17,7 @@ export const AWAITING_USER_MARKER = '[router:awaiting-user]';
 const ROUTER_CMD = /^\s*\/(?:agentic-router:)?router\s+(\S+)(?:\s+(\S+))?/i;
 const SLASH_COMMAND = /^\s*\/[A-Za-z][\w-]*(?::[\w-]+)?(?:\s|$)/;
 
-const TASK_NOTIFICATION = /^\s*<task-notification[\s>]/;
+export const TASK_NOTIFICATION = /^\s*<task-notification[\s>]/;
 
 export type PromptClass =
   | { kind: 'new' }

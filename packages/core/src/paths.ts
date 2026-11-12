@@ -60,6 +60,7 @@ export interface RouterConfig {
   stepDown?: 'on' | 'off';   // decision 135: two easy passes in a row move a slot one step down (default on)
   autoRelease?: 'on' | 'observe' | 'off';   // decision 138: default observe (holdout runs and the comparison is shown; nothing switches)
   holdoutRate?: number;      // decision 138: share of delegated-level requests handled lead-direct as the baseline, 0 to 0.2 (default 0.1)
+  eventRetentionDays?: number;   // decision 141: hook events older than this are dropped (default 30; 0 keeps them)
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com

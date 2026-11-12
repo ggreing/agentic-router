@@ -68,9 +68,9 @@ test('decision 99: a subagent\'s verify runs with the variables its relay forwar
     write(repo, 'src/a.ts', 'b\n');
     assert.deepEqual(await post(stop('e1')), {});
     assert.deepEqual(rows(d, "SELECT status, verdict FROM subtasks WHERE id = 'A'"), [{ status: 'passed', verdict: 'meet' }]);
-    assert.deepEqual(JSON.parse(String(rows(d, "SELECT verify_env FROM agents WHERE agent_id = 'e1'")[0]!.verify_env)), { AR_TOOLCHAIN: 'tc-1' });
+    assert.deepEqual(JSON.parse(String(rows(d, "SELECT verify_env FROM agents WHERE agent_id = 'e1'")[0]!.verify_env)), ['AR_TOOLCHAIN']);   // decision 142: names only
     const payload = String(rows(d, "SELECT payload FROM events WHERE type = 'subagent_start'")[0]!.payload);
-    assert.deepEqual(JSON.parse(payload).verifyEnv, ['AR_TOOLCHAIN', 'NODE_OPTIONS', 'MY_API_KEY']);
+    assert.deepEqual(JSON.parse(payload).verifyEnv, ['AR_TOOLCHAIN', 'MY_API_KEY', 'NODE_OPTIONS']);
     assert.ok(!payload.includes('tc-1') && !payload.includes('k-123'), payload);
   } finally { await d.close(); rmrf(d.home); rmrf(repo); }
 });

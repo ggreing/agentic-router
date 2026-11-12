@@ -42,20 +42,21 @@ function rq(port: number, method: string, pathname: string, opts: { headers?: Re
   });
 }
 
-async function withServer(fn: (ctx: { port: number; dash: ReturnType<typeof createDashboard>; ledger: Ledger }) => Promise<void>): Promise<void> {
+interface Opts { now?: () => number; idleTtlMs?: number; cookieTtlMs?: number }
+async function withServer(fn: (ctx: { port: number; dash: ReturnType<typeof createDashboard>; ledger: Ledger }) => Promise<void>, opts: Opts = {}): Promise<void> {
   const ledger = new Ledger(':memory:');
   seed(ledger);
   applyLimitsSchema(ledger.db);   // A folds this into the ledger migration; here we create it directly
   recordLimits(ledger.db, { sessionId: 's', rateLimits: { five_hour: { used_percentage: 23.5, resets_at: 1738425600 }, seven_day: { used_percentage: 41.2, resets_at: 1738857600 } }, at: '2026-11-12T10:00:00.000Z' });
   const distDir = tmpDist();
   let addr: () => number = () => 0;
-  const dash = createDashboard({ ledger, token: TOKEN, distDir, port: () => addr(), statusView: () => ({ request: { id: 'req-1', level: 'L2' }, roles: [], costUsd: 0.11, costEstimated: false, costUnknown: false, sessionCostUsd: 0.11 }) });
+  const dash = createDashboard({ ledger, token: TOKEN, distDir, port: () => addr(), statusView: () => ({ request: { id: 'req-1', level: 'L2' }, roles: [], costUsd: 0.11, costEstimated: false, costUnknown: false, sessionCostUsd: 0.11 }), now: opts.now, idleTtlMs: opts.idleTtlMs, cookieTtlMs: opts.cookieTtlMs });
   const server = http.createServer((req, res) => { if (!dash.handle(req, res)) { res.writeHead(404); res.end('{}'); } });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
   addr = () => port;
   try { await fn({ port, dash, ledger }); }
-  finally { await new Promise<void>(r => server.close(() => r())); ledger.close(); fs.rmSync(distDir, { recursive: true, force: true }); }
+  finally { dash.stop(); await new Promise<void>(r => server.close(() => r())); ledger.close(); fs.rmSync(distDir, { recursive: true, force: true }); }
 }
 
 const host = (p: number) => ({ host: `127.0.0.1:${p}` });
@@ -82,12 +83,13 @@ test('one-time code -> HttpOnly SameSite=Strict cookie -> metrics; cookie requir
     assert.match(setCookie, /ar_dash=/);
     assert.match(setCookie, /HttpOnly/);
     assert.match(setCookie, /SameSite=Strict/);
+    assert.match(setCookie, /Path=\/dashboard(?:;|$)/);     // C2: scoped so other local servers never see it
     const cookie = setCookie.split(';')[0]!;
 
-    const noCookie = await rq(port, 'GET', '/router/v1/metrics/summary', { headers: host(port) });
+    const noCookie = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: host(port) });
     assert.equal(noCookie.status, 401);
 
-    const withCookie = await rq(port, 'GET', '/router/v1/metrics/summary', { headers: { ...host(port), cookie } });
+    const withCookie = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: { ...host(port), cookie } });
     assert.equal(withCookie.status, 200);
     assert.equal((JSON.parse(withCookie.body) as { total: number }).total, 1);
 
@@ -103,17 +105,17 @@ test('every metrics sub-endpoint responds with a session cookie', async () => {
     const cookie = String(auth.headers['set-cookie']).split(';')[0]!;
     const h = { ...host(port), cookie };
     for (const [p, check] of [
-      ['/router/v1/metrics/summary', (b: Record<string, unknown>) => { assert.equal(b.total, 1); assert.equal((b.limits as { fiveHour: { usedPercentage: number } }).fiveHour.usedPercentage, 23.5); }],
-      ['/router/v1/metrics/requests?limit=5', (b: Record<string, unknown>) => assert.equal((b.rows as unknown[]).length, 1)],
-      ['/router/v1/metrics/requests/req-1', (b: Record<string, unknown>) => assert.equal(b.requestId, 'req-1')],
-      ['/router/v1/metrics/triage-report', (b: Record<string, unknown>) => assert.ok(b.overall)],
-      ['/router/v1/metrics/now', (b: Record<string, unknown>) => { assert.ok(b.request); assert.ok((b.limits as { sevenDay: unknown }).sevenDay); }],
+      ['/dashboard/metrics/summary', (b: Record<string, unknown>) => { assert.equal(b.total, 1); assert.equal((b.limits as { fiveHour: { usedPercentage: number } }).fiveHour.usedPercentage, 23.5); }],
+      ['/dashboard/metrics/requests?limit=5', (b: Record<string, unknown>) => assert.equal((b.rows as unknown[]).length, 1)],
+      ['/dashboard/metrics/requests/req-1', (b: Record<string, unknown>) => assert.equal(b.requestId, 'req-1')],
+      ['/dashboard/metrics/triage-report', (b: Record<string, unknown>) => assert.ok(b.overall)],
+      ['/dashboard/metrics/now', (b: Record<string, unknown>) => { assert.ok(b.request); assert.ok((b.limits as { sevenDay: unknown }).sevenDay); }],
     ] as Array<[string, (b: Record<string, unknown>) => void]>) {
       const r = await rq(port, 'GET', p, { headers: h });
       assert.equal(r.status, 200, p);
       check(JSON.parse(r.body) as Record<string, unknown>);
     }
-    const missing = await rq(port, 'GET', '/router/v1/metrics/requests/nope', { headers: h });
+    const missing = await rq(port, 'GET', '/dashboard/metrics/requests/nope', { headers: h });
     assert.equal(missing.status, 404);
   });
 });
@@ -123,9 +125,9 @@ test('a foreign Origin and a bad Host are refused (CSRF / DNS-rebinding defence)
     const code = dash.mintCode();
     const auth = await rq(port, 'POST', '/dashboard/auth', { headers: { ...host(port), 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
     const cookie = String(auth.headers['set-cookie']).split(';')[0]!;
-    const evil = await rq(port, 'GET', '/router/v1/metrics/summary', { headers: { ...host(port), cookie, origin: 'http://evil.example' } });
+    const evil = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: { ...host(port), cookie, origin: 'http://evil.example' } });
     assert.equal(evil.status, 403);
-    const sameOrigin = await rq(port, 'GET', '/router/v1/metrics/summary', { headers: { ...host(port), cookie, origin: `http://127.0.0.1:${port}` } });
+    const sameOrigin = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: { ...host(port), cookie, origin: `http://127.0.0.1:${port}` } });
     assert.equal(sameOrigin.status, 200);
     const badHost = await rq(port, 'GET', '/dashboard', { headers: { host: 'evil.example' } });
     assert.equal(badHost.status, 403);
@@ -155,5 +157,50 @@ test('handle returns false for non-dashboard paths so server.ts keeps its own ro
     const other = await rq(port, 'GET', '/router/v1/status', { headers: host(port) });
     assert.equal(other.status, 404);   // our test server returns 404 when handle() declines
     assert.equal(other.body, '{}');
+  });
+});
+
+async function login(port: number, dash: ReturnType<typeof createDashboard>): Promise<string> {
+  const code = dash.mintCode();
+  const auth = await rq(port, 'POST', '/dashboard/auth', { headers: { ...host(port), 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
+  return String(auth.headers['set-cookie']).split(';')[0]!;
+}
+const summary = (port: number, cookie: string) => rq(port, 'GET', '/dashboard/metrics/summary', { headers: { ...host(port), cookie } });
+
+test('session idle timeout: an unused session expires (C2)', async () => {
+  let clock = 1_000_000;
+  await withServer(async ({ port, dash }) => {
+    const cookie = await login(port, dash);
+    clock += 10 * 60 * 1000; assert.equal((await summary(port, cookie)).status, 200);   // within the 15m idle window
+    clock += 20 * 60 * 1000; assert.equal((await summary(port, cookie)).status, 401);   // idle past 15m -> expired
+  }, { now: () => clock, idleTtlMs: 15 * 60 * 1000, cookieTtlMs: 60 * 60 * 1000 });
+});
+
+test('absolute lifetime caps even a continuously active session (C2)', async () => {
+  let clock = 2_000_000;
+  await withServer(async ({ port, dash }) => {
+    const cookie = await login(port, dash);
+    for (let i = 0; i < 5; i++) { clock += 10 * 60 * 1000; await summary(port, cookie); }   // active, never idle
+    clock += 10 * 60 * 1000;                                                                  // now past the 1h absolute cap
+    assert.equal((await summary(port, cookie)).status, 401);
+  }, { now: () => clock, idleTtlMs: 30 * 60 * 1000, cookieTtlMs: 60 * 60 * 1000 });
+});
+
+test('logout revokes the session and clears the cookie (C2)', async () => {
+  await withServer(async ({ port, dash }) => {
+    const cookie = await login(port, dash);
+    assert.equal((await summary(port, cookie)).status, 200);
+    const out = await rq(port, 'POST', '/dashboard/logout', { headers: { ...host(port), cookie } });
+    assert.equal(out.status, 200);
+    assert.match(String(out.headers['set-cookie']), /Max-Age=0/);
+    assert.equal((await summary(port, cookie)).status, 401);
+  });
+});
+
+test('bad metrics input is a 400, not a 500 (D)', async () => {
+  await withServer(async ({ port, dash }) => {
+    const cookie = await login(port, dash);
+    assert.equal((await rq(port, 'GET', '/dashboard/metrics/requests?limit=abc', { headers: { ...host(port), cookie } })).status, 400);
+    assert.equal((await rq(port, 'GET', '/dashboard/metrics/requests/%zz', { headers: { ...host(port), cookie } })).status, 400);
   });
 });

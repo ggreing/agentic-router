@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   try {
     checkTlsEnv();
     const warnings: string[] = [];
-    const settings = loadSettings(paths.config, process.env, warnings);
+    const settings = loadSettings(paths.config, warnings);
     for (const w of warnings) log.warn(w);
     LocalTokens.ensure(paths.proxyToken);
     const tokens = new LocalTokens(paths.proxyToken, { onChange: (added, removed) => { masker.add(added); masker.remove(removed); } });

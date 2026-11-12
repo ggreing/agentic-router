@@ -1,7 +1,11 @@
 // Dashboard + metrics HTTP surface (decision 132), prepared as a module so it can be unit-tested with
-// its own node:http server and hooked into server.ts in a few lines. server.ts
-// calls `dashboard.handle(req, res)` BEFORE its own routing: it returns true when it has taken ownership
-// of the request (any /dashboard/* or /router/v1/metrics/* path) and written the response, false otherwise.
+// its own node:http server and hooked into server.ts in a few lines. server.ts calls
+// `dashboard.handle(req, res)` BEFORE its own routing: it returns true when it has taken ownership of the
+// request (any /dashboard/* path) and written the response, false otherwise. Everything lives under
+// /dashboard — the SPA shell, the one-time-code auth, and the metrics API at /dashboard/metrics/* — so the
+// session cookie is scoped to Path=/dashboard and never reaches another local server (cookies are not
+// port-scoped). Sessions have an absolute lifetime and an idle timeout, are swept, and POST
+// /dashboard/logout clears one (C2).
 //
 // Trust model (distinct from the hook API, which refuses browsers): the static SPA shell is served
 // unauthenticated (it carries no data); the metrics API requires a session cookie obtained through a
@@ -29,8 +33,11 @@ export interface DashboardDeps {
   port: () => number | null;
   /** router.status(sessionId?) for the "now" panel; omitted in tests that don't exercise it. */
   statusView?: (sessionId?: string) => unknown;
+  /** Current config.recordPrompts: the request detail returns prompt text only when this is true (A4/142). */
+  recordPrompts?: boolean;
   now?: () => number;
-  cookieTtlMs?: number;
+  cookieTtlMs?: number;      // absolute session lifetime (default 12h)
+  idleTtlMs?: number;        // idle timeout (default 30m)
   codeTtlMs?: number;
   maxBodyBytes?: number;
 }
@@ -53,17 +60,27 @@ export interface Dashboard {
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean;
   /** Test/CLI helper: mint a one-time login code without going through HTTP. */
   mintCode(): string;
+  /** Stops the background session sweeper (for tests / shutdown). */
+  stop(): void;
 }
+
+const COOKIE_PATH = '/dashboard';
 
 export function createDashboard(d: DashboardDeps): Dashboard {
   const now = d.now ?? (() => Date.now());
-  const cookieTtl = d.cookieTtlMs ?? 12 * 60 * 60 * 1000;
+  const absoluteTtl = d.cookieTtlMs ?? 12 * 60 * 60 * 1000;       // absolute session lifetime (C2)
+  const idleTtl = d.idleTtlMs ?? 30 * 60 * 1000;                  // idle timeout (C2)
   const codeTtl = d.codeTtlMs ?? 60 * 1000;
   const maxBody = d.maxBodyBytes ?? 64 * 1024;
-  const codes = new Map<string, number>();     // one-time code -> expiry
-  const sessions = new Map<string, number>();  // cookie session id -> expiry
+  const codes = new Map<string, number>();                       // one-time code -> expiry
+  const sessions = new Map<string, { created: number; seen: number }>();  // cookie session id -> timestamps
 
-  const sweep = (m: Map<string, number>): void => { const t = now(); for (const [k, exp] of m) if (exp <= t) m.delete(k); };
+  const sweepCodes = (): void => { const t = now(); for (const [k, exp] of codes) if (exp <= t) codes.delete(k); };
+  const expired = (s: { created: number; seen: number }): boolean => now() - s.created >= absoluteTtl || now() - s.seen >= idleTtl;
+  const sweepSessions = (): void => { for (const [k, s] of sessions) if (expired(s)) sessions.delete(k); };
+  // reap idle/expired sessions even without traffic; unref so it never keeps the process alive
+  const sweeper = setInterval(() => { sweepCodes(); sweepSessions(); }, 5 * 60 * 1000);
+  (sweeper as { unref?: () => void }).unref?.();
 
   function origins(): string[] {
     const p = d.port();
@@ -99,9 +116,9 @@ export function createDashboard(d: DashboardDeps): Dashboard {
   function sessionOk(req: http.IncomingMessage): boolean {
     const sid = cookieSid(req);
     if (!sid) return false;
-    const exp = sessions.get(sid);
-    if (!exp || exp <= now()) { if (sid) sessions.delete(sid); return false; }
-    sessions.set(sid, now() + cookieTtl);                   // sliding expiry
+    const s = sessions.get(sid);
+    if (!s || expired(s)) { if (sid) sessions.delete(sid); return false; }
+    s.seen = now();                                         // sliding idle; the absolute lifetime never extends
     return true;
   }
 
@@ -130,7 +147,7 @@ export function createDashboard(d: DashboardDeps): Dashboard {
   }
 
   function mintCode(): string {
-    sweep(codes);
+    sweepCodes();
     const code = randomBytes(24).toString('base64url');
     codes.set(code, now() + codeTtl);
     return code;
@@ -140,13 +157,24 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
     const body = await readJson(req);
     const code = body && typeof body.code === 'string' ? body.code : '';
-    sweep(codes);
+    sweepCodes();
     const exp = code ? codes.get(code) : undefined;
     if (!exp || exp <= now()) return sendJson(res, 401, { error: 'invalid or expired code' });
     codes.delete(code);                                     // single use
+    sweepSessions();
     const sid = randomBytes(32).toString('base64url');
-    sessions.set(sid, now() + cookieTtl);
-    res.setHeader('set-cookie', `${COOKIE}=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(cookieTtl / 1000)}`);
+    sessions.set(sid, { created: now(), seen: now() });
+    // Path=/dashboard keeps the cookie off other local servers (cookies are not port-scoped); Max-Age is the
+    // absolute lifetime, and the server also enforces the idle timeout and absolute lifetime (C2).
+    res.setHeader('set-cookie', `${COOKIE}=${sid}; HttpOnly; SameSite=Strict; Path=${COOKIE_PATH}; Max-Age=${Math.floor(absoluteTtl / 1000)}`);
+    sendJson(res, 200, { ok: true });
+  }
+
+  function logout(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+    const sid = cookieSid(req);
+    if (sid) sessions.delete(sid);
+    res.setHeader('set-cookie', `${COOKIE}=; HttpOnly; SameSite=Strict; Path=${COOKIE_PATH}; Max-Age=0`);
     sendJson(res, 200, { ok: true });
   }
 
@@ -155,7 +183,10 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     if (!sessionOk(req)) return sendJson(res, 401, { error: 'no dashboard session; open the dashboard with `agentic-router dashboard`' });
     const q = url.searchParams;
     const window = { since: q.get('since') ?? undefined, until: q.get('until') ?? undefined };
-    const sub = url.pathname.slice('/router/v1/metrics'.length).replace(/^\//, '');
+    const sub = url.pathname.slice(`${COOKIE_PATH}/metrics`.length).replace(/^\//, '');
+    // D: bad input is a 400, not a 500. Validate the query/path before touching the ledger.
+    const limitRaw = q.get('limit');
+    if (limitRaw !== null && !/^\d{1,4}$/.test(limitRaw)) return sendJson(res, 400, { error: 'limit must be a number' });
     try {
       if (sub === 'summary') return sendJson(res, 200, { ...metricsSummary(d.ledger, window), limits: latestLimits(d.ledger.db) });
       if (sub === 'requests') {
@@ -163,7 +194,7 @@ export function createDashboard(d: DashboardDeps): Dashboard {
         const bits = before ? before.split(',') : null;
         const query: RequestsQuery = {
           ...window,
-          limit: q.get('limit') ? Number(q.get('limit')) : undefined,
+          limit: limitRaw ? Number(limitRaw) : undefined,
           level: (q.get('level') as Level) ?? undefined,
           outcome: q.get('outcome') ?? undefined,
           before: bits && bits.length === 2 ? { closedAt: bits[0]!, requestId: bits[1]! } : null,
@@ -171,7 +202,9 @@ export function createDashboard(d: DashboardDeps): Dashboard {
         return sendJson(res, 200, metricsRequests(d.ledger, query));
       }
       if (sub.startsWith('requests/')) {
-        const detail = metricsRequestDetail(d.ledger, decodeURIComponent(sub.slice('requests/'.length)));
+        let id: string;
+        try { id = decodeURIComponent(sub.slice('requests/'.length)); } catch { return sendJson(res, 400, { error: 'malformed request id' }); }
+        const detail = metricsRequestDetail(d.ledger, id, { includePrompt: d.recordPrompts === true, secrets: [d.token] });
         return detail ? sendJson(res, 200, detail) : sendJson(res, 404, { error: 'no such request' });
       }
       if (sub === 'triage-report') return sendJson(res, 200, metricsTriageReport(d.ledger, window));
@@ -212,9 +245,8 @@ export function createDashboard(d: DashboardDeps): Dashboard {
   function handle(req: http.IncomingMessage, res: http.ServerResponse): boolean {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const p = url.pathname;
-    const isDash = p === '/dashboard' || p.startsWith('/dashboard/');
-    const isMetrics = p === '/router/v1/metrics' || p.startsWith('/router/v1/metrics/');
-    if (!isDash && !isMetrics) return false;
+    // Everything the dashboard needs lives under /dashboard, so the session cookie is scoped there (C2).
+    if (p !== '/dashboard' && !p.startsWith('/dashboard/')) return false;
 
     if (!hostOk(req)) { sendJson(res, 403, { error: 'host not allowed' }); return true; }
     if (!originOk(req)) { sendJson(res, 403, { error: 'cross-origin requests are not allowed' }); return true; }
@@ -226,12 +258,13 @@ export function createDashboard(d: DashboardDeps): Dashboard {
       auth(req, res).catch(() => { try { if (!res.headersSent && res.writable) sendJson(res, 400, { error: 'bad request' }); } catch { /* socket gone */ } });
       return true;
     }
-    if (isMetrics) { metrics(req, res, url); return true; }
+    if (p === '/dashboard/logout') { logout(req, res); return true; }
+    if (p === '/dashboard/metrics' || p.startsWith('/dashboard/metrics/')) { metrics(req, res, url); return true; }
     serveStatic(req, res, p);
     return true;
   }
 
-  return { handle, mintCode };
+  return { handle, mintCode, stop: () => clearInterval(sweeper) };
 }
 
 function safeReal(p: string): string {

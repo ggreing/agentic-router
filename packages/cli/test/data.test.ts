@@ -99,7 +99,7 @@ test('against the real daemon, then with it stopped: export and purge reach the 
     assert.deepEqual(exported.map(x => x.type), ['export', 'request', 'request']);
     // purge through the daemon: the two closed requests go, the open one stays
     assert.equal(await dataPurge({ all: true, yes: true }, d), 0);
-    assert.match(lines.at(-1)!, /^Removed 2 closed request\(s\) \(all of them\) .*; the ledger was compacted\.$/);
+    assert.match(lines.at(-1)!, /^Removed 2 closed request\(s\) \(all of them\), \d+ row\(s\) in all .*; the ledger was compacted\.$/);
     const st = JSON.parse((await localRequest(port, 'GET', '/router/v1/status?session_id=c', { token }))!.body) as { request: { id: string } | null };
     assert.ok(st.request, 'the open request is still there');
   } finally { await stop(); }
@@ -108,5 +108,7 @@ test('against the real daemon, then with it stopped: export and purge reach the 
   assert.equal(await dataExport({ out: file }, d), 0);
   assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 1, 'just the header now');
   assert.equal(await dataPurge({ all: true, yes: true }, d), 0);
-  assert.match(lines.at(-1)!, /^Nothing to remove\. 1 open or waiting request\(s\)/);
+  // with no daemon only its logs are left to empty (decision 142); the open request and its session stay
+  assert.match(lines.at(-1)!, /^Removed 0 closed request\(s\) \(all of them\) and \d+ log file\(s\) emptied\.$/);
+  assert.match(lines.at(-2)!, /1 open or waiting request\(s\) and everything of their sessions are kept/);
 });

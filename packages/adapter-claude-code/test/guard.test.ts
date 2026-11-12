@@ -30,6 +30,8 @@ test('guard policy constants equal core/security.ts', () => {
   assert.deepEqual(guard.PACKAGE_INSTALL_PREFIXES, core.PACKAGE_INSTALL_PREFIXES);
   assert.deepEqual(guard.ROUTER_BASH_ALLOW, core.ROUTER_BASH_ALLOW);
   assert.deepEqual(guard.ROUTER_BASH_DENY_OPTIONS, core.ROUTER_BASH_DENY_OPTIONS);
+  assert.deepEqual(guard.UNSCOPED_PROTECTED_PATHS, core.UNSCOPED_PROTECTED_PATHS);
+  assert.deepEqual(guard.GUARD_EXTRA_DENY_OPTIONS, core.GUARD_EXTRA_DENY_OPTIONS);
   assert.equal(guard.ROUTER_TOOL_PREFIX, core.ROUTER_TOOL_PREFIX);
   assert.deepEqual(guard.ROUTER_TOOL_NAMES, [...core.ROUTER_TOOL_NAMES]);
   assert.deepEqual(guard.NEVER_GRANTABLE_WRITE_PATHS, [...core.NEVER_GRANTABLE_WRITE_PATHS]);

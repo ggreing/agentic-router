@@ -16,6 +16,15 @@ export const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host']);
 const CREDENTIALS = new Set(['authorization', 'x-api-key']);
 
+// A6: the encodings the usage tap can decode. A tapped request's Accept-Encoding is filtered to these so the
+// upstream never returns a body the tap cannot read (which would be a 2xx recorded as $0).
+const TAP_ENCODINGS = new Set(['gzip', 'x-gzip', 'deflate', 'br', 'identity']);
+function filterAcceptEncoding(raw: string | string[] | undefined): string {
+  const kept = String(Array.isArray(raw) ? raw.join(',') : raw ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    .filter(tok => TAP_ENCODINGS.has(tok.split(';')[0]!.trim().toLowerCase()));
+  return kept.length ? kept.join(', ') : 'identity';
+}
+
 export interface ForwardOptions {
   upstream: URL;
   agent: http.Agent;
@@ -24,6 +33,8 @@ export interface ForwardOptions {
   headersTimeoutMs: number;
   /** Parse usage from the response copy. */
   tap: boolean;
+  /** A6: force Accept-Encoding to identity so the usage tap always reads the body (no unparsed 2xx). */
+  restrictEncoding?: boolean;
 }
 
 export interface ForwardOutcome {
@@ -78,8 +89,10 @@ export function forward(req: http.IncomingMessage, res: http.ServerResponse, o: 
       void tap.end().then(r => { out.tap = r; resolve(out); });
     };
 
-    const headers = passHeaders(req.rawHeaders, CREDENTIALS);
+    const drop = o.restrictEncoding ? new Set([...CREDENTIALS, 'accept-encoding']) : CREDENTIALS;
+    const headers = passHeaders(req.rawHeaders, drop);
     headers.push('Host', o.upstream.host, 'x-api-key', o.key());
+    if (o.restrictEncoding) headers.push('accept-encoding', filterAcceptEncoding(req.headers['accept-encoding']));
     const client = o.upstream.protocol === 'https:' ? https : http;
     const up = client.request({
       protocol: o.upstream.protocol, hostname: o.upstream.hostname, port: o.upstream.port || undefined,

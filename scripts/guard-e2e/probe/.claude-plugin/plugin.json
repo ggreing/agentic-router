@@ -1,0 +1,5 @@
+{
+  "name": "e2e-probe",
+  "version": "0.0.1",
+  "description": "Logging hooks for the guard end-to-end check. Not part of any product."
+}

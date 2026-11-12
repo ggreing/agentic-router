@@ -10,7 +10,8 @@ import { loadClaudeCodeAdapter, type ClientAdapter } from './adapter.ts';
 import { readConfig, readToken } from './config.ts';
 import { ensureHomeDirs, homeLayout, tightenPermissions } from './home.ts';
 import { Ledger } from './ledger.ts';
-import { fileLogger, type Logger } from './log.ts';
+import { DEFAULT_EVENT_RETENTION_DAYS, pruneEvents } from './data.ts';
+import { errorText, fileLogger, type Logger } from './log.ts';
 import { Router, type VerifySettings } from './router.ts';
 import { createHttpServer } from './server.ts';
 import { ProxyUsage } from './proxyusage.ts';
@@ -69,7 +70,8 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
   for (const w of configWarnings) logger.warn(w);
   const adapter = opts.adapter ?? await loadClaudeCodeAdapter();
 
-  const ledger = new Ledger(home.db);
+  // decision 141: with recordPrompts off, opening the ledger takes conversation text out of stored events
+  const ledger = new Ledger(home.db, { keepPrompts: config.recordPrompts === true });
   if (process.platform !== 'win32') tightenPermissions(home);   // the ledger file was just created (compatibility #13)
   let server: http.Server | undefined;
   try {
@@ -80,10 +82,21 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
       ...(opts.now ? { now: opts.now } : {}),
     });
     const replay = await replaySpool(home.spoolDir, adapter, router, logger, opts.now);
+    // decision 141 (a): events older than eventRetentionDays go at start and then daily (live sessions are kept)
+    const retentionDays = config.eventRetentionDays ?? DEFAULT_EVENT_RETENTION_DAYS;
+    const prune = () => {
+      try {
+        const removed = pruneEvents(ledger.db, retentionDays, (opts.now?.() ?? new Date()).toISOString());
+        if (removed) logger.info('old events dropped', { removed, retentionDays });
+      } catch (e) { logger.error('event retention failed', { error: errorText(e) }); }
+    };
+    prune();
+    const pruneTimer = retentionDays > 0 ? setInterval(prune, 86_400_000) : undefined;
+    pruneTimer?.unref();
     let close: () => Promise<void> = async () => {};
     const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
     const srv = createHttpServer({
-      router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, ...(opts.now ? { now: opts.now } : {}),
+      router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, home, ...(opts.now ? { now: opts.now } : {}),
       // data export (spec 4.4): stored prompts only with recordPrompts; the proxy token is masked like the daemon's
       data: { recordPrompts: config.recordPrompts === true, secrets: () => { try { return [fs.readFileSync(path.join(home.root, 'proxy-token'), 'utf8').trim()]; } catch { return []; } } },
       onShutdown: () => void close().catch(() => {}),
@@ -110,6 +123,7 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
       await Promise.race([stopped, sleep(2000, undefined, { ref: false })]);   // let the last responses flush
       srv.closeAllConnections();
       await stopped;
+      if (pruneTimer) clearInterval(pruneTimer);
       ledger.close();
       logger.info('daemon stopped');
     })().then(markClosed, e => { markFailed(e); throw e; });
@@ -128,4 +142,4 @@ export type { ClientAdapter } from './adapter.ts';
 export { runVerify, checkScope, type VerifyCommand, type VerifyPlan } from './verify.ts';
 export { SessionQueue } from './queue.ts';
 export { API, MAX_BODY_BYTES } from './server.ts';
-export { exportLines, isoTime, purge, REQUEST_TABLES, type ExportOptions, type PurgeOptions, type PurgeResult } from './data.ts';
+export { exportLines, isoTime, liveSessions, pruneEvents, purge, purgeFiles, scrubProse, scrubStoredPrompts, REQUEST_TABLES, SESSION_TABLES, type DataHome, type ExportOptions, type PurgeOptions, type PurgeResult } from './data.ts';

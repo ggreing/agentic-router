@@ -7,34 +7,63 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Budget } from '../src/budget.ts';
+import { canonicalPath, classifyRoute } from '../src/server.ts';
 import { ConfigError, DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, TEST_UPSTREAM_ENV, checkTlsEnv, loadSettings } from '../src/config.ts';
 import { Masker } from '../src/log.ts';
 import { proxyPaths } from '../src/paths.ts';
-import { LocalTokens, writeTokenFile } from '../src/token.ts';
+import { LocalTokens, writeRotationMeta, writeTokenFile } from '../src/token.ts';
 import { FakeUpstream, LOCAL_TOKEN, SSE_HEADERS, auth, call, messageStream, rmrf, sleep, spooled, startProxy, tmpHome } from './helpers.ts';
 
 const BIN = fileURLToPath(new URL('../bin/', import.meta.url));
+
+test('C3: rotation grace is measured from rotation time; --no-grace drops the previous token', () => {
+  const home = tmpHome();
+  try {
+    const file = path.join(home, 'proxy-token');
+    const A = 'A'.repeat(40), B = 'B'.repeat(40), C = 'C'.repeat(40);
+    let clock = 1_000_000;
+    writeTokenFile(file, A);
+    let mt = 1000;
+    const bump = () => { fs.utimesSync(file, mt, mt); mt += 1000; };   // force a distinct mtime so #reload notices
+    bump();
+    const t = new LocalTokens(file, { now: () => clock, graceMs: 10 * 60 * 1000 });
+    // external rotation (what the CLI does) at t0; the proxy only reads 9 minutes later
+    const t0 = 2_000_000;
+    writeRotationMeta(file, t0, true); writeTokenFile(file, B); bump();
+    clock = t0 + 9 * 60 * 1000;
+    assert.equal(t.accept(B)!.which, 'current');
+    assert.equal(t.accept(A)!.which, 'previous', 'old token valid until 10 min AFTER rotation, not after first read');
+    clock = t0 + 11 * 60 * 1000;
+    assert.equal(t.accept(A), null, 'old token rejected once the window (from rotation) passes');
+    // --no-grace: the previous token is invalid immediately
+    const t1 = 4_000_000; clock = t1;
+    writeRotationMeta(file, t1, false); writeTokenFile(file, C); bump();
+    assert.equal(t.accept(C)!.which, 'current');
+    assert.equal(t.accept(B), null, 'no-grace rotation leaves no previous token');
+  } finally { rmrf(home); }
+});
 
 test('settings: defaults (decision 131 caps), port required, bad caps reported, TLS off refused', () => {
   const home = tmpHome();
   try {
     const p = proxyPaths(home);
-    assert.throws(() => loadSettings(p.config, {}), /proxyPort/);
+    assert.throws(() => loadSettings(p.config), /proxyPort/);
     fs.writeFileSync(p.config, JSON.stringify({ proxyPort: 47811, daemonPort: 47800 }));
-    const s = loadSettings(p.config, {});
+    const s = loadSettings(p.config);
     assert.deepEqual([s.port, s.upstream.origin, s.testUpstream, s.tokenDailyCapUsd, s.dailyCapUsd, s.daemonPort],
       [47811, 'https://api.anthropic.com', false, DEFAULT_TOKEN_DAILY_CAP_USD, DEFAULT_DAILY_CAP_USD, 47800]);
     assert.deepEqual([DEFAULT_TOKEN_DAILY_CAP_USD, DEFAULT_DAILY_CAP_USD], [100, 300]);
     fs.writeFileSync(p.config, JSON.stringify({ proxyPort: 47811, proxy: { tokenDailyCapUsd: -1, dailyCapUsd: 50, upstream: 'https://evil.example' } }));
-    assert.throws(() => loadSettings(p.config, {}), ConfigError);
+    assert.throws(() => loadSettings(p.config), ConfigError);
     fs.writeFileSync(p.config, JSON.stringify({ proxyPort: 47811, proxy: { tokenDailyCapUsd: -1, dailyCapUsd: 50 } }));
     const w: string[] = [];
-    const s2 = loadSettings(p.config, {}, w);
+    const s2 = loadSettings(p.config, w);
     assert.deepEqual([s2.tokenDailyCapUsd, s2.dailyCapUsd], [100, 50]);
     assert.match(w[0]!, /tokenDailyCapUsd ignored/);
-    const w2: string[] = [];
-    assert.equal(loadSettings(p.config, { [TEST_UPSTREAM_ENV]: 'http://127.0.0.1:9' }, w2).testUpstream, true);
-    assert.match(w2.join(), /test upstream/);
+    // B1: a test-upstream environment switch is ignored by the production loader
+    process.env[TEST_UPSTREAM_ENV] = 'http://127.0.0.1:9';
+    try { assert.equal(loadSettings(p.config).testUpstream, false, 'B1: env test-upstream switch ignored'); }
+    finally { delete process.env[TEST_UPSTREAM_ENV]; }
     assert.throws(() => checkTlsEnv({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }), /TLS verification/);
     checkTlsEnv({});
   } finally { rmrf(home); }
@@ -81,21 +110,62 @@ test('budget: per-token and global daily caps, a request budget, fail open witho
   let day = new Date(2026, 10, 12, 10);
   const b = new Budget({ dbFile: path.join(home, 'p.db'), tokenDailyCapUsd: 2, dailyCapUsd: 3, source: async () => answer, now: () => day });
   try {
-    const a = { tokenId: 't1', sessionId: 's', promptId: 'p' };
-    assert.equal(await b.check(a), null);
-    b.add({ ...a, usd: 0.6 });                                                   // 0.5 + 0.6 over the request's 1.0
-    assert.equal((await b.check(a))?.kind, 'request');
+    type R = { block: { kind: string } } | { reservationId: string };
+    const kind = (r: R) => ('block' in r ? r.block.kind : null);
+    const ok = (r: R) => 'reservationId' in r;
+    // reserveUsd 0 keeps these checks side-effect free so they stay pure cap probes; add() seeds the totals.
+    const a = { tokenId: 't1', sessionId: 's', promptId: 'p', reserveUsd: 0 };
+    assert.ok(ok(await b.check(a)));
+    b.add({ tokenId: 't1', sessionId: 's', promptId: 'p', usd: 0.6 });           // 0.5 + 0.6 over the request's 1.0
+    assert.equal(kind(await b.check(a)), 'request');
     answer = undefined;                                                          // daemon stops answering: last answer kept
     day = new Date(day.getTime() + 3000);
-    assert.equal((await b.check(a))?.kind, 'request');
-    assert.equal(await b.check({ ...a, promptId: 'other' }), null);              // unknown prompt: fail open
+    assert.equal(kind(await b.check(a)), 'request');
+    assert.ok(ok(await b.check({ ...a, promptId: 'other' })));                   // unknown prompt: fail open
     b.add({ tokenId: 't1', sessionId: null, promptId: null, usd: 1.5 });
-    assert.equal((await b.check({ tokenId: 't1', sessionId: null, promptId: null }))?.kind, 'token_daily');
-    assert.equal(await b.check({ tokenId: 't2', sessionId: null, promptId: null }), null);
+    assert.equal(kind(await b.check({ tokenId: 't1', sessionId: null, promptId: null, reserveUsd: 0 })), 'token_daily');
+    assert.ok(ok(await b.check({ tokenId: 't2', sessionId: null, promptId: null, reserveUsd: 0 })));
     b.add({ tokenId: 't2', sessionId: null, promptId: null, usd: 1 });
-    assert.equal((await b.check({ tokenId: 't3', sessionId: null, promptId: null }))?.kind, 'daily');
+    assert.equal(kind(await b.check({ tokenId: 't3', sessionId: null, promptId: null, reserveUsd: 0 })), 'daily');
     day = new Date(2026, 10, 13, 0, 1);                                          // next local day
-    assert.equal(await b.check({ tokenId: 't1', sessionId: null, promptId: null }), null);
+    assert.ok(ok(await b.check({ tokenId: 't1', sessionId: null, promptId: null, reserveUsd: 0 })));
+  } finally { b.close(); rmrf(home); }
+});
+
+test('A6: the route allowlist accepts only the three canonical endpoints, refusing // and trailing-slash variants', () => {
+  // canonicalisation
+  assert.equal(canonicalPath('/v1//messages'), '/v1/messages');
+  assert.equal(canonicalPath('/v1/messages/'), '/v1/messages');
+  assert.equal(canonicalPath('//v1/messages//'), '/v1/messages');
+  assert.equal(canonicalPath('/'), '/');
+  // allowed
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/messages')), 'messages');
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/messages/')), 'messages');       // trailing slash folds in
+  assert.equal(classifyRoute('POST', canonicalPath('/v1//messages')), 'messages');        // doubled slash folds in
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/messages/count_tokens')), 'count_tokens');
+  assert.equal(classifyRoute('GET', canonicalPath('/v1/models')), 'models');
+  assert.equal(classifyRoute('GET', canonicalPath('/v1/models/claude-opus-4-8')), 'models');
+  // refused
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/messages/batches')), null);
+  assert.equal(classifyRoute('GET', canonicalPath('/v1/messages')), null);                // wrong method
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/models')), null);                 // wrong method
+  assert.equal(classifyRoute('DELETE', canonicalPath('/v1/messages/batches/x')), null);
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/complete')), null);
+  assert.equal(classifyRoute('POST', canonicalPath('/v1/organizations/usage')), null);
+});
+
+test('A6: a concurrent burst cannot pass the daily cap (reserve at check, settle after)', async () => {
+  const home = tmpHome();
+  const day = new Date(2026, 10, 12, 10);
+  const b = new Budget({ dbFile: path.join(home, 'p.db'), tokenDailyCapUsd: 1, dailyCapUsd: 100, source: async () => undefined, now: () => day });
+  try {
+    const a = { tokenId: 't', sessionId: null, promptId: null, reserveUsd: 0.5 };
+    const results = await Promise.all(Array.from({ length: 200 }, () => b.check(a)));
+    const passed = results.filter(r => 'reservationId' in r);
+    assert.ok(passed.length >= 1 && passed.length <= 3, `$1 cap with a $0.50 reserve should pass ~2, got ${passed.length}`);
+    // settle the ones that passed to a tiny actual: the cap frees up for the next request
+    for (const r of results) if ('reservationId' in r) b.settle(r.reservationId, 0.01);
+    assert.ok('reservationId' in (await b.check(a)), 'budget frees up once the reservations settle low');
   } finally { b.close(); rmrf(home); }
 });
 

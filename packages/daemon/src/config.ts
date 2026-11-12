@@ -1,6 +1,7 @@
 // config.json and token, both written by `agentic-router init` (CLI).
 import fs from 'node:fs';
 import { MAX_HOLDOUT_RATE, holdoutRate } from '@agentic-router/core';
+import { DEFAULT_EVENT_RETENTION_DAYS, MAX_EVENT_RETENTION_DAYS } from './data.ts';
 import type { Level, RouterConfig, TeamPreset } from '@agentic-router/core';
 
 /** config.json as read: every field may be missing (tests and fresh homes pass the port explicitly). */
@@ -58,6 +59,13 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
     warnings.push(`config.holdoutRate ${JSON.stringify(o.holdoutRate)} is not a number from 0 to ${MAX_HOLDOUT_RATE}: the nearest allowed value is used`);
   }
   out.holdoutRate = holdoutRate(o.holdoutRate);
+  // Decision 141: hook events are kept this many days (default 30; 0 keeps them)
+  if (o.eventRetentionDays === undefined) out.eventRetentionDays = DEFAULT_EVENT_RETENTION_DAYS;
+  else if (Number.isInteger(o.eventRetentionDays) && (o.eventRetentionDays as number) >= 0 && (o.eventRetentionDays as number) <= MAX_EVENT_RETENTION_DAYS) out.eventRetentionDays = o.eventRetentionDays as number;
+  else {
+    out.eventRetentionDays = DEFAULT_EVENT_RETENTION_DAYS;
+    warnings.push(`config.eventRetentionDays ${JSON.stringify(o.eventRetentionDays)} is not a whole number of days from 0 to ${MAX_EVENT_RETENTION_DAYS}: ${DEFAULT_EVENT_RETENTION_DAYS} is used`);
+  }
   // Decision 130: in API-key proxy mode the proxy's usage rows are the cost source (transcripts a cross-check)
   if (o.apiMode === 'proxy' || o.apiMode === 'direct') out.apiMode = o.apiMode;
   else if (o.apiMode !== undefined) warnings.push(`config.apiMode ignored: ${JSON.stringify(o.apiMode)} is not "proxy" or "direct"`);

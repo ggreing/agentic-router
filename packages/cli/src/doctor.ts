@@ -6,11 +6,12 @@ import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
 import { keyStatus, type VaultErrorCode } from '@agentic-router/proxy';
 import { HINT_HEADERS_ENV, isRouterHelper, proxyBaseUrl } from './apimode.ts';
-import { SettingsParseError, defaultClaudeSettings, readConfig, readJsonFile, type CliConfig } from './setup.ts';
+import { SettingsParseError, backupCredentials, backupFile, defaultClaudeSettings, promptStorageSummary, readConfig, readJsonFile, type CliConfig } from './setup.ts';
 import { health, localRequest } from './daemonctl.ts';
 import { proxyHealth, readSuperviseStatus, type SuperviseStatus } from './supervise.ts';
 import type { StatusView } from '@agentic-router/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks } from './routing.ts';
+import { loadGuard, policyCheck } from './policy.ts';
 
 export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
 
@@ -221,6 +222,12 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
     }));
   }
   checks.push(...environmentChecks(env));
+  if (cfg) checks.push({ name: 'prompt text', ok: true, blocking: false, detail: promptStorageSummary(cfg.recordPrompts) });   // decision 142
+  // decision 142: the current repository's policy counts only once accepted
+  try { checks.push(policyCheck(await loadGuard(cfg?.pluginDir), process.cwd())); } catch { /* no plugin here */ }
+  // decision 142: a settings backup made before it may hold a credential in plain text
+  const held = backupCredentials(defaultClaudeSettings());
+  if (held.length) checks.push({ name: 'settings backup', ok: false, blocking: false, detail: `${backupFile(defaultClaudeSettings())} holds ${held.map(n => `env.${n}`).join(', ')} in plain text: run agentic-router init, which offers to remove it` });
   const access = homeAccessCheck();
   if (access) checks.push(access);
   checks.push(...ladderBreakers(env));

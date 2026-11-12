@@ -29,6 +29,31 @@ export const BUDGET_BLOCK_ERROR_TYPE = 'rate_limit_error';
 /** In-flight streams get this long to finish when the proxy stops. */
 export const DRAIN_MS = 30_000;
 
+/** A6: worst-case amount reserved for one POST /v1/messages at check time, settled to the actual after. */
+export const RESERVE_USD = 0.5;
+/** A6: only these (method, canonical path) go upstream; everything else /v1/* is refused. */
+export const ALLOWED_ROUTES: Record<string, 'messages' | 'count_tokens' | 'models'> = {
+  'POST /v1/messages': 'messages',
+  'POST /v1/messages/count_tokens': 'count_tokens',
+  'GET /v1/models': 'models',
+};
+/** D: how much of an unauthenticated/refused request body to drain before closing the socket. */
+export const UNAUTH_BODY_LIMIT = 64 * 1024;
+/** D: a whole request (headers + body) must complete within this, so a half-sent request cannot hang a slot. */
+export const REQUEST_TIMEOUT_MS = 120_000;
+
+/** Collapse `//`, strip a trailing slash (keep root): `/v1//messages/` -> `/v1/messages`. */
+export function canonicalPath(p: string): string {
+  const c = p.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1');
+  return c || '/';
+}
+export function classifyRoute(method: string | undefined, canon: string): 'messages' | 'count_tokens' | 'models' | null {
+  const hit = ALLOWED_ROUTES[`${method} ${canon}`];
+  if (hit) return hit;
+  if (method === 'GET' && /^\/v1\/models\/[A-Za-z0-9._-]+$/.test(canon)) return 'models';   // a specific model
+  return null;
+}
+
 export interface ProxyOptions {
   paths: ProxyPaths;
   settings: Pick<ProxySettings, 'upstream' | 'tokenDailyCapUsd' | 'dailyCapUsd' | 'headersTimeoutMs'>;
@@ -92,16 +117,24 @@ export function createProxy(o: ProxyOptions): Proxy {
     return h === `127.0.0.1:${listenPort}` || h === `localhost:${listenPort}`;
   };
 
+  // D: a refused request's body is drained but bounded, so an unauthenticated client cannot stream forever.
+  const drainLimited = (req: http.IncomingMessage) => {
+    let n = 0;
+    req.on('data', (c: Buffer) => { n += c.length; if (n > UNAUTH_BODY_LIMIT) req.destroy(); });
+    req.on('error', () => { /* ignore: the request is being refused */ });
+    req.resume();
+  };
+
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     res.socket?.setNoDelay(true);
     if (req.headers.origin !== undefined) {
       localError(res, 403, 'permission_error', 'agentic-router proxy: requests from a web page are refused');
-      req.resume();
+      drainLimited(req);
       return;
     }
     if (!hostOk(req.headers.host)) {
       localError(res, 403, 'permission_error', 'agentic-router proxy: unexpected Host header');
-      req.resume();
+      drainLimited(req);
       return;
     }
     const url = req.url ?? '/';
@@ -117,26 +150,30 @@ export function createProxy(o: ProxyOptions): Proxy {
       res.end(body);
       return;
     }
-    if (!route.startsWith('/v1/')) { req.resume(); localError(res, 404, 'not_found_error', 'agentic-router proxy: unknown path'); return; }
-    if (!auth) { req.resume(); localError(res, 401, 'authentication_error', 'agentic-router proxy: invalid local token'); return; }
+    // A6: allowlist (method, canonical path); anything else under /v1 (batches, //, trailing slash) is refused.
+    const kind = classifyRoute(req.method, canonicalPath(route));
+    if (!kind) { drainLimited(req); localError(res, 404, 'not_found_error', 'agentic-router proxy: this path is not proxied'); return; }
+    if (!auth) { drainLimited(req); localError(res, 401, 'authentication_error', 'agentic-router proxy: invalid local token'); return; }
 
     const att = attribution(req.headers);
-    const messages = req.method === 'POST' && route === '/v1/messages';
+    const messages = kind === 'messages';
+    let reservationId: string | undefined;
     if (messages) {
-      const block = await budget.check({ tokenId: auth.id, sessionId: att.sessionId, promptId: att.promptId });
-      if (block) {
-        req.resume();
-        o.log.warn('request blocked by a budget cap', { cap: block.kind, sessionId: att.sessionId, promptId: att.promptId });
-        localError(res, BUDGET_BLOCK_STATUS, BUDGET_BLOCK_ERROR_TYPE, block.message, false);
+      const r = await budget.check({ tokenId: auth.id, sessionId: att.sessionId, promptId: att.promptId, reserveUsd: RESERVE_USD });
+      if ('block' in r) {
+        drainLimited(req);
+        o.log.warn('request blocked by a budget cap', { cap: r.block.kind, sessionId: att.sessionId, promptId: att.promptId });
+        localError(res, BUDGET_BLOCK_STATUS, BUDGET_BLOCK_ERROR_TYPE, r.block.message, false);
         return;
       }
+      reservationId = r.reservationId;
     }
 
     inflight++;
     const startedAt = now().toISOString();
     const t0 = Date.now();
     try {
-      const out = await forward(req, res, { upstream: o.settings.upstream, agent, key: o.key.get, headersTimeoutMs: o.settings.headersTimeoutMs, tap: messages });
+      const out = await forward(req, res, { upstream: o.settings.upstream, agent, key: o.key.get, headersTimeoutMs: o.settings.headersTimeoutMs, tap: messages, restrictEncoding: messages });
       if (!messages) return;
       const tap = out.tap;
       const state: RowState = tap?.sawStop && out.status < 400 ? 'complete' : tap?.sawStart ? 'partial' : 'error';
@@ -147,14 +184,18 @@ export function createProxy(o: ProxyOptions): Proxy {
         usage: tokensOf(tap ?? { sawStart: false, sawStop: false }), usd: cost.usd, priced: cost.priced, state, httpStatus: out.status,
         tokenId: auth.id, startedAt, endedAt: now().toISOString(),
       };
-      budget.add({ tokenId: auth.id, sessionId: att.sessionId, promptId: att.promptId, usd: row.usd });
+      // A6: settle the reservation with the actual cost; a 2xx we could not fully price (unparsed body,
+      // partial stream) is charged at least the reserve, never $0; a 4xx/5xx refunds the reservation.
+      const settleUsd = out.status >= 400 ? 0 : (state === 'complete' && cost.priced ? cost.usd : Math.max(cost.usd, RESERVE_USD));
+      budget.settle(reservationId!, settleUsd);
       reporter.add(row);
       o.log.info('exchange', {
-        status: out.status, state, model, usd: row.usd, ms: Date.now() - t0, sessionId: att.sessionId, agentId: att.agentId,
+        status: out.status, state, model, usd: row.usd, charged: settleUsd, ms: Date.now() - t0, sessionId: att.sessionId, agentId: att.agentId,
         ...(out.clientAborted ? { clientAborted: true } : {}), ...(out.upstreamBroken ? { upstreamBroken: true } : {}),
         ...(cost.priced ? {} : { unpriced: true }),
       });
     } catch (e) {
+      if (reservationId) budget.settle(reservationId, 0);   // internal error: release the reservation
       o.log.error('exchange failed', { error: errorText(e) });
       localError(res, 502, 'api_error', 'agentic-router proxy: internal error', true);
     } finally {
@@ -162,7 +203,7 @@ export function createProxy(o: ProxyOptions): Proxy {
     }
   };
 
-  const server = http.createServer({ requestTimeout: 0, headersTimeout: 60_000, keepAliveTimeout: 65_000 }, (req, res) => {
+  const server = http.createServer({ requestTimeout: REQUEST_TIMEOUT_MS, headersTimeout: 60_000, keepAliveTimeout: 65_000 }, (req, res) => {
     handle(req, res).catch(e => {
       o.log.error('request failed', { error: errorText(e) });
       localError(res, 502, 'api_error', 'agentic-router proxy: internal error', true);

@@ -1,17 +1,20 @@
 #!/usr/bin/env node
-// agentic-router <init|start|stop|status|doctor|dashboard|routing|data|supervise|mode|token|key|proxy>
+// agentic-router <init|start|stop|status|doctor|dashboard|routing|data|policy|uninstall|supervise|mode|token|key|proxy>
 import fs from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths, type Level } from '@agentic-router/core';
-import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planProject, planStatusLine, readConfig, type PlannedChange } from './setup.ts';
+import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planBackupClean, planProject, planStatusLine, promptStorageSummary, readConfig, type PlannedChange } from './setup.ts';
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
 import { planApiSettings } from './apimode.ts';
 import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
 import { dashboardCommand } from './dashboard.ts';
 import { dataExport, dataPurge, realDataDeps } from './data.ts';
+import { uninstall } from './uninstall.ts';
+import { loadGuard, policyCommand } from './policy.ts';
+import { deleteKey, keyStatus } from '@agentic-router/proxy';
 import { autoReleaseSummary, configuredAutoRelease, routingReset } from './routing.ts';
 import { runSupervisor } from './supervise.ts';
 
@@ -85,6 +88,7 @@ async function init(f: Record<string, string | boolean>) {
   // decision 138: the holdout changes how some requests are handled, so init says so
   const ar = configuredAutoRelease(config);
   console.log(`auto-release: ${autoReleaseSummary(ar.mode, ar.rate)}`);
+  console.log(`prompt text: ${promptStorageSummary(config.recordPrompts)}`);   // decision 142
   const changes: PlannedChange[] = [];
   // A settings file we cannot parse skips only that step (review #12); nothing is overwritten.
   const step = (name: string, plan: () => PlannedChange[]) => {
@@ -99,6 +103,8 @@ async function init(f: Record<string, string | boolean>) {
     return sl ? [sl] : [];
   });
   step('project settings', () => planProject(typeof f.project === 'string' ? f.project : process.cwd()));
+  // decision 142: a backup made before it may hold an API key or token in plain text
+  step('settings backup', () => { const c = planBackupClean(typeof f['claude-settings'] === 'string' ? f['claude-settings'] : defaultClaudeSettings()); return c ? [c] : []; });
   if (api) step('API-key mode settings', () => { const c = planApiSettings(api.settingsFile, 'proxy', config.proxyPort!); return c ? [c] : []; });
   if (await confirm(changes, f.yes === true)) for (const c of changes) c.apply();
   console.log(`\nLoad the plugin in Claude Code: claude --plugin-dir "${pluginDir}"  (marketplace install comes with the first release)`);
@@ -146,10 +152,21 @@ if (isMain) {
   } else if (cmd === 'supervise') await runSupervisor();
   else if (cmd === 'dashboard') process.exitCode = await dashboardCommand(f);
   else if (cmd === 'routing' && positional[0] === 'reset') process.exitCode = await routingResetCommand();
+  else if (cmd === 'policy') {
+    process.exitCode = await policyCommand(positional[0], f, {
+      guard: await loadGuard(), dir: typeof f.project === 'string' ? path.resolve(f.project) : process.cwd(), ask, isTTY: process.stdin.isTTY === true, out: line => console.log(line),
+    });
+  } else if (cmd === 'uninstall') {
+    process.exitCode = await uninstall(f, {
+      settingsFile: typeof f['claude-settings'] === 'string' ? f['claude-settings'] : defaultClaudeSettings(),
+      projectDir: typeof f.project === 'string' ? f.project : process.cwd(),
+      stop, keyStatus: () => keyStatus(), deleteKey: () => deleteKey(), ask, isTTY: process.stdin.isTTY === true, out: line => console.log(line),
+    });
+  }
   else if (cmd === 'data' && (positional[0] === 'export' || positional[0] === 'purge')) {
     const d = realDataDeps({ confirm: ask, isTTY: process.stdin.isTTY === true });
     process.exitCode = positional[0] === 'export' ? await dataExport(f, d) : await dataPurge(f, d);
   }
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|mode subscription|api|direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
+  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
 }

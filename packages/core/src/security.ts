@@ -36,6 +36,16 @@ export const PROTECTED_WRITE_PATHS = [
   '.agentic-router/**', '**/.agentic-router/**',
 ];
 
+/**
+ * Paths a subtask with no [scope: ...] line may still not write even inside its scope: they change how the
+ * agent or the repository's own hooks run (decision 142). Shared with the guard (mirrored copy + equality
+ * test) so the daemon's stop check (verify.ts) refuses the same writes the guard does.
+ */
+export const UNSCOPED_PROTECTED_PATHS = [
+  '.mcp.json', '**/.mcp.json', '.husky/**', '**/.husky/**', 'CLAUDE.md', '**/CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.local.md',
+  '.git', '**/.git', '.gitmodules', '.gitattributes', '**/.gitattributes', '.pre-commit-config.yaml',
+];
+
 /** Shell commands that dump the environment or read OS credential stores: always denied. */
 export const ENV_DUMP_COMMANDS = ['env', 'printenv', 'set', 'export -p', 'Get-ChildItem Env:', 'gci env:', 'dir env:'];
 export const KEYCHAIN_COMMANDS = ['security', 'secret-tool', 'cmdkey', 'Get-StoredCredential', 'vaultcmd'];
@@ -53,7 +63,9 @@ export const NETWORK_COMMANDS = ['curl', 'wget', 'Invoke-WebRequest', 'iwr', 'In
  * `>NUL`, leading VAR=value assignments, and wrappers (sudo, env, xargs, time, nohup, command).
  * Arguments are still checked: credential paths, the router home, secret variables ($ANTHROPIC_*,
  * $*_API_KEY, $*TOKEN*), `find -exec/-delete`, `git -c`, `sed -i`.
- * Projects extend the list in .agentic-router/policy.json { "bashAllow": [...] } (protected path).
+ * A project may extend the list in .agentic-router/policy.json { "bashAllow": [...] } (a protected path), but
+ * that file counts only after the user accepts its exact content (agentic-router policy accept); until then it
+ * is ignored.
  */
 export const ROUTER_BASH_ALLOW = [
   // build, test, lint, package installs (the one allowed network use, decision 34)
@@ -93,11 +105,36 @@ export const ROUTER_BASH_DENY_OPTIONS: Record<string, string[]> = {
 };
 
 /**
+ * Options refused on top of ROUTER_BASH_DENY_OPTIONS: they read hidden or ignored files, or redirect a
+ * package install to another registry (decision 142). Shared with the guard (mirrored copy + equality test)
+ * so the daemon's stop check applies the same rule.
+ */
+export const GUARD_EXTRA_DENY_OPTIONS: Record<string, string[]> = {
+  rg: ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.'],
+  printf: ['-v'],
+  'git grep': ['--no-index', '--untracked', '--no-exclude-standard'],
+  'git diff': ['--no-index'],
+  'npm install': ['--registry'], 'npm i': ['--registry'], 'npm ci': ['--registry'],
+  'pnpm install': ['--registry'], 'pnpm add': ['--registry'], 'yarn install': ['--registry'], 'yarn add': ['--registry'],
+  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
+  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
+};
+
+/**
+ * The name fragments that mark a shell variable reference as secret-bearing ($FOO_API_KEY, %DB_PASSWORD%,
+ * $env:AUTH_TOKEN): a regex alternation, shared with the guard's SECRET_VAR_RE (mirrored + equality test).
+ * `API[_-]?KEY` is a sub-pattern, so this is a pattern string, not a plain word list.
+ */
+export const SECRET_VAR_NAME_PATTERN = 'ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN';
+
+/**
  * Environment variables the relay forwards from a router subagent's own hook environment at
  * SubagentStart, so that subagent's verify runs with the user's toolchain (decision 99, env audit #6):
  * the venv / conda / nvm / Java / Go / Rust selection of the terminal that launched Claude Code.
  * Names only; values are never logged. Secret-looking names are never forwarded even if listed.
- * Projects may add names in .agentic-router/policy.json { "verifyEnv": [...] } (protected path).
+ * A project may add names in .agentic-router/policy.json { "verifyEnv": [...] } (a protected path), but that
+ * file counts only after the user accepts its exact content (agentic-router policy accept); until then it is
+ * ignored.
  */
 export const VERIFY_ENV_PASSTHROUGH = [
   'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'ComSpec',
@@ -113,21 +150,47 @@ export const PACKAGE_INSTALL_PREFIXES = [
   'pip install', 'pip3 install', 'python -m pip install', 'uv pip install', 'poetry install',
 ];
 
-const SECRET_PATTERNS = [
-  /sk-ant-[A-Za-z0-9_-]{8,}/g,
-  // header or JSON field holding a credential, with or without quotes and an auth scheme
-  /(authorization|x-api-key|api[-_]?key|access[-_]?token|auth[-_]?token|secret)["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s"',}]{8,}/gi,
-  /\b(bearer|basic|token)\s+[A-Za-z0-9+/=._~-]{12,}/gi,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,              // GitHub tokens
-  /\bAKIA[0-9A-Z]{16}\b/g,                      // AWS access key id
-  /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g,      // JWT
-  /\bANTHROPIC_[A-Z_]*\s*=\s*\S+/g,             // ANTHROPIC_API_KEY=..., ANTHROPIC_AUTH_TOKEN=...
+/**
+ * Secret-masking patterns (audit A5). `lead: true` means the regex captures the part to KEEP as group 1
+ * (a header/field name up to its separator, or a URL's `scheme://user:`) and only the value after it is
+ * masked; the rest mask the whole match, keeping a 7-char hint. One list lives here; the relay's copy is
+ * generated from SECRET_PATTERN_SPECS into plugin/hooks/secret-patterns.json (scripts/sync-secret-patterns.ts),
+ * and a test fails when that file is stale. Masking is a net, not a guarantee (see A4's field allowlist).
+ */
+const SECRET_PATTERNS: Array<{ re: RegExp; lead?: boolean }> = [
+  // vendor-prefixed tokens — mask the whole token, keep a short hint
+  { re: /sk-ant-[A-Za-z0-9_-]{8,}/g },
+  { re: /\b(?:xox[baprs]-|sk-proj-|sk_live_|sk_test_|glpat-|npm_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g },
+  { re: /\bAKIA[0-9A-Z]{16}\b/g },                                    // AWS access key id
+  { re: /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g },                    // JWT
+  { re: /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g },  // PEM block
+  { re: /\b(?:bearer|basic|token)\s+[A-Za-z0-9+/=._~-]{12,}/gi },      // auth-scheme values
+  // URL userinfo — keep scheme://user:, mask the password up to '@'
+  { re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi, lead: true },
+  // Cookie / Set-Cookie header — keep the name, mask the value to end of line
+  { re: /((?:set-)?cookie["']?\s*[:=]\s*)[^\r\n]+/gi, lead: true },
+  // JSON {"name":"...secret-ish...","value":"..."} — keep up to the value's opening quote
+  { re: /("name"\s*:\s*"[^"]*(?:key|token|secret|password|passwd|credential)[^"]*"\s*,\s*"value"\s*:\s*")[^"]*/gi, lead: true },
+  // any NAME containing a secret word = VALUE (env/flag/json); value runs to whitespace or a quote, past
+  // commas, any length. Runs before the legacy field pattern so a comma in the value does not cut it short.
+  { re: /([A-Za-z0-9_]*(?:key|token|secret|password|passwd|credential)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"']+/gi, lead: true },
+  // legacy header/JSON credential field with an auth scheme (kept; 8+ value) for names without a secret word
+  { re: /(?:authorization|x-api-key|access[-_]?token|auth[-_]?token)["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s"',}]{8,}/gi },
+  { re: /\bANTHROPIC_[A-Z_]*\s*=\s*\S+/g },                            // ANTHROPIC_API_KEY=…, ANTHROPIC_AUTH_TOKEN=…
 ];
 
-/** Masks API keys, OAuth tokens and bearer headers. Apply before writing anything to logs or the ledger. */
+/** Serializable form of SECRET_PATTERNS for the plugin's generated copy; `lead` matches the redact rule above. */
+export interface SecretPatternSpec { source: string; flags: string; lead?: boolean }
+export const SECRET_PATTERN_SPECS: SecretPatternSpec[] = SECRET_PATTERNS.map(p => ({ source: p.re.source, flags: p.re.flags, ...(p.lead ? { lead: true } : {}) }));
+
+/** Masks API keys, OAuth tokens, cookies and secret-named values. Apply before writing anything to logs or the ledger. */
 export function redact(text: string, extraSecrets: string[] = []): string {
   let out = text;
   for (const s of extraSecrets) if (s && s.length >= 8) out = out.split(s).join('[REDACTED]');
-  for (const re of SECRET_PATTERNS) out = out.replace(re, m => m.slice(0, 7) + '…[REDACTED]');
+  for (const p of SECRET_PATTERNS) {
+    out = p.lead
+      ? out.replace(p.re, (_m: string, g1: string) => `${g1}[REDACTED]`)
+      : out.replace(p.re, (m: string) => m.slice(0, 7) + '…[REDACTED]');
+  }
   return out;
 }

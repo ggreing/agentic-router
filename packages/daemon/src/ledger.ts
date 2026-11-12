@@ -13,8 +13,10 @@ import type {
 import type { AcceptSignal } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
 import { LIMITS_SCHEMA } from './limits.ts';
+import { scrubProse, scrubStoredPrompts } from './data.ts';
+import { storedPromptKind } from './payload.ts';
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -122,8 +124,8 @@ export interface AgentRow {
   step: Step | null;
   cwd: string | null;
   snapshot: Snapshot | null;
-  /** Decision 99: toolchain variables the relay forwarded at SubagentStart, for this agent's verify. */
-  verifyEnv: Record<string, string> | null;
+  /** Decisions 99, 142: the names of the toolchain variables the relay forwarded (the values stay in the router's memory). */
+  verifyEnv: string[] | null;
   /** The subagent's own transcript (from SubagentStop), re-read when the request closes. */
   transcriptPath: string | null;
   pairing: Pairing;
@@ -443,6 +445,9 @@ const n = (v: unknown): number => Number(v ?? 0);
 const nn = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 const json = <T>(v: unknown): T => JSON.parse(String(v)) as T;
 
+/** Verify-env names from a stored value: a list, or (before decision 142) an object of values. */
+const envNames = (v: unknown): string[] => (Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : v && typeof v === 'object' ? Object.keys(v).sort() : []);
+
 function toRequest(r: Row): RequestRow {
   return {
     id: s(r.id), sessionId: s(r.session_id), createdAt: s(r.created_at), promptId: sn(r.prompt_id),
@@ -490,7 +495,7 @@ function toAgent(r: Row): AgentRow {
     agentId: s(r.agent_id), sessionId: s(r.session_id), requestId: sn(r.request_id), subtaskId: sn(r.subtask_id),
     agentType: sn(r.agent_type), role: sn(r.role) as Role | null, slot: nn(r.slot), step: sn(r.step) as Step | null,
     cwd: sn(r.cwd), snapshot: r.snapshot === null || r.snapshot === undefined ? null : json<Snapshot>(r.snapshot),
-    verifyEnv: r.verify_env === null || r.verify_env === undefined ? null : json<Record<string, string>>(r.verify_env),
+    verifyEnv: r.verify_env === null || r.verify_env === undefined ? null : envNames(json<unknown>(r.verify_env)),
     transcriptPath: sn(r.transcript_path),
     pairing: s(r.pairing) as Pairing, startedAt: s(r.started_at), stoppedAt: sn(r.stopped_at),
     stopCount: n(r.stop_count), failCount: n(r.fail_count), resolvedModel: sn(r.resolved_model),
@@ -582,10 +587,16 @@ export interface SlotRow {
 export class Ledger {
   readonly db: DatabaseSync;
 
-  constructor(file: string) {
+  /**
+   * `keepPrompts` (config.recordPrompts): conversation text in stored events is kept. Otherwise every open takes
+   * it out of the rows that still carry it (decisions 141-142): the v13 migration, and again after recordPrompts is
+   * switched off, which also deletes the prompt text kept in requests and request records while it was on.
+   */
+  constructor(file: string, opts: { keepPrompts?: boolean } = {}) {
     if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    // secure_delete: rewritten and deleted rows (prose taken out, purge, retention) are zeroed, not left in free space
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;');
     const v = n((this.db.prepare('PRAGMA user_version').get() as Row | undefined)?.user_version);
     if (v > SCHEMA_VERSION) throw new Error(`ledger schema v${v} is newer than this daemon (v${SCHEMA_VERSION})`);
     // v1..v3 -> v4: costs.calls / costs.note (transcript costs). Added before SCHEMA so its index can use them.
@@ -623,6 +634,12 @@ export class Ledger {
     for (const c of ['end_state', 'accept_state', 'holdout']) if (!reqCols.includes(c)) this.db.exec(`ALTER TABLE requests ADD COLUMN ${c} TEXT`);
     const recCols = (this.db.prepare('PRAGMA table_info(request_records)').all() as Row[]).map(r => s(r.name));
     for (const c of ['acceptance', 'accept_signals']) if (!recCols.includes(c)) this.db.exec(`ALTER TABLE request_records ADD COLUMN ${c} TEXT`);
+    // v12 -> v13 (decisions 141-142): stored events are in the minimal form unless recordPrompts is on; verify
+    // variables are kept as names (the values were never needed after the agent's verify)
+    if (opts.keepPrompts !== true) { scrubProse(this.db); scrubStoredPrompts(this.db); }   // and the prompts kept while it was on
+    for (const r of this.db.prepare("SELECT agent_id, verify_env FROM agents WHERE verify_env LIKE '{%'").all() as Row[]) {
+      this.db.prepare('UPDATE agents SET verify_env = ? WHERE agent_id = ?').run(JSON.stringify(envNames(json<unknown>(r.verify_env))), s(r.agent_id));
+    }
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -748,8 +765,8 @@ export class Ledger {
   promptEvents(requestId: string): Array<{ promptId: string | null; notification: boolean }> {
     return (this.db.prepare(`SELECT payload FROM events WHERE request_id = ? AND type = 'prompt_submit' ORDER BY id`).all(requestId) as Row[]).map(r => {
       try {
-        const p = JSON.parse(s(r.payload)) as { prompt_id?: unknown; prompt?: unknown };
-        return { promptId: typeof p.prompt_id === 'string' ? p.prompt_id : null, notification: /^\s*<task-notification>/.test(String(p.prompt ?? '')) };
+        const p = JSON.parse(s(r.payload)) as { prompt_id?: unknown };
+        return { promptId: typeof p.prompt_id === 'string' ? p.prompt_id : null, notification: storedPromptKind(s(r.payload)) === 'notification' };
       } catch {
         return { promptId: null, notification: false };
       }
@@ -952,9 +969,7 @@ export class Ledger {
   userPromptAfter(sessionId: string, afterEventId: number): boolean {
     const rows = this.db.prepare(`SELECT payload FROM events WHERE session_id = ? AND id > ? AND type = 'prompt_submit' AND agent_id IS NULL AND spooled = 0
       ORDER BY id`).all(sessionId, afterEventId) as Row[];
-    return rows.some(r => {
-      try { return !/^\s*<task-notification>/.test(String((JSON.parse(s(r.payload)) as { prompt?: unknown }).prompt ?? '')); } catch { return false; }
-    });
+    return rows.some(r => { const k = storedPromptKind(s(r.payload)); return k !== undefined && k !== 'notification'; });
   }
 
   // ------------------------------------------------------------------ sessions (decision 117)

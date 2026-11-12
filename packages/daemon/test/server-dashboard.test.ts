@@ -1,5 +1,5 @@
 // The daemon's HTTP server with the dashboard module (decision 132) and the rate limits route (spec 3.8):
-// browser rules apply to /dashboard and /router/v1/metrics only; the hook API still refuses any Origin.
+// browser rules apply to /dashboard and /dashboard/metrics only; the hook API still refuses any Origin.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -54,7 +54,7 @@ test('decision 132: the dashboard through the daemon: a one-time code for the Be
   const { code, url } = reg.body as { code: string; url: string };
   assert.equal(url, `http://127.0.0.1:${d.port}/dashboard#code=${code}`);
   assert.ok(!url.includes(TOKEN) && !reg.text.includes(TOKEN), 'the token never reaches the page');
-  assert.equal((await request(d.port, { path: '/router/v1/metrics/now?session_id=s1' })).status, 401);
+  assert.equal((await request(d.port, { path: '/dashboard/metrics/now?session_id=s1' })).status, 401);
   // the page posts the code once (same origin); a second use is refused
   const page = { origin: `http://127.0.0.1:${d.port}`, 'sec-fetch-site': 'same-origin' };
   const auth = await request(d.port, { path: '/dashboard/auth', ...json(null, { code }, page) });
@@ -62,11 +62,11 @@ test('decision 132: the dashboard through the daemon: a one-time code for the Be
   const cookie = String(auth.headers['set-cookie']?.[0] ?? '').split(';')[0]!;
   assert.match(cookie, /^ar_dash=/);
   assert.equal((await request(d.port, { path: '/dashboard/auth', ...json(null, { code }, page) })).status, 401);
-  const now = await request(d.port, { path: '/router/v1/metrics/now?session_id=s1', headers: { cookie, ...page } });
+  const now = await request(d.port, { path: '/dashboard/metrics/now?session_id=s1', headers: { cookie, ...page } });
   assert.equal(now.status, 200, now.text);
   assert.equal((now.body as { limits: { fiveHour: { usedPercentage: number } } }).limits.fiveHour.usedPercentage, 23.5);
   // the metrics refuse another origin even with the cookie; the hook API does not take the cookie
-  assert.equal((await request(d.port, { path: '/router/v1/metrics/now', headers: { cookie, origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await request(d.port, { path: '/dashboard/metrics/now', headers: { cookie, origin: 'https://evil.example' } })).status, 403);
   assert.equal((await request(d.port, { path: '/router/v1/status', headers: { cookie } })).status, 401);
 }));
 
