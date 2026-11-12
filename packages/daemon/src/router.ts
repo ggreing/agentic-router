@@ -5,14 +5,17 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PRICING_PER_MTOK, costUsd, formatTriageContext, l3SignalRoles, ladderStep, leadModelClass, readRoleFile, redact, stepUp, triage,
-  type Level, type Role, type RouterDecision, type RouterEvent, type TeamPreset, type TriageResult, type Usage, type VerifySignal,
+  MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
+  leadModelClass, normalizeLeadTriage, readRoleFile, redact, routerToolDef, routerToolErrorText, routerToolName, stepIndex, stepUp, triage,
+  type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
+  type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
+  type VerifySignal,
 } from '@agentic-router/core';
 import type { ConfigFile } from './config.ts';
 import { awaitsUser, classifyPrompt } from './continuation.ts';
 import { takeSnapshot } from './git.ts';
 import { writeJsonAtomic, type HomeLayout } from './home.ts';
-import type { AgentRow, ClientRow, Ledger, RequestRow, SubtaskRow } from './ledger.ts';
+import type { AgentRow, ClientRow, Ledger, RequestRow, SubtaskReview, SubtaskRow } from './ledger.ts';
 import { errorText, nullLogger, type Logger } from './log.ts';
 import { cleanVerifyEnv, verifyEnv, withoutEnvValues } from './env.ts';
 import { eventPayload, tailText } from './payload.ts';
@@ -21,6 +24,7 @@ import { requestChanges, takeRequestSnapshot, type ChangeStats, type RequestSnap
 import { BASH_NOT_FOUND, type Shell } from './shell.ts';
 import { checkAgentCall, isAgentTool, managedRole, parseScope, parseTag, scopeFileBody, startStep, stepOf } from './policy.ts';
 import { SessionQueue } from './queue.ts';
+import { TicketStore, addGlobs, removeGlobs, sortScopeGlobs, toolUseIdOf } from './tools.ts';
 import {
   readEditedPaths, readLastModel, readLeadUsage, readSubtaskTag, readTranscriptUsage, subagentTranscriptPath, waitForQuiet,
   type LeadUsage, type TranscriptUsage,
@@ -95,6 +99,7 @@ export class Router {
   readonly #abort = new AbortController();
   readonly #inflight = new Set<Promise<unknown>>();        // verify runs (outside the queue)
   readonly #snapshots = new Map<string, Promise<RequestSnapshot | undefined>>();   // T7: request start states being taken
+  readonly #tickets = new TicketStore();                    // decision 134: PreToolUse of a router tool -> its tools/call
 
   constructor(o: RouterOptions) {
     this.ledger = o.ledger;
@@ -400,7 +405,10 @@ export class Router {
       turns: { prompts: prompts.length, notifications, continuations: Math.max(0, prompts.length - 1 - notifications) },
       subtasks: subs.map(s => ({
         id: s.id, role: s.role, slot: s.slot, step: s.step, upCount: s.upCount, status: s.status, verdict: s.verdict, attempts: s.attempts, costUsd: subCost(s.id),
+        ...(s.review ? { review: { verdict: s.review.verdict, by: s.review.by } } : {}),
       })),
+      // decision 127: the lead's own size judgement (router_report_triage), a label for calibrating the triage
+      ...((lt) => (lt ? { leadTriage: lt } : {}))(this.ledger.getLeadTriage<Record<string, unknown>>(requestId)),
       verifyFailures: this.ledger.listAgents(requestId).reduce((a, x) => a + x.failCount, 0),
       runningAtClose: subs.filter(s => s.status === 'running' || s.status === 'pending').map(s => s.id),
       lead: lead.ok
@@ -475,12 +483,17 @@ export class Router {
     const signals = presets.L3.leadDirect ? [] : l3SignalRoles(onlyL3 ? req.team : presets.L2, presets.L3);
     const level: Level = asked && signals.includes(role) && asked === startStep(presets.L3, 'L3', role) ? 'L3' : 'L2';
     if (onlyL3 && level !== 'L3') return req;   // a team request stays at its level
+    return this.#replanAs(req, level, presets, `the lead called a router subagent (${role} at ${asked ?? 'an unknown step'}) in a lead-direct ${req.level} request`);
+  }
+
+  /** The one place a request moves up to a team level: by the lead's first Agent call, or by router_report_triage. */
+  #replanAs(req: RequestRow, level: Level, presets: Record<Level, TeamPreset>, why: string): RequestRow {
     const team = presets[level];
     const t = withKind({
       ...req.triage, level, preset: team.id, budgetUsd: team.budgetUsd,
-      rationale: `re-planned at ${level}: the lead called a router subagent (${role} at ${asked ?? 'an unknown step'}) in a lead-direct ${req.level} request (${req.triage.rationale})`,
+      rationale: `re-planned at ${level}: ${why} (${req.triage.rationale})`,
     }, team);
-    this.#log.info('lead-direct request re-planned as a team request', { requestId: req.id, from: req.level, to: level });
+    this.#log.info('request re-planned as a team request', { requestId: req.id, from: req.level, to: level });
     return this.ledger.escalateRequest(req.id, t, team);
   }
 
@@ -503,6 +516,7 @@ export class Router {
   // ------------------------------------------------------------------ pre_tool_use (Agent)
 
   #preToolUse(ev: RouterEvent, ctx: Ctx): RouterDecision {
+    if (isRouterToolName(ev.toolName)) return this.#preRouterTool(ev, ctx);
     if (ev.agentId || !isAgentTool(ev.toolName)) {
       ctx.requestId = this.ledger.latestRequest(ev.sessionId)?.id ?? null;
       return NONE;   // subagent tool calls are checked by guard.mjs
@@ -556,8 +570,10 @@ export class Router {
 
     // Compatibility #9: without its scope file the guard cannot hold the subagent to its scope, so the call
     // is denied (written first, so a failed write leaves no pending subtask behind).
+    // decision 129: protected paths granted to this subtask id after a user turn stay granted for a new attempt
+    const granted = this.ledger.getSubtask(req.id, tag)?.protectedGranted ?? [];
     try {
-      writeJsonAtomic(this.#home.scopeFile(ev.sessionId, tag), scopeFileBody(scope.allowed, scope.unscoped));
+      writeJsonAtomic(this.#home.scopeFile(ev.sessionId, tag), scopeBody(scope.allowed, scope.unscoped, granted));
     } catch (e) {
       this.#log.error('scope file not written', { sessionId: ev.sessionId, subtask: tag, error: errorText(e) });
       if (!ev.spooled) return deny(`subtask ${tag}: the router could not write its scope file (${errorText(e).slice(0, 120)}); try the call again.`);
@@ -646,18 +662,18 @@ export class Router {
    * slot must use it. After MAX_STEP_UPS raises (or at the top step) a further miss goes to the user.
    * Stepping down after easy results needs review scores and is not done yet.
    */
-  #stepUpAfterMiss(requestId: string, sub: SubtaskRow, at: string): void {
+  #stepUpAfterMiss(requestId: string, sub: SubtaskRow, at: string, verdict: 'miss' | 'rejected' = 'miss'): void {
     const state = this.ledger.getSlots(requestId).find(x => x.role === sub.role && x.slot === sub.slot);
     const ups = state?.upCount ?? 0;
     const next = ups < MAX_STEP_UPS ? stepUp(sub.step, this.#config.fableOptIn === true) : null;
     if (!next) {
-      this.ledger.updateSubtask(requestId, sub.id, { status: 'hitl', verdict: 'miss' }, at);
-      this.#log.warn('miss with no step left to try: the user decides', { requestId, subtaskId: sub.id, step: sub.step, ups });
+      this.ledger.updateSubtask(requestId, sub.id, { status: 'hitl', verdict }, at);
+      this.#log.warn('miss with no step left to try: the user decides', { requestId, subtaskId: sub.id, step: sub.step, ups, verdict });
       return;
     }
     this.ledger.setSlot(requestId, sub.role, sub.slot, next, ups + 1, at);
-    this.ledger.updateSubtask(requestId, sub.id, { status: 'failed', verdict: 'miss', upCount: ups + 1 }, at);
-    this.#log.info('slot raised after a miss', { requestId, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: sub.step, to: next });
+    this.ledger.updateSubtask(requestId, sub.id, { status: 'failed', verdict, upCount: ups + 1 }, at);
+    this.#log.info('slot raised after a miss', { requestId, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: sub.step, to: next, verdict });
   }
 
   /** Spec 3.5: the step a slot now runs at after this subtask's miss, for the lead's next call. */
@@ -685,7 +701,7 @@ export class Router {
     const pairing = this.ledger.getAgent(agentId)?.pairing === 'confirmed' ? 'confirmed' : 'order';
     try {
       writeJsonAtomic(this.#home.agentFile(agentId), {
-        sessionId, subtaskId: sub.id, role: sub.role, slot: sub.slot, step: sub.step, pairing, scope: scopeFileBody(sub.writeScope, sub.unscoped),
+        sessionId, subtaskId: sub.id, role: sub.role, slot: sub.slot, step: sub.step, pairing, scope: scopeBody(sub.writeScope, sub.unscoped, sub.protectedGranted),
       });
     } catch (e) {
       // the guard falls back to the transcript tag and the scope file
@@ -831,6 +847,9 @@ export class Router {
         // Decision 87: tell the lead not to spend a turn re-running what the router already ran.
         return `${head}: verify passed — ${checks || 'no checks configured'}${tail} (already verified by the router; no need to re-run).`;
       case 'failed':
+        if (sub.verdict === 'rejected') {
+          return `${head}: its result was reported as wrong (review by ${sub.review?.by ?? 'the lead'})${tail}.` + this.#raisedNote(sub) + ' Decide: dispatch a new attempt with what was wrong, or report to the user.';
+        }
         if (!signals.length) {
           return `${head}: the subagent ended with an error before it finished; verify did not run${tail}. Decide: dispatch a new attempt or report to the user.`;
         }
@@ -850,6 +869,9 @@ export class Router {
             return `${head}: verify could not run in this environment (${env.join('; ')}); this is not counted as a failure, check the result yourself before relying on it${tail}.`;
           }
           return `${head}: verify did not run (router was offline); check the result yourself before relying on it${tail}.`;
+        }
+        if (sub.verdict === 'rejected') {
+          return `${head}: its result was reported as wrong and the slot has no raise left (${MAX_STEP_UPS} step-ups or the top step)${tail}. Ask the user how to continue (spec 3.5).`;
         }
         if (sub.verdict === 'miss') {
           return `${head}: verify failed again at step ${sub.step} after ${MAX_STEP_UPS} step-ups — ${checks}${tail}. Ask the user how to continue (spec 3.5).`;
@@ -1182,6 +1204,348 @@ export class Router {
     };
   }
 
+  // ------------------------------------------------------------------ router tools (decisions 127-129, 134)
+
+  /**
+   * PreToolUse of a router MCP tool: lead only. A call from the main session leaves a ticket under its
+   * tool-use id (the tools/call that follows carries the same id) and is allowed without a prompt; a call
+   * from inside a subagent is denied and gets no ticket.
+   */
+  #preRouterTool(ev: RouterEvent, ctx: Ctx): RouterDecision {
+    ctx.requestId = this.ledger.latestRequest(ev.sessionId)?.id ?? null;
+    if (ev.agentId) return { deny: { reason: routerToolErrorText('not_lead') } };
+    if (ev.spooled) return NONE;
+    const toolUseId = str(ev.raw.tool_use_id);
+    const tool = routerToolName(ev.toolName);
+    if (toolUseId && tool) this.#tickets.add(toolUseId, ev.sessionId, tool, this.#now().getTime());
+    return { allow: { reason: '[agentic-router] router tool call by the lead' } };
+  }
+
+  /**
+   * One call of a router MCP tool, as the plugin's server posts it. The session comes from the ticket its
+   * PreToolUse left (decision 134); without a tool-use id only router_get_plan is answered, for the session
+   * the server was started in, and says so. Runs in the session's queue like a hook event. Never throws.
+   */
+  async tool(body: unknown): Promise<RouterToolResult> {
+    const parsed = RouterToolCall.safeParse(body);
+    if (!parsed.success) return toolError('invalid_input', 'the call is malformed.');
+    const call = parsed.data;
+    const def = routerToolDef(call.tool);
+    if (!def) return toolError('unknown_tool');
+    const toolUseId = toolUseIdOf(call.meta);
+    let sessionId = toolUseId ? this.#tickets.redeem(toolUseId, def.name, this.#now().getTime()) : undefined;
+    let boundBy: 'ticket' | 'spawn_session' = 'ticket';
+    if (!sessionId && !toolUseId && def.name === 'router_get_plan' && call.bind.spawnSessionId) {
+      sessionId = call.bind.spawnSessionId;
+      boundBy = 'spawn_session';
+    }
+    if (!sessionId) return toolError('not_bound');
+    const input = def.input.safeParse(call.input ?? {});
+    if (!input.success) {
+      return toolError('invalid_input', input.error.issues.slice(0, 5).map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ').slice(0, 400));
+    }
+    const sid = sessionId;
+    return this.#queue.run(sid, () => {
+      const ctx: Ctx = { requestId: null };
+      let out: RouterToolResult;
+      try {
+        out = this.#runTool(def.name, input.data, { sessionId: sid, cwd: call.bind.projectDir, boundBy }, ctx);
+      } catch (e) {
+        this.#log.error('router tool failed', { tool: def.name, sessionId: sid, error: errorText(e) });
+        out = toolError('internal');
+      }
+      try {
+        this.ledger.insertEvent({
+          sessionId: sid, requestId: ctx.requestId, agentId: null, type: 'tool_call', toolName: def.name, receivedAt: this.#at(), spooled: false,
+          payload: eventPayload({ tool: def.name, input: input.data, ok: out.ok, ...(out.ok ? {} : { code: out.code }), boundBy }, this.#secrets),
+        });
+      } catch (e) {
+        this.#log.error('tool call record failed', { tool: def.name, error: errorText(e) });
+      }
+      return out;
+    });
+  }
+
+  #runTool(name: RouterToolName, input: unknown, bind: ToolBinding, ctx: Ctx): RouterToolResult {
+    if (name === 'router_get_plan') return this.#toolPlan(bind, ctx);
+    const req = this.ledger.latestRequest(bind.sessionId);
+    if (!req || req.status === 'closed') return toolError('no_request');
+    ctx.requestId = req.id;
+    switch (name) {
+      case 'router_report_triage': return this.#toolReportTriage(req, input as ReportTriageInput, bind);
+      case 'router_report_result': return this.#toolReportResult(req, input as ReportResultInput);
+      case 'router_request_escalation': return this.#toolEscalation(req, input as RequestEscalationInput);
+      case 'router_request_scope': return this.#toolScope(req, input as RequestScopeInput);
+      default: return toolError('unknown_tool');
+    }
+  }
+
+  /** What a slot's next Agent call must use. */
+  #slotView(requestId: string, role: Role, slot: number, fallback: Step) {
+    const state = this.ledger.getSlots(requestId).find(x => x.role === role && x.slot === slot);
+    const step = state?.step ?? fallback;
+    const st = ladderStep(step);
+    const upCount = state?.upCount ?? 0;
+    return { role, slot, step, model: st.alias, effort: st.effort, upCount, upsLeft: Math.max(0, MAX_STEP_UPS - upCount) };
+  }
+
+  /** router_get_plan: the ledger's view of the session's latest request. Read-only; opens nothing. */
+  #toolPlan(bind: ToolBinding, ctx: Ctx): RouterToolResult {
+    const view = this.status(bind.sessionId);
+    if (!view.request) return { ok: true, result: { request: null, boundBy: bind.boundBy } };
+    const r = view.request;
+    ctx.requestId = r.id;
+    const row = this.ledger.getRequest(r.id);
+    const slots = this.ledger.getSlots(r.id);
+    return {
+      ok: true,
+      result: {
+        requestId: r.id,
+        request: {
+          id: r.id, level: r.level, preset: r.preset, leadDirect: r.leadDirect, status: r.status, budgetUsd: r.budgetUsd, usedUsd: r.usedUsd,
+          source: r.source, l3Signs: (row?.triage as { l3Signs?: unknown } | undefined)?.l3Signs === true,
+        },
+        roles: view.roles.map(x => {
+          const upCount = slots.find(y => y.role === x.role && y.slot === x.slot)?.upCount ?? 0;
+          return { ...x, upCount, upsLeft: Math.max(0, MAX_STEP_UPS - upCount) };
+        }),
+        subtasks: this.ledger.listSubtasks(r.id).slice(-MAX_PLAN_SUBTASKS).map(s => ({
+          id: s.id, role: s.role, slot: s.slot, step: s.step, status: s.status, verdict: s.verdict, attempts: s.attempts,
+          scope: s.unscoped ? null : s.writeScope, unscoped: s.unscoped, protectedGranted: s.protectedGranted,
+          review: s.review ? { verdict: s.review.verdict, by: s.review.by } : null,
+        })),
+        pendingUser: this.ledger.listConfirmations(r.id).map(c => ({ kind: c.kind, subtaskId: c.subtaskId })),
+        boundBy: bind.boundBy,
+      },
+    };
+  }
+
+  /**
+   * router_report_triage: the lead's size judgement, kept on the request as a label for calibrating the
+   * triage (decisions 109, 111), before the first subtask only. A judgement larger than the plan re-plans the
+   * request exactly where the lead's first Agent call would (decisions 113, 119), through the same function,
+   * so the Agent call that follows finds a team request and does not re-plan again.
+   */
+  #toolReportTriage(req: RequestRow, raw: ReportTriageInput, bind: ToolBinding): RouterToolResult {
+    if (this.ledger.listSubtasks(req.id).length) return toolError('too_late');
+    const v = normalizeLeadTriage(raw);
+    this.ledger.setLeadTriage(req.id, { ...v, at: this.#at(), plannedLevel: req.level, plannedLeadDirect: req.team.leadDirect === true });
+    let now = req;
+    if (v.kind === 'team') {
+      const { presets } = this.#resolver.resolve(bind.cwd, req.leadModel ?? undefined);
+      const wantL3 = v.level === 'L3' && !presets.L3.leadDirect;
+      const why = `the lead judged the request as ${v.level} (about ${v.files} file${v.files === 1 ? '' : 's'}, confidence ${v.confidence.toFixed(2)})`;
+      if (req.team.leadDirect) {
+        const level: Level = wantL3 ? 'L3' : 'L2';
+        if (!presets[level].leadDirect) now = this.#replanAs(req, level, presets, `${why} in a lead-direct ${req.level} request`);
+      } else if (wantL3 && this.#offersL3(req)) {
+        now = this.#replanAs(req, 'L3', presets, why);
+      }
+    }
+    const replanned = now.level !== req.level || now.team.leadDirect !== req.team.leadDirect;
+    return {
+      ok: true,
+      result: {
+        requestId: req.id, recorded: true, replanned, level: now.level, preset: now.preset, leadDirect: now.team.leadDirect === true, budgetUsd: now.budgetUsd,
+        ...(replanned ? { brief: this.#triageContext(now.triage, now.team, bind.cwd, now.leadModel) } : {}),
+      },
+    };
+  }
+
+  #reviewSignal(req: RequestRow, sub: SubtaskRow, review: SubtaskReview, extra: { issues?: number | undefined; categories?: readonly string[] | undefined }, at: string): void {
+    const agent = sub.agentId ? this.ledger.getAgent(sub.agentId) : undefined;
+    const detail = [
+      `${review.verdict} by ${review.by}${review.bySubtaskId ? ` (subtask ${review.bySubtaskId})` : ''}`,
+      ...(extra.issues !== undefined ? [`issues ${extra.issues}`] : []),
+      ...(extra.categories?.length ? [`categories ${extra.categories.join(', ')}`] : []),
+      ...(review.margin ? [`margin ${review.margin}`] : []),
+    ].join('; ');
+    this.ledger.insertSignals({ requestId: req.id, subtaskId: sub.id, agentId: sub.agentId ?? null, attempt: agent?.stopCount ?? sub.attempts, at },
+      [{ kind: 'review', ok: review.verdict === 'accept', detail }]);
+  }
+
+  /**
+   * A reject of a finished subtask: failed, whatever verify said, and one failure of its slot. Two in a row
+   * raise the slot like a verify miss does (same function, same 3-raise limit). An accept ends the streak; a
+   * verify pass alone does not, since the reject that matters here comes after a pass.
+   */
+  #applyReject(req: RequestRow, sub: SubtaskRow, review: SubtaskReview, extra: { issues?: number | undefined; categories?: readonly string[] | undefined }, at: string): { raisedTo?: Step; atLimit: boolean } {
+    this.ledger.updateSubtask(req.id, sub.id, { status: 'failed', verdict: 'rejected', review }, at);
+    this.#reviewSignal(req, sub, review, extra, at);
+    const slot = this.ledger.getSlots(req.id).find(x => x.role === sub.role && x.slot === sub.slot);
+    if (slot && slot.step !== sub.step) return { atLimit: false };   // the slot was raised since this attempt ran
+    const streak = (slot?.failStreak ?? 0) + 1;
+    if (streak < REJECTS_FOR_RAISE) {
+      this.ledger.setSlotCounters(req.id, sub.role, sub.slot, sub.step, { failStreak: streak }, at);
+      return { atLimit: false };
+    }
+    this.#stepUpAfterMiss(req.id, sub, at, 'rejected');
+    const after = this.ledger.getSlots(req.id).find(x => x.role === sub.role && x.slot === sub.slot);
+    if (after && after.step !== sub.step) return { raisedTo: after.step, atLimit: false };
+    this.ledger.setSlotCounters(req.id, sub.role, sub.slot, sub.step, { failStreak: 0 }, at);
+    return { atLimit: true };
+  }
+
+  /** router_report_result: the judgement of a finished subtask by the lead, or by a reviewer or tester subtask. */
+  #toolReportResult(req: RequestRow, i: ReportResultInput): RouterToolResult {
+    const sub = this.ledger.getSubtask(req.id, i.subtaskId);
+    if (!sub) return toolError('unknown_subtask');
+    if (sub.status === 'pending' || sub.status === 'running') return toolError('not_finished');
+    if (sub.status === 'cancelled') return toolError('not_allowed', 'the subtask was cancelled; there is no result to judge.');
+    if (i.by !== 'lead') {
+      const judge = this.ledger.getSubtask(req.id, i.bySubtaskId!);
+      if (!judge) return toolError('unknown_subtask', `no subtask ${i.bySubtaskId} in the current request.`);
+      if (judge.role !== i.by) return toolError('not_allowed', `subtask ${judge.id} is a ${judge.role}, not a ${i.by}.`);
+      const finished = judge.status === 'passed' || (judge.status === 'hitl' && (judge.verdict === 'held' || judge.verdict === 'unverified'));
+      if (!finished) return toolError('not_allowed', `subtask ${judge.id} must be finished without a failure of its own before its verdict counts.`);
+    }
+    const at = this.#at();
+    const review: SubtaskReview = { verdict: i.verdict, by: i.by, ...(i.bySubtaskId ? { bySubtaskId: i.bySubtaskId } : {}), ...(i.margin ? { margin: i.margin } : {}), at };
+    const extra = { issues: i.issues, categories: i.categories };
+    let raisedTo: Step | undefined;
+    let atLimit = false;
+    if (i.verdict === 'accept') {
+      this.ledger.updateSubtask(req.id, sub.id, { review }, at);
+      this.#reviewSignal(req, sub, review, extra, at);
+      if (this.ledger.getSlots(req.id).some(x => x.role === sub.role && x.slot === sub.slot)) {
+        this.ledger.setSlotCounters(req.id, sub.role, sub.slot, sub.step, { failStreak: 0 }, at);
+      }
+    } else if (sub.review?.verdict === 'reject') {
+      // the same attempt judged again (a reviewer after the lead): the judgement is replaced, the failure is not counted twice
+      this.ledger.updateSubtask(req.id, sub.id, { review }, at);
+      this.#reviewSignal(req, sub, review, extra, at);
+    } else {
+      ({ raisedTo, atLimit } = { raisedTo: undefined, ...this.#applyReject(req, sub, review, extra, at) });
+    }
+    const after = this.ledger.getSubtask(req.id, sub.id)!;
+    return {
+      ok: true,
+      result: {
+        requestId: req.id, subtaskId: sub.id, recorded: true, verdict: i.verdict, by: i.by, status: after.status,
+        raised: raisedTo !== undefined, slot: this.#slotView(req.id, sub.role, sub.slot, sub.step),
+        next: i.verdict === 'accept' ? 'none' : atLimit ? 'ask_user' : raisedTo ? 'retry_at_raised_step' : 'retry_at_same_step',
+        ...(i.verdict === 'reject' && !raisedTo && !atLimit ? { escalation: 'router_request_escalation can raise the slot before the next attempt' } : {}),
+      },
+    };
+  }
+
+  /** Whether the user sent a prompt after the lead's request was answered needs_user (decisions 128, 129). */
+  #userTurn(req: RequestRow, kind: 'escalation' | 'scope', subtaskId: string, confirmed: boolean | undefined): boolean {
+    if (confirmed !== true) return false;
+    const pending = this.ledger.getConfirmation(req.id, kind, subtaskId);
+    return !!pending && this.ledger.userPromptAfter(req.sessionId, pending.afterEventId);
+  }
+
+  /**
+   * router_request_escalation (decision 128): raise a finished subtask's slot one step without waiting for a
+   * second failure. The request counts as the lead's reject when none was reported. The grant rule is core's
+   * decideEscalation; a granted raise moves the slot exactly as a miss does, so the next Agent call for it is
+   * checked against the new step and the 3-raise limit is shared.
+   */
+  #toolEscalation(req: RequestRow, i: RequestEscalationInput): RouterToolResult {
+    let sub = this.ledger.getSubtask(req.id, i.subtaskId);
+    if (!sub) return toolError('unknown_subtask');
+    if (sub.status === 'pending' || sub.status === 'running') return toolError('not_finished');
+    if (sub.status === 'cancelled') return toolError('not_allowed', 'the subtask was cancelled; dispatch it again instead.');
+    const at = this.#at();
+    const granted = (how: string): RouterToolResult => {
+      this.ledger.clearConfirmation(req.id, 'escalation', i.subtaskId);
+      return { ok: true, result: { requestId: req.id, subtaskId: i.subtaskId, granted: true, how, from: sub!.step, ...this.#slotView(req.id, sub!.role, sub!.slot, sub!.step) } };
+    };
+    const slotOf = () => this.ledger.getSlots(req.id).find(x => x.role === sub!.role && x.slot === sub!.slot);
+    if (stepIndex(slotOf()?.step ?? sub.step) > stepIndex(sub.step)) return granted('already_raised');
+    let atLimit = false;
+    if (sub.review?.verdict !== 'reject') {
+      const r = this.#applyReject(req, sub, { verdict: 'reject', by: 'lead', at }, {}, at);
+      if (r.raisedTo) return granted('second_failure');
+      atLimit = r.atLimit;
+      sub = this.ledger.getSubtask(req.id, i.subtaskId)!;
+    }
+    const slot = slotOf();
+    const step = slot?.step ?? sub.step;
+    const upCount = slot?.upCount ?? 0;
+    const fableOptIn = this.#config.fableOptIn === true;
+    const d = atLimit
+      ? { granted: false as const, code: 'needs_user' as const, why: 'limit' as const }
+      : decideEscalation({
+        step, upCount, fableOptIn, evidence: sub.review?.verdict === 'reject' && sub.review.by !== 'lead' ? 'independent' : 'lead',
+        leadOnlyRaises: slot?.leadRaises ?? 0, userTurn: this.#userTurn(req, 'escalation', sub.id, i.userConfirmed),
+      });
+    if (d.granted) {
+      this.ledger.setSlot(req.id, sub.role, sub.slot, d.to, upCount + 1, at);
+      if (d.leadOnly) this.ledger.setSlotCounters(req.id, sub.role, sub.slot, d.to, { leadRaises: (slot?.leadRaises ?? 0) + 1 }, at);
+      this.ledger.updateSubtask(req.id, sub.id, { upCount: upCount + 1 }, at);
+      this.#log.info('slot raised on request', { requestId: req.id, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: step, to: d.to, reason: i.reason, leadOnly: d.leadOnly });
+      return granted(d.leadOnly ? 'lead_judgement' : sub.review?.by !== 'lead' ? 'review_reject' : 'user_turn');
+    }
+    if (d.why === 'limit') {
+      if (sub.status !== 'hitl') this.ledger.updateSubtask(req.id, sub.id, { status: 'hitl' }, at);
+      this.ledger.clearConfirmation(req.id, 'escalation', sub.id);
+      return toolError('needs_user', `the ${sub.role} slot ${sub.slot} has no raise left (${MAX_STEP_UPS} step-ups or the top step). Stop this subtask and ask the user: retry at the same step, reduce the scope, fix it by hand, or stop.`,
+        { subtaskId: sub.id, why: 'limit', ...this.#slotView(req.id, sub.role, sub.slot, sub.step) });
+    }
+    this.ledger.setConfirmation({ requestId: req.id, sessionId: req.sessionId, kind: 'escalation', subtaskId: sub.id, payload: { reason: i.reason }, at });
+    const to = stepUp(step, fableOptIn);
+    const what = d.why === 'tier'
+      ? `the next step (${to ?? 'none'}) changes the model, which needs more than your judgement alone`
+      : 'this slot was already raised once on your judgement alone in this request';
+    const asked = i.userConfirmed === true ? ' No user turn was seen since this request was first made.' : '';
+    return toolError('needs_user', `${what}. Ask the user to confirm the raise (or have a reviewer judge the result and report it), then call again with userConfirmed true.${asked}`,
+      { subtaskId: sub.id, why: d.why, ...this.#slotView(req.id, sub.role, sub.slot, sub.step) });
+  }
+
+  /**
+   * router_request_scope: changes what a pending or running subtask may edit; the scope file and the agent
+   * file are rewritten, and the guard reads them on every call. The [scope: ...] line stays the one way to set
+   * a scope at dispatch (decision 60), so a finished subtask is refused here. A glob that names a protected
+   * path (decision 129) is granted after a user turn only, kept per subtask id for a later attempt, and never
+   * for .git or the router's folder.
+   */
+  #toolScope(req: RequestRow, i: RequestScopeInput): RouterToolResult {
+    const sub = this.ledger.getSubtask(req.id, i.subtaskId);
+    if (!sub) return toolError('unknown_subtask');
+    const add = sortScopeGlobs(i.add ?? []);
+    if (add.never.length) return toolError('not_allowed', `these paths can never be given to a subtask: ${add.never.join(', ')}.`);
+    const active = sub.status === 'pending' || sub.status === 'running';
+    const ordinary = add.ordinary.length > 0 || (i.remove?.length ?? 0) > 0;
+    if (!active && !add.protectedPaths.length) return toolError('not_running');
+    if (active && sub.unscoped && i.remove?.length) return toolError('not_allowed', 'the subtask was dispatched without a [scope: ...] line (whole repository); there is nothing to remove.');
+    const at = this.#at();
+    const news = add.protectedPaths.filter(g => !sub.protectedGranted.includes(g));
+    if (news.length) {
+      const pending = this.ledger.getConfirmation(req.id, 'scope', sub.id);
+      const asked = Array.isArray((pending?.payload as { globs?: unknown } | undefined)?.globs) ? (pending!.payload as { globs: string[] }).globs : [];
+      if (!(this.#userTurn(req, 'scope', sub.id, i.userConfirmed) && news.every(g => asked.includes(g)))) {
+        this.ledger.setConfirmation({ requestId: req.id, sessionId: req.sessionId, kind: 'scope', subtaskId: sub.id, payload: { globs: news }, at });
+        return toolError('needs_user', `these are protected paths: ${news.join(', ')}. Ask the user to confirm that subtask ${sub.id} may edit them, then call again with the same globs and userConfirmed true. Nothing was changed.`,
+          { subtaskId: sub.id, protectedPaths: news });
+      }
+      this.ledger.clearConfirmation(req.id, 'scope', sub.id);
+    }
+    const protectedGranted = removeGlobs(addGlobs(sub.protectedGranted, add.protectedPaths), i.remove ?? []);
+    const writeScope = active && !sub.unscoped ? removeGlobs(addGlobs(sub.writeScope, add.ordinary), i.remove ?? []) : sub.writeScope;
+    this.ledger.updateSubtask(req.id, sub.id, { writeScope, protectedGranted }, at);
+    const now = this.ledger.getSubtask(req.id, sub.id)!;
+    if (active) {
+      try {
+        writeJsonAtomic(this.#home.scopeFile(req.sessionId, now.id), scopeBody(now.writeScope, now.unscoped, now.protectedGranted));
+      } catch (e) {
+        this.#log.error('scope file not rewritten', { sessionId: req.sessionId, subtask: now.id, error: errorText(e) });
+        this.ledger.updateSubtask(req.id, sub.id, { writeScope: sub.writeScope, protectedGranted: sub.protectedGranted }, at);
+        return toolError('internal', 'the router could not rewrite the scope file; the scope is unchanged.');
+      }
+      if (now.agentId) this.#writeAgentFile(now.agentId, req.sessionId, now);
+    }
+    this.#log.info('subtask scope changed', { requestId: req.id, subtaskId: now.id, live: active, scope: now.writeScope, protectedGranted: now.protectedGranted });
+    return {
+      ok: true,
+      result: {
+        requestId: req.id, subtaskId: now.id, live: active, scope: now.unscoped ? null : now.writeScope, unscoped: now.unscoped, protectedGranted: now.protectedGranted,
+        ...(!active && ordinary ? { note: 'the subtask is finished: only the protected paths were granted; set its other paths with the [scope: ...] line when you dispatch it again' } : {}),
+      },
+    };
+  }
+
   // ------------------------------------------------------------------ summaries
 
   #summary(requestId: string, why: string): string {
@@ -1264,8 +1628,22 @@ export function outputRateEstimate(modelId: string, tokens: number): number | nu
 const MAX_COMPACT_SUBTASKS = 20;
 /** Audit #11: an allowed subtask whose subagent has not started after this long never will. */
 const STALE_PENDING_MS = 30_000;
-/** Spec 3.5: at most this many step-ups per slot; a further miss is the user's decision. */
-const MAX_STEP_UPS = 3;
+/** Decision 127: this many rejects in a row on a slot raise it, as two verify failures do. */
+const REJECTS_FOR_RAISE = 2;
+/** router_get_plan lists this many of the latest subtasks. */
+const MAX_PLAN_SUBTASKS = 20;
+
+interface ToolBinding { sessionId: string; cwd: string | undefined; boundBy: 'ticket' | 'spawn_session' }
+
+/** A refused tool call: a code the lead can act on and one sentence (core routerToolErrorText). */
+function toolError(code: RouterToolErrorCode, detail?: string, result?: Record<string, unknown>): RouterToolResult {
+  return { ok: false, code, message: routerToolErrorText(code, detail), ...(result ? { result } : {}) };
+}
+
+/** A scope file's body; protected paths granted to the subtask (decision 129) ride along for the guard. */
+function scopeBody(allowed: string[], unscoped: boolean, granted: readonly string[]) {
+  return { ...scopeFileBody(allowed, unscoped), ...(granted.length ? { protectedGranted: [...granted] } : {}) };
+}
 /** Tools that write files (decision 103): a role file without any of them is read-only. */
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 /** Audit #14: the fallback for pricing an unknown model's tokens when the subagent's step is not known. */

@@ -12,7 +12,7 @@ import type {
 } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -21,8 +21,29 @@ export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
  * left to the lead and the user (status 'hitl', never counted as a miss):
  * - held: the verify inputs changed, so the commands were not run (decision 91)
  * - unverified: the stop was replayed from the spool after an outage; verify never ran (decision 89)
+ * And one the lead reports: rejected = the result is wrong whatever verify said (router_report_result); status 'failed'.
  */
-export type SubtaskVerdict = Verdict | 'held' | 'unverified';
+export type SubtaskVerdict = Verdict | 'held' | 'unverified' | 'rejected';
+
+/** The latest judgement reported for a subtask's result (router_report_result, decision 127). */
+export interface SubtaskReview {
+  verdict: 'accept' | 'reject';
+  by: 'lead' | 'reviewer' | 'tester';
+  bySubtaskId?: string;
+  margin?: 'easy' | 'normal';
+  at: string;
+}
+
+/** A request of the lead that waits for a user turn (decisions 128, 129). */
+export interface ConfirmationRow {
+  requestId: string;
+  kind: 'escalation' | 'scope';
+  subtaskId: string;
+  payload: unknown;
+  /** The newest event of the session when the request was made; a later user prompt is the user turn. */
+  afterEventId: number;
+  createdAt: string;
+}
 /**
  * How a closed request was carried out (decision 87): direct = a lead-direct preset (L0) finished by the
  * lead without subtasks, the expected outcome; delegated = subtasks ran; no_delegation = a team preset
@@ -59,6 +80,10 @@ export interface SubtaskRow extends SubtaskRecord {
   unscoped: boolean;
   verdict: SubtaskVerdict | null;
   toolUseId: string | null;
+  /** The judgement reported for the current attempt; a new dispatch clears it. */
+  review: SubtaskReview | null;
+  /** Protected paths this subtask may edit, granted after a user turn (decision 129); kept across dispatches. */
+  protectedGranted: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -163,7 +188,8 @@ CREATE TABLE IF NOT EXISTS requests (
   awaiting_ms    INTEGER NOT NULL DEFAULT 0,
   prompt_text    TEXT,
   lead_model     TEXT,
-  lead_class     TEXT
+  lead_class     TEXT,
+  lead_triage    TEXT
 );
 CREATE INDEX IF NOT EXISTS requests_by_session ON requests(session_id, created_at);
 
@@ -185,6 +211,8 @@ CREATE TABLE IF NOT EXISTS subtasks (
   dispatch_seq INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
+  review      TEXT,
+  protected_granted TEXT,
   PRIMARY KEY (request_id, id)
 );
 CREATE INDEX IF NOT EXISTS subtasks_pending ON subtasks(status, agent_type, dispatch_seq);
@@ -296,7 +324,20 @@ CREATE TABLE IF NOT EXISTS slots (
   step       TEXT NOT NULL,
   up_count   INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
+  fail_streak INTEGER NOT NULL DEFAULT 0,
+  lead_raises INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (request_id, role, slot)
+);
+
+-- decisions 128, 129: a raise or a protected-path grant the lead asked for that needs a user turn first
+CREATE TABLE IF NOT EXISTS confirmations (
+  request_id     TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  subtask_id     TEXT NOT NULL,
+  payload        TEXT NOT NULL,
+  after_event_id INTEGER NOT NULL,
+  created_at     TEXT NOT NULL,
+  PRIMARY KEY (request_id, kind, subtask_id)
 );
 
 -- decision 117: the lead's model as last seen for each session
@@ -348,6 +389,15 @@ function toSubtask(r: Row): SubtaskRow {
     attempts: n(r.attempts), upCount: n(r.up_count), status: s(r.status) as SubtaskStatus,
     agentType: s(r.agent_type), unscoped: n(r.unscoped) === 1, verdict: sn(r.verdict) as SubtaskVerdict | null,
     toolUseId: sn(r.tool_use_id), createdAt: s(r.created_at), updatedAt: s(r.updated_at),
+    review: r.review === null || r.review === undefined ? null : json<SubtaskReview>(r.review),
+    protectedGranted: r.protected_granted === null || r.protected_granted === undefined ? [] : json<string[]>(r.protected_granted),
+  };
+}
+
+function toConfirmation(r: Row): ConfirmationRow {
+  return {
+    requestId: s(r.request_id), kind: s(r.kind) as ConfirmationRow['kind'], subtaskId: s(r.subtask_id), payload: json<unknown>(r.payload),
+    afterEventId: n(r.after_event_id), createdAt: s(r.created_at),
   };
 }
 
@@ -433,7 +483,9 @@ export interface RecordRow {
   prompt: string | null;
 }
 
-export type SubtaskPatch = Partial<Pick<SubtaskRow, 'status' | 'verdict' | 'agentId' | 'upCount'>>;
+export type SubtaskPatch = Partial<Pick<SubtaskRow, 'status' | 'verdict' | 'agentId' | 'upCount' | 'writeScope' | 'review' | 'protectedGranted'>>;
+
+export interface SlotRow { role: Role; slot: number; step: Step; upCount: number; failStreak: number; leadRaises: number }
 
 export class Ledger {
   readonly db: DatabaseSync;
@@ -463,6 +515,12 @@ export class Ledger {
     if (!agentCols.includes('verify_env')) this.db.exec('ALTER TABLE agents ADD COLUMN verify_env TEXT');
     // v6 -> v7: agents.transcript_path (cost re-read when the request closes); sessions is created by SCHEMA
     if (!agentCols.includes('transcript_path')) this.db.exec('ALTER TABLE agents ADD COLUMN transcript_path TEXT');
+    // v7 -> v8: router tools (decisions 127-129); confirmations is created by SCHEMA
+    if (!reqCols.includes('lead_triage')) this.db.exec('ALTER TABLE requests ADD COLUMN lead_triage TEXT');
+    const subCols = (this.db.prepare('PRAGMA table_info(subtasks)').all() as Row[]).map(r => s(r.name));
+    for (const c of ['review', 'protected_granted']) if (!subCols.includes(c)) this.db.exec(`ALTER TABLE subtasks ADD COLUMN ${c} TEXT`);
+    const slotCols = (this.db.prepare('PRAGMA table_info(slots)').all() as Row[]).map(r => s(r.name));
+    for (const c of ['fail_streak', 'lead_raises']) if (!slotCols.includes(c)) this.db.exec(`ALTER TABLE slots ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -645,15 +703,70 @@ export class Ledger {
   /** One pending level per session; a new `/router level` replaces it. */
   // ------------------------------------------------------------------ slots (spec 3.5)
 
-  getSlots(requestId: string): Array<{ role: Role; slot: number; step: Step; upCount: number }> {
-    return (this.db.prepare('SELECT role, slot, step, up_count FROM slots WHERE request_id = ? ORDER BY role, slot').all(requestId) as Row[])
-      .map(r => ({ role: s(r.role) as Role, slot: n(r.slot), step: s(r.step) as Step, upCount: n(r.up_count) }));
+  getSlots(requestId: string): SlotRow[] {
+    return (this.db.prepare('SELECT role, slot, step, up_count, fail_streak, lead_raises FROM slots WHERE request_id = ? ORDER BY role, slot').all(requestId) as Row[])
+      .map(r => ({ role: s(r.role) as Role, slot: n(r.slot), step: s(r.step) as Step, upCount: n(r.up_count), failStreak: n(r.fail_streak), leadRaises: n(r.lead_raises) }));
   }
 
+  /** Moves a slot to a step (a raise). The failure streak starts again at the new step. */
   setSlot(requestId: string, role: Role, slot: number, step: Step, upCount: number, at: string): void {
     this.db.prepare(`INSERT INTO slots (request_id, role, slot, step, up_count, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (request_id, role, slot) DO UPDATE SET step = excluded.step, up_count = excluded.up_count, updated_at = excluded.updated_at`)
+      ON CONFLICT (request_id, role, slot) DO UPDATE SET step = excluded.step, up_count = excluded.up_count, fail_streak = 0, updated_at = excluded.updated_at`)
       .run(requestId, role, slot, step, upCount, at);
+  }
+
+  /**
+   * Sets a slot's counters without moving it: failStreak (rejects in a row, decision 127) and leadRaises
+   * (raises on the lead's word alone, decision 128). A slot not raised yet gets its row at `step`.
+   */
+  setSlotCounters(requestId: string, role: Role, slot: number, step: Step, c: { failStreak?: number; leadRaises?: number }, at: string): void {
+    this.db.prepare(`INSERT INTO slots (request_id, role, slot, step, up_count, updated_at, fail_streak, lead_raises) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+      ON CONFLICT (request_id, role, slot) DO UPDATE SET fail_streak = COALESCE(?, fail_streak), lead_raises = COALESCE(?, lead_raises), updated_at = excluded.updated_at`)
+      .run(requestId, role, slot, step, at, c.failStreak ?? 0, c.leadRaises ?? 0, c.failStreak ?? null, c.leadRaises ?? null);
+  }
+
+  // ------------------------------------------------------------------ router tools (decisions 127-129)
+
+  setLeadTriage(requestId: string, triage: unknown): void {
+    this.db.prepare('UPDATE requests SET lead_triage = ? WHERE id = ?').run(JSON.stringify(triage), requestId);
+  }
+
+  getLeadTriage<T>(requestId: string): T | null {
+    const r = this.db.prepare('SELECT lead_triage FROM requests WHERE id = ?').get(requestId) as Row | undefined;
+    return r && r.lead_triage !== null && r.lead_triage !== undefined ? json<T>(r.lead_triage) : null;
+  }
+
+  /** Stores (or replaces) a request waiting for a user turn; the session's newest event marks "before". */
+  setConfirmation(c: { requestId: string; sessionId: string; kind: ConfirmationRow['kind']; subtaskId: string; payload: unknown; at: string }): void {
+    const last = n((this.db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM events WHERE session_id = ?').get(c.sessionId) as Row).m);
+    this.db.prepare(`INSERT INTO confirmations (request_id, kind, subtask_id, payload, after_event_id, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (request_id, kind, subtask_id) DO UPDATE SET payload = excluded.payload, after_event_id = excluded.after_event_id, created_at = excluded.created_at`)
+      .run(c.requestId, c.kind, c.subtaskId, JSON.stringify(c.payload), last, c.at);
+  }
+
+  getConfirmation(requestId: string, kind: ConfirmationRow['kind'], subtaskId: string): ConfirmationRow | undefined {
+    const r = this.db.prepare('SELECT * FROM confirmations WHERE request_id = ? AND kind = ? AND subtask_id = ?').get(requestId, kind, subtaskId) as Row | undefined;
+    return r && toConfirmation(r);
+  }
+
+  listConfirmations(requestId: string): ConfirmationRow[] {
+    return (this.db.prepare('SELECT * FROM confirmations WHERE request_id = ? ORDER BY created_at, rowid').all(requestId) as Row[]).map(toConfirmation);
+  }
+
+  clearConfirmation(requestId: string, kind: ConfirmationRow['kind'], subtaskId: string): void {
+    this.db.prepare('DELETE FROM confirmations WHERE request_id = ? AND kind = ? AND subtask_id = ?').run(requestId, kind, subtaskId);
+  }
+
+  /**
+   * Whether the user sent a prompt in the session after event `afterEventId`: a live prompt of the main
+   * session that is not a task notification. It shows that the user was in the loop, not what they answered.
+   */
+  userPromptAfter(sessionId: string, afterEventId: number): boolean {
+    const rows = this.db.prepare(`SELECT payload FROM events WHERE session_id = ? AND id > ? AND type = 'prompt_submit' AND agent_id IS NULL AND spooled = 0
+      ORDER BY id`).all(sessionId, afterEventId) as Row[];
+    return rows.some(r => {
+      try { return !/^\s*<task-notification>/.test(String((JSON.parse(s(r.payload)) as { prompt?: unknown }).prompt ?? '')); } catch { return false; }
+    });
   }
 
   // ------------------------------------------------------------------ sessions (decision 117)
@@ -732,7 +845,7 @@ export class Ledger {
       ON CONFLICT (request_id, id) DO UPDATE SET
         role = excluded.role, slot = excluded.slot, step = excluded.step, write_scope = excluded.write_scope,
         unscoped = excluded.unscoped, agent_type = excluded.agent_type, agent_id = NULL, attempts = attempts + 1,
-        status = 'pending', verdict = NULL, tool_use_id = excluded.tool_use_id, dispatch_seq = excluded.dispatch_seq,
+        status = 'pending', verdict = NULL, review = NULL, tool_use_id = excluded.tool_use_id, dispatch_seq = excluded.dispatch_seq,
         updated_at = excluded.updated_at`)
       .run({
         requestId: d.requestId, id: d.id, role: d.role, slot: d.slot, step: d.step, scope: JSON.stringify(d.writeScope),
@@ -780,6 +893,9 @@ export class Ledger {
     if (p.verdict !== undefined) { sets.push('verdict = ?'); vals.push(p.verdict); }
     if (p.agentId !== undefined) { sets.push('agent_id = ?'); vals.push(p.agentId ?? null); }
     if (p.upCount !== undefined) { sets.push('up_count = ?'); vals.push(p.upCount); }
+    if (p.writeScope !== undefined) { sets.push('write_scope = ?'); vals.push(JSON.stringify(p.writeScope)); }
+    if (p.review !== undefined) { sets.push('review = ?'); vals.push(p.review === null ? null : JSON.stringify(p.review)); }
+    if (p.protectedGranted !== undefined) { sets.push('protected_granted = ?'); vals.push(JSON.stringify(p.protectedGranted)); }
     if (!sets.length) return;
     sets.push('updated_at = ?');
     vals.push(at, requestId, id);
@@ -914,7 +1030,7 @@ export class Ledger {
     return n(r.c);
   }
 
-  count(table: 'requests' | 'subtasks' | 'agents' | 'events' | 'signals' | 'costs' | 'pending_levels'): number {
+  count(table: 'requests' | 'subtasks' | 'agents' | 'events' | 'signals' | 'costs' | 'pending_levels' | 'confirmations'): number {
     return n((this.db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as Row).c);
   }
 }

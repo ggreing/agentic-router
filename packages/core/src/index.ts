@@ -7,3 +7,5 @@ export * from './triage.ts';
 export * from './pricing.ts';
 export * from './roles.ts';
 export * from './triage-judge.ts';
+export * from './tools.ts';
+export type * from './proxy-wire.ts';

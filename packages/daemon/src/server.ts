@@ -5,6 +5,8 @@
 // - POST /shutdown answers { ok: true } first, then asks the daemon to stop (CLI `stop`).
 // - POST bodies: application/json only, at most 1 MB.
 // - The hook response is what relay.mjs prints unchanged: text/plain for pre_compact, JSON otherwise.
+// - POST /router/v1/tools/call takes one router MCP tool call from the plugin's server and always answers
+//   200 with { ok, ... }: a refused call is a tool result for the lead, not a transport error.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { ClientAdapter } from './adapter.ts';
@@ -15,6 +17,7 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const API = {
   hook: '/router/v1/hooks/claude-code',
   status: '/router/v1/status',
+  tools: '/router/v1/tools/call',
   health: '/router/v1/health',
   shutdown: '/router/v1/shutdown',
 } as const;
@@ -77,7 +80,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       if (req.method !== 'GET') throw methodNotAllowed(res, 'GET');
       return send(res, 200, { ok: true, version: d.version });
     }
-    if (route !== API.status && route !== API.hook && route !== API.shutdown) throw new HttpError(404, 'not found');
+    if (route !== API.status && route !== API.hook && route !== API.shutdown && route !== API.tools) throw new HttpError(404, 'not found');
     if (!authOk(req.headers.authorization)) throw new HttpError(401, 'unauthorized');
 
     if (route === API.shutdown) {
@@ -96,6 +99,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
 
     if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
     const body = await readJson(req, maxBody);
+    if (route === API.tools) return send(res, 200, await d.router.tool(body));
     let ev;
     try {
       ev = d.adapter.toRouterEvent(body);
