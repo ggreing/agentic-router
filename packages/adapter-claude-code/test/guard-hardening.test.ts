@@ -355,6 +355,16 @@ test('B3: a Grep over a directory is denied when a credential file git does not 
   } finally { done(w); }
 });
 
+test('git: the repository options are refused before the subcommand only', () => {
+  const w = world();
+  try {
+    for (const command of ['git rev-parse --git-dir', 'git rev-parse --git-common-dir', 'git rev-parse --git-dir --git-common-dir', 'git rev-parse --show-toplevel'])
+      assert.equal(bash(w, command), null, command);
+    for (const command of ['git --git-dir=/x/.git status', 'git --git-dir /x/.git status', 'git --work-tree=/x status', 'git --exec-path=/x status', 'git -C src --git-dir=/x/.git log', 'git --namespace=x log'])
+      assert.ok(bash(w, command)?.deny, command);
+  } finally { done(w); }
+});
+
 test('D: an env template is protected for writes, can be granted, and the grant then works', () => {
   const w = world();
   try {
@@ -440,8 +450,15 @@ test('a file tool given a Git Bash path is refused with the Windows path to use 
       assert.match(d, /is a Git Bash path; Read, Edit, Write, Grep and Glob take Windows paths/, tool);
       assert.ok(d.toLowerCase().includes(path.join(w.repo, tool === 'Glob' ? '' : 'src').toLowerCase()), `${tool}: the message gives the Windows path (${d})`);
     }
-    assert.match(call(w, 'Read', { file_path: '/usr/share/x' })!.deny!, /Git Bash path/);
-    assert.match(call(w, 'Read', { file_path: '/home/u/.ssh/id_rsa' })!.deny!, /Git Bash path/);
+    // as Claude Code hands it to the hook: backslashes, still no drive
+    const back = p.replace(/\//g, '\\');
+    assert.match(call(w, 'Read', { file_path: back })!.deny!, /is a Git Bash path/);
+    assert.ok(call(w, 'Read', { file_path: back })!.deny!.toLowerCase().includes(path.join(w.repo, 'src', 'a.ts').toLowerCase()));
+    // a new file in a directory that is there under the Git Bash reading
+    assert.match(call(w, 'Write', { file_path: `/tmp/${rel}/src/new.ts`, content: 'x' })!.deny!, /is a Git Bash path/);
+    // a rooted path that names nothing under the Git Bash reading is left as the Windows path it is
+    for (const other of ['/tmp/no-such-dir-for-this-test/a.ts', '\\tmp\\no-such-dir-for-this-test\\a.ts', '/no-such-top-level-dir/x'])
+      assert.ok(!/Git Bash path/.test(call(w, 'Read', { file_path: other })?.deny ?? ''), other);
     // drive forms and Windows paths are handled as before
     assert.ok(call(w, 'Read', { file_path: path.join(w.repo, 'src', 'a.ts') })!.allow);
     assert.ok(call(w, 'Read', { file_path: 'src/a.ts' }) === null || call(w, 'Read', { file_path: 'src/a.ts' })!.allow !== undefined);

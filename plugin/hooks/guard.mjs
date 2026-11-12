@@ -193,7 +193,8 @@ function msysRoot() {
 }
 /** True for a Git Bash absolute path that is not already a drive form the file tools understand. */
 function isMsysOnlyPath(p, platform = process.platform) {
-  return platform === 'win32' && /^\/(?![\\/])/.test(p) && !/^\/[A-Za-z](?:\/|$)/.test(p) && !/^\/(?:proc\/)?cygdrive\//.test(p);
+  const s = toPosix(p);   // Claude Code may hand the hook "\tmp\x" for a "/tmp/x" the model wrote
+  return platform === 'win32' && /^\/(?!\/)/.test(s) && !/^\/[A-Za-z](?:\/|$)/.test(s) && !/^\/(?:proc\/)?cygdrive\//.test(s);
 }
 /** One Git Bash absolute path (already a POSIX string) to the Windows path its mount gives; null for /dev and /proc. */
 function msysMount(posixPath, env) {
@@ -706,7 +707,16 @@ export function classifyBash(command, opts = {}) {
       if (reason) return reason;
     }
     if (cmd0 === 'git' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return t === '-c' || /^-c[^=\s]+=/.test(t); })) return 'git -c is not allowed (it can run arbitrary config or hooks).';
-    if (cmd0 === 'git' && words.slice(1).some(w => /^--(?:exec-path|git-dir|work-tree|namespace)(?:=|$)/.test(stripOuterQuotes(w)))) return 'git --git-dir / --work-tree / --exec-path are not allowed.';
+    // git's own options (before the subcommand) that point it at another repository or program directory.
+    // After the subcommand the same words are something else: `git rev-parse --git-dir` only prints a path.
+    if (cmd0 === 'git') {
+      for (let i = 1; i < words.length; i++) {
+        const t = stripOuterQuotes(words[i]);
+        if (!t.startsWith('-')) break;                        // the subcommand
+        if (/^--(?:exec-path|git-dir|work-tree|namespace)(?:=|$)/.test(t)) return 'git --git-dir / --work-tree / --exec-path are not allowed.';
+        if (t === '-C' || t === '-c') i++;                    // these take a value
+      }
+    }
 
     // dangerous options on otherwise-allowed commands (run a program, write a file, or read hidden files)
     const key = `${cmd0} ${sub}`;
@@ -1022,9 +1032,13 @@ function relForms(root, p) {
  */
 function msysPathHint(p, msys) {
   if (typeof p !== 'string' || !isMsysOnlyPath(p)) return null;
+  // A rooted path without a drive is also a valid Windows path (the root of the current drive). It is taken
+  // for a Git Bash path only when that reading names something that is there (the file, or the directory a
+  // new file would go into) and the Windows reading does not.
   const meant = msysPathForms(toPosix(p), msys)[0];
-  return `[router] blocked: ${p} is a Git Bash path; Read, Edit, Write, Grep and Glob take Windows paths. `
-    + (meant ? `Use ${meant} (or a path relative to the working directory).` : 'Use the Windows path (or a path relative to the working directory).');
+  const there = q => { try { return fs.existsSync(q); } catch { return false; } };
+  if (!meant || there(path.resolve(p)) || !(there(meant) || there(path.dirname(meant)))) return null;
+  return `[router] blocked: ${toPosix(p)} is a Git Bash path; Read, Edit, Write, Grep and Glob take Windows paths. Use ${meant} (or a path relative to the working directory).`;
 }
 
 export function evaluate(hookInput, opts = {}) {

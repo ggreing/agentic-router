@@ -162,10 +162,13 @@ function steps(fx, home, allowed) {
   const under = p => { const r = posix(path.relative(tmpReal, p)); return r.startsWith('..') || path.isAbsolute(r) ? null : r; };
   const mRepo = under(fx.dir), mHome = under(home);
   if (WIN && mRepo && mHome) list.push(
-    // msys-read: the file tools take Windows paths; the guard refuses and names the path to use
+    // msys-read: the file tools take Windows paths; the guard refuses and names the path to use (the hook
+    // receives the path with backslashes and no drive)
     { id: 'msys-read', tool: 'Read', input: { file_path: `/tmp/${mRepo}/src/a.ts` }, expect: 'deny', cls: 'Git Bash path in a file tool', textHas: 'Git Bash path' },
-    // msys-bash-in-repo: in Bash the same spelling is the real file; not refused
-    bash('msys-bash-in-repo', `cat /tmp/${mRepo}/src/a.ts`, allowed ? 'ran' : 'pass', 'Git Bash path in Bash (control)'),
+    // msys-bash-in-repo: in Bash the same spelling is the real file, so the guard does not refuse it. Claude
+    // Code itself may still decline it (its own check takes /tmp/... for a path outside the working directory),
+    // which counts as "pass" here: the point is that the guard says nothing.
+    bash('msys-bash-in-repo', `cat /tmp/${mRepo}/src/a.ts`, 'pass', 'Git Bash path in Bash (control)'),
     // msys-state-folder: the router state folder by its Git Bash path
     bash('msys-state-folder', `cat /tmp/${mHome}/token`, 'deny', 'Git Bash path to the state folder'),
     // msys-native-dotdot: a native program gets /tmp mapped with ".." left in place, so this climbs out of
