@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// agentic-router <init|start|stop|status|doctor>
+// agentic-router <init|start|stop|status|doctor|supervise|mode|token|key|proxy>
 import fs from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Level } from '@agentic-router/core';
+import { paths, type Level } from '@agentic-router/core';
 import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planProject, planStatusLine, type PlannedChange } from './setup.ts';
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
+import { planApiSettings } from './apimode.ts';
+import { allowUpstream, configureApi, keySet, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
+import { runSupervisor } from './supervise.ts';
 
 export { doctor, ladderBreakers, versionAtLeast } from './doctor.ts';
 export * from './setup.ts';
@@ -35,7 +38,26 @@ async function confirm(changes: PlannedChange[], yes: boolean): Promise<boolean>
   return a === 'y' || a === 'yes';
 }
 
+const readStdin = async (): Promise<string> => {
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+};
+
+const apiDeps = (f: Record<string, string | boolean>): ApiDeps => ({
+  settingsFile: typeof f['claude-settings'] === 'string' ? f['claude-settings'] : defaultClaudeSettings(),
+  confirm, login: realLogin, vault: realVault, isTTY: process.stdin.isTTY === true, readStdin, out: line => console.log(line),
+});
+
 async function init(f: Record<string, string | boolean>) {
+  const mode = f.mode;
+  if (mode !== undefined && mode !== 'api') { console.error('--mode takes "api" (subscription mode is the default)'); process.exitCode = 2; return; }
+  const api = mode === 'api' ? apiDeps(f) : undefined;
+  // API-key mode checks the login and the keychain before anything is written
+  if (api) {
+    const pre = await preflightApi(f, api);
+    if (!pre.ok) { process.exitCode = pre.code; return; }
+  }
   const budgets: Partial<Record<Level, number>> = {};
   for (const l of ['L0', 'L1', 'L2', 'L3'] as Level[]) {
     const raw = f[`budget-${l}`];
@@ -45,7 +67,9 @@ async function init(f: Record<string, string | boolean>) {
     budgets[l] = v;
   }
   const pluginDir = typeof f['plugin-dir'] === 'string' ? path.resolve(f['plugin-dir']) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../plugin');
-  const { config, token } = await ensureLocalState(budgets, pluginDir, { newPort: f['new-port'] === true });
+  const local = await ensureLocalState(budgets, pluginDir, { newPort: f['new-port'] === true });
+  const token = local.token;
+  const config = api ? await configureApi(local.config, api) : local.config;
   console.log(`local state ready: daemon port ${config.daemonPort}, token ${token}, plugin ${pluginDir}`);
   console.log(`per-request budgets (provisional): ${Object.entries(config.budgetsUsd).map(([k, v]) => `${k} $${v}`).join(', ')}`);
   const changes: PlannedChange[] = [];
@@ -62,12 +86,28 @@ async function init(f: Record<string, string | boolean>) {
     return sl ? [sl] : [];
   });
   step('project settings', () => planProject(typeof f.project === 'string' ? f.project : process.cwd()));
+  if (api) step('API-key mode settings', () => { const c = planApiSettings(api.settingsFile, 'proxy', config.proxyPort!); return c ? [c] : []; });
   if (await confirm(changes, f.yes === true)) for (const c of changes) c.apply();
   console.log(`\nLoad the plugin in Claude Code: claude --plugin-dir "${pluginDir}"  (marketplace install comes with the first release)`);
+  if (api) console.log('API-key mode: run `agentic-router start` (daemon and proxy), then start new Claude Code sessions. `agentic-router doctor` checks the setup.');
+}
+
+async function apiCommand(cmd: string, args: string[], f: Record<string, string | boolean>): Promise<number> {
+  const d = apiDeps(f);
+  if (cmd === 'mode') {
+    if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: agentic-router mode <direct|proxy> [--yes]'); return 2; }
+    return setMode(args[0], f, d);
+  }
+  if (cmd === 'token' && args[0] === 'rotate') return tokenRotate(d);
+  if (cmd === 'key' && args[0] === 'set') return keySet(f, d);
+  if (cmd === 'proxy' && args[0] === 'allow-upstream') return allowUpstream(args[1], f, d, paths.config());
+  console.log('usage: agentic-router token rotate | key set [--key-stdin] | proxy allow-upstream <https origin> [--use] [--yes]');
+  return 2;
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
 const f = flags(rest);
+const positional = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && rest[i - 1]!.startsWith('--') && f[rest[i - 1]!.slice(2)] === a));
 // realpath on both sides: an npm bin is a symlink (POSIX) whose path differs from the module's (review #7).
 const real = (p: string) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 const isMain = !!process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url));
@@ -80,5 +120,7 @@ if (isMain) {
     const checks = await doctor();
     for (const c of checks) console.log(`${c.ok ? 'ok  ' : c.blocking ? 'FAIL' : 'warn'} ${c.name.padEnd(36)} ${c.detail}`);
     if (checks.some(c => !c.ok && c.blocking)) process.exitCode = 1;
-  } else console.log('usage: agentic-router <init|start|stop|status|doctor>');
+  } else if (cmd === 'supervise') await runSupervisor();
+  else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
+  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|mode direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
 }

@@ -7,6 +7,7 @@
 //      request budget, closed for the caps).
 // Daily totals live in proxy.db (node:sqlite); a day is the local calendar day.
 // Overshoot is bounded by the responses already in flight when a cap is reached.
+import type { BudgetAnswer } from '@agentic-router/core';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import type { DaemonTarget } from './usage.ts';
@@ -14,7 +15,8 @@ import type { DaemonTarget } from './usage.ts';
 export type BlockKind = 'token_daily' | 'daily' | 'request';
 export interface Block { kind: BlockKind; message: string }
 
-export interface RequestBudget { requestId: string; budgetUsd: number; spentUsd: number }
+/** The daemon's answer for a request (core proxy-wire). */
+export type RequestBudget = BudgetAnswer;
 export type BudgetSource = (sessionId: string, promptId: string) => Promise<RequestBudget | undefined>;
 
 export const BUDGET_PATH = '/router/v1/budget';

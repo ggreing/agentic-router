@@ -8,43 +8,16 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+// Core's price table through its dependency-free subpath: the key-holding process runs no third-party code
+// (core's index pulls in zod and yaml; the wire types below are type-only imports, erased at runtime).
+import type { UsageRow, UsageRowState } from '@agentic-router/core';
+import { PRICING_PER_MTOK, costUsd } from '@agentic-router/core/pricing';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyPaths } from './paths.ts';
-import type { TapResult, Usage } from './tap.ts';
+import type { TapResult } from './tap.ts';
 
-// Core's price table, loaded on its own so the key-holding process runs no third-party code (core's index
-// pulls in zod and yaml). Until core exports a `./pricing` subpath, the file is imported by its location.
-interface PricingModule {
-  costUsd(modelId: string, u: Usage): number | null;
-  PRICING_PER_MTOK: Record<string, { input: number; output: number }>;
-}
-const { PRICING_PER_MTOK, costUsd } = await import(new URL('../../core/src/pricing.ts', import.meta.url).href) as PricingModule;
-
-export type RowState = 'complete' | 'partial' | 'error';
-
-export interface UsageRow {
-  id: string;
-  messageId: string | null;
-  upstreamRequestId: string | null;
-  sessionId: string | null;
-  agentId: string | null;
-  parentAgentId: string | null;
-  promptId: string | null;
-  requestClass: string | null;
-  agentType: string | null;
-  path: string;
-  model: string | null;
-  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite5m: number; cacheWrite1h: number };
-  /** Priced with core's table; for a model without a price, at the most expensive model's rates (an over-estimate). */
-  usd: number;
-  priced: boolean;
-  state: RowState;
-  httpStatus: number;
-  /** Short hash of the local token used (per-token daily cap); never the token. */
-  tokenId: string;
-  startedAt: string;
-  endedAt: string;
-}
+export type { UsageRow };
+export type RowState = UsageRowState;
 
 /** Attribution headers Claude Code sends (llm-gateway protocol); a value is kept only when it is short and printable. */
 export function attribution(headers: http.IncomingHttpHeaders): Pick<UsageRow, 'sessionId' | 'agentId' | 'parentAgentId' | 'promptId' | 'requestClass' | 'agentType'> {

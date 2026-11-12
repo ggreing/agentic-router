@@ -13,5 +13,8 @@
   },
   "bin": {
     "agentic-router-proxy": "./src/main.ts"
+  },
+  "dependencies": {
+    "@agentic-router/core": "*"
   }
 }

@@ -35,6 +35,8 @@ async function main(): Promise<void> {
     };
     process.on('SIGINT', () => stop('SIGINT'));
     process.on('SIGTERM', () => stop('SIGTERM'));
+    // the supervisor asks over IPC: on Windows a signal to another process is a hard kill, with no drain
+    process.on('message', m => { if (m && typeof m === 'object' && (m as { type?: unknown }).type === 'stop') stop('supervisor'); });
   } catch (e) {
     log.error('proxy did not start', { error: errorText(e) });
     process.stderr.write(`agentic-router proxy: ${errorText(e)}\n`);

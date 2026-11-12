@@ -13,6 +13,8 @@ export const COMMON_DEV_PORTS = new Set([3000, 3001, 4200, 5000, 5173, 5432, 637
 export interface CliConfig extends RouterConfig {
   budgetsUsd: Record<Level, number>;
   wrappedStatusLine?: { type: 'command'; command: string; padding?: number };
+  /** API-key mode (decision 130): 'proxy' runs the proxy under the supervisor, 'direct' is the bypass. Absent: subscription mode. */
+  apiMode?: 'proxy' | 'direct';
 }
 
 export function isFree(port: number): Promise<boolean> {
@@ -23,9 +25,9 @@ export function isFree(port: number): Promise<boolean> {
   });
 }
 
-/** First free port in 47800-47999 (outside common dev-server ports). */
-export async function pickPort(start = 47800, end = 47999): Promise<number> {
-  for (let p = start; p <= end; p++) if (!COMMON_DEV_PORTS.has(p) && await isFree(p)) return p;
+/** First free port in 47800-47999 (outside common dev-server ports and the ports given, e.g. the daemon's). */
+export async function pickPort(start = 47800, end = 47999, exclude: ReadonlySet<number> = new Set()): Promise<number> {
+  for (let p = start; p <= end; p++) if (!COMMON_DEV_PORTS.has(p) && !exclude.has(p) && await isFree(p)) return p;
   throw new Error(`no free port in ${start}-${end}`);
 }
 
@@ -64,7 +66,7 @@ export function restrictHome(): void {
   if (process.platform === 'win32') return;      // Windows: the profile ACL applies; doctor warns on other principals
   try {
     fs.chmodSync(routerHome(), 0o700);
-    for (const f of [paths.token(), paths.config(), paths.db()]) if (fs.existsSync(f)) fs.chmodSync(f, 0o600);
+    for (const f of [paths.token(), paths.config(), paths.db(), path.join(routerHome(), 'proxy-token'), path.join(routerHome(), 'proxy.db')]) if (fs.existsSync(f)) fs.chmodSync(f, 0o600);
   } catch { /* not our file system: doctor reports it */ }
 }
 
@@ -97,7 +99,9 @@ export function ensureToken(): 'created' | 'kept' {
 export async function ensureLocalState(budgets: Partial<Record<Level, number>> = {}, pluginDir?: string, opts: { newPort?: boolean } = {}): Promise<{ config: CliConfig; token: 'created' | 'kept' }> {
   const prev = readConfig();
   const config: CliConfig = {
-    daemonPort: !opts.newPort && prev?.daemonPort ? prev.daemonPort : await pickPort(),
+    // every other field (proxyPort, proxy, apiMode, forceLevel, recordPrompts, delegateFrom, ...) is kept as it was
+    ...(prev ?? {}),
+    daemonPort: !opts.newPort && prev?.daemonPort ? prev.daemonPort : await pickPort(47800, 47999, new Set(prev?.proxyPort ? [prev.proxyPort] : [])),
     fableOptIn: prev?.fableOptIn ?? false,
     ...(pluginDir ?? prev?.pluginDir ? { pluginDir: pluginDir ?? prev?.pluginDir } : {}),
     budgetsUsd: { ...PROVISIONAL_BUDGET_USD, ...validBudgets(prev?.budgetsUsd), ...validBudgets(budgets) },

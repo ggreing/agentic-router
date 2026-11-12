@@ -256,6 +256,36 @@ export async function deleteKey(o: VaultOptions = {}): Promise<void> {
   if (r.code !== 0 && !(platform === 'darwin' && r.code === 44)) throw failure(platform, r, 'deleting the key');
 }
 
+export function windowsPresenceScript(service: string, account: string): string {
+  return `${winPrelude(service, account)}
+if ($vault) { try { [void]$vault.Retrieve($svc, $acct); exit 0 } catch { } }
+${CRED_TYPE}
+$p = [IntPtr]::Zero
+if ([AgenticRouter.Cred]::CredRead($target, 1, 0, [ref]$p)) { [AgenticRouter.Cred]::CredFree($p); exit 0 }
+[Console]::Error.Write('AR_VAULT_NOT_FOUND'); exit 2
+`;
+}
+
+export function presencePlan(platform: string, service: string, account: string): Plan {
+  if (platform === 'win32') return { command: 'powershell.exe', args: powershellArgs(windowsPresenceScript(service, account)) };
+  // without -w, security prints the item's attributes, not the password
+  if (platform === 'darwin') return { command: '/usr/bin/security', args: ['find-generic-password', '-s', service, '-a', account] };
+  return { command: 'secret-tool', args: ['lookup', 'service', service, 'account', account] };   // the value is discarded
+}
+
+/**
+ * Whether the keychain holds the key, for `doctor` and `init`: the password itself is not fetched on
+ * Windows (Retrieve without RetrievePassword) or macOS (no -w); secret-tool has no such mode, so its output
+ * is discarded at once.
+ */
+export async function keyStatus(o: VaultOptions = {}): Promise<'present' | VaultErrorCode> {
+  const { service, account, platform, run } = names(o);
+  const plan = presencePlan(platform, service, account);
+  const r = await run(plan.command, plan.args, { timeoutMs: READ_TIMEOUT_MS });
+  if (r.code === 0 && (platform !== 'linux' || r.stdout.trim().length > 0)) return 'present';
+  return failure(platform, r.code === 0 ? { ...r, code: 1, stdout: '' } : r, 'checking the keychain').code;
+}
+
 /**
  * The key held by the running proxy. The value lives in this closure only; callers get a function that
  * returns it for the one place that sets the upstream header.

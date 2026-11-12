@@ -1,4 +1,6 @@
-// start / stop / status for the local daemon. The CLI owns the PID file; the daemon does not.
+// start / stop / status. `start` runs `agentic-router supervise` (supervise.ts), which runs the daemon and,
+// in API-key mode, the proxy, restarting them when they exit. A daemon started without a supervisor (an older
+// install) is still stopped by the PID-file path below. The CLI owns the PID files; the daemon does not.
 // Safety (review #2, #13, #14, decision 78): a PID is only force-killed when its command line is
 // this daemon's entry, stop waits until the process is gone, and start re-checks the port and
 // cleans up the PID file when the daemon does not come up.
@@ -9,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths, routerHome } from '@agentic-router/core';
 import { isFree, readConfig } from './setup.ts';
+import { proxyHealth, readSuperviseStatus, superviseFiles } from './supervise.ts';
 
 const pidFile = () => path.join(routerHome(), 'daemon.pid');
 const startLock = () => path.join(routerHome(), 'daemon.start.lock');
@@ -77,16 +80,35 @@ async function waitGone(pid: number | undefined, ms: number): Promise<boolean> {
   return !isAlive(pid);
 }
 
-function readPid(): number | undefined {
-  if (!fs.existsSync(pidFile())) return undefined;
-  const n = Number(fs.readFileSync(pidFile(), 'utf8').trim());
+function readPid(file = pidFile()): number | undefined {
+  if (!fs.existsSync(file)) return undefined;
+  const n = Number(fs.readFileSync(file, 'utf8').trim());
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
+
+/** This CLI's entry (src in dev, dist when built): what `start` runs as `<entry> supervise`. */
+export function cliEntry(): string {
+  const self = fileURLToPath(import.meta.url);
+  return path.join(path.dirname(self), self.endsWith('.ts') ? 'index.ts' : 'index.js');
+}
+
+/** The running supervisor's pid, only when that pid really runs `<cli entry> supervise`. */
+export function runningSupervisor(): number | undefined {
+  const pid = readPid(superviseFiles().pid);
+  if (pid === undefined || !isAlive(pid)) return undefined;
+  const cmd = commandLineOf(pid);
+  const norm = (s: string) => s.replace(/\\/g, '/').toLowerCase();
+  return cmd && norm(cmd).includes(norm(cliEntry())) && /\bsupervise\b/.test(cmd) ? pid : undefined;
+}
+
+const proxyToken = () => { try { return fs.readFileSync(path.join(routerHome(), 'proxy-token'), 'utf8').trim(); } catch { return ''; } };
 
 export async function start(): Promise<string> {
   const cfg = readConfig();
   if (!cfg) return 'not initialised: run `agentic-router init` first';
-  if (await health(cfg.daemonPort)) return `already running on 127.0.0.1:${cfg.daemonPort}`;
+  const sup = runningSupervisor();
+  if (sup) return `already running (supervisor pid ${sup}, daemon on 127.0.0.1:${cfg.daemonPort}${cfg.apiMode === 'proxy' ? `, proxy on 127.0.0.1:${cfg.proxyPort}` : ''})`;
+  if (await health(cfg.daemonPort)) return `already running on 127.0.0.1:${cfg.daemonPort} without a supervisor: run stop, then start, to have it restarted when it exits`;
   // One start at a time: a second concurrent `start` would race for the port and the PID file.
   try { fs.writeFileSync(startLock(), String(process.pid), { flag: 'wx' }); }
   catch {
@@ -97,32 +119,59 @@ export async function start(): Promise<string> {
   try {
     if (!await isFree(cfg.daemonPort))
       return `port ${cfg.daemonPort} is in use by another program. Pick a new port with \`agentic-router init --new-port\`, then start again.`;
-    const child = spawn(process.execPath, [daemonEntry()], {
+    const proxy = cfg.apiMode === 'proxy' && cfg.proxyPort ? cfg.proxyPort : undefined;
+    if (proxy && !await isFree(proxy)) return `proxy port ${proxy} is in use by another program`;
+    const child = spawn(process.execPath, [cliEntry(), 'supervise'], {
       detached: true, stdio: 'ignore', windowsHide: true,
       env: { ...process.env, AGENTIC_ROUTER_HOME: routerHome() },
     });
     let exited: number | null | undefined;
     child.once('exit', code => { exited = code; });
     child.unref();
-    fs.writeFileSync(pidFile(), String(child.pid));
-    for (let i = 0; i < 50; i++) {
-      const h = await health(cfg.daemonPort, 300);
-      if (h?.ok) return `started on 127.0.0.1:${cfg.daemonPort} (pid ${child.pid})`;
+    let daemonUp = false;
+    let proxyUp = !proxy;
+    for (let i = 0; i < 80 && !(daemonUp && proxyUp); i++) {
+      daemonUp ||= !!(await health(cfg.daemonPort, 300))?.ok;
+      if (proxy && !proxyUp) proxyUp = !!(await proxyHealth(proxy, proxyToken(), 300))?.ok;
       if (exited !== undefined) break;
-      await sleep(100);
+      if (!(daemonUp && proxyUp)) await sleep(100);
     }
-    if (exited !== undefined || (child.pid !== undefined && !isAlive(child.pid))) {
-      fs.rmSync(pidFile(), { force: true });
-      return `daemon exited during start${exited != null ? ` (code ${exited})` : ''}; see ${path.join(paths.logsDir(), 'daemon.log')}`;
-    }
-    return `started (pid ${child.pid}) but no health response yet; see ${paths.logsDir()}`;
+    const where = `daemon on 127.0.0.1:${cfg.daemonPort}${proxy ? `, proxy on 127.0.0.1:${proxy}` : ''}`;
+    if (exited !== undefined && !(daemonUp && proxyUp)) return `the supervisor exited during start${exited != null ? ` (code ${exited})` : ''}; see ${paths.logsDir()}`;
+    if (daemonUp && proxyUp) return `started (supervisor pid ${child.pid}; ${where})`;
+    const down = [daemonUp ? '' : 'daemon', proxyUp ? '' : 'proxy'].filter(Boolean).join(' and ');
+    return `started (supervisor pid ${child.pid}) but the ${down} did not answer yet; it is restarted when it exits. See ${paths.logsDir()}`
+      + (proxy && !proxyUp ? ' and run agentic-router doctor (is the API key in the keychain?)' : '');
   } finally {
     fs.rmSync(startLock(), { force: true });
   }
 }
 
-/** Graceful first (authenticated POST /router/v1/shutdown, decision 66); force-kill only as a fallback. */
+/**
+ * Asks the supervisor to stop (it stops the proxy, then the daemon, gracefully). Without a supervisor:
+ * graceful first (authenticated POST /router/v1/shutdown, decision 66), force-kill only as a fallback.
+ */
 export async function stop(): Promise<string> {
+  const sup = runningSupervisor();
+  if (sup) {
+    const files = superviseFiles();
+    fs.writeFileSync(files.stop, String(process.pid));
+    if (await waitGone(sup, 50_000)) return 'stopped (supervisor, proxy and daemon)';
+    // it did not finish: force it, and the children it recorded when they run our entries
+    const children = readSuperviseStatus()?.children ?? {};
+    try { process.kill(sup); } catch { /* gone */ }
+    for (const c of Object.values(children)) {
+      if (!c.pid || !isAlive(c.pid)) continue;
+      if (/[\\/](daemon|proxy)[\\/](src|dist)[\\/]main\.(ts|js)/i.test(commandLineOf(c.pid) ?? '')) { try { process.kill(c.pid); } catch { /* gone */ } }
+    }
+    fs.rmSync(files.stop, { force: true });
+    fs.rmSync(files.pid, { force: true });
+    return `stopped (forced after 50 s; supervisor pid ${sup})`;
+  }
+  return stopDaemonOnly();
+}
+
+async function stopDaemonOnly(): Promise<string> {
   const cfg = readConfig();
   const pid = readPid();
   if (cfg && fs.existsSync(paths.token())) {
@@ -161,5 +210,16 @@ export async function status(): Promise<string> {
     const r = await localRequest(cfg.daemonPort, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
     if (r && r.status === 200) detail = '\n' + JSON.stringify(JSON.parse(r.body), null, 2);
   } catch { /* status endpoint optional */ }
-  return `Router ON (127.0.0.1:${cfg.daemonPort}, version ${h.version ?? '?'})${detail}`;
+  const lines = [`Router ON (127.0.0.1:${cfg.daemonPort}, version ${h.version ?? '?'})`];
+  const sup = readSuperviseStatus();
+  if (runningSupervisor() && sup) {
+    lines.push(`supervisor pid ${sup.pid}: ${Object.entries(sup.children).map(([n, c]) => `${n} ${c.state}${c.restarts ? ` (${c.restarts} restarts)` : ''}`).join(', ')}`);
+  }
+  if (cfg.apiMode) {
+    const p = cfg.apiMode === 'proxy' && cfg.proxyPort ? await proxyHealth(cfg.proxyPort, proxyToken()) : null;
+    lines.push(cfg.apiMode === 'direct' ? 'API-key mode: direct (no proxy; Claude Code reads the key from the keychain)'
+      : p ? `API-key mode: proxy ON (127.0.0.1:${cfg.proxyPort} -> ${p.upstream ?? '?'}, ${p.inflight ?? 0} in flight)`
+      : `API-key mode: proxy OFF (127.0.0.1:${cfg.proxyPort} not answering): API calls fail until it is back, or run agentic-router mode direct`);
+  }
+  return `${lines.join('\n')}${detail}`;
 }

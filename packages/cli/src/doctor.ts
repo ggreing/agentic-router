@@ -4,8 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
-import { readConfig } from './setup.ts';
+import { keyStatus, type VaultErrorCode } from '@agentic-router/proxy';
+import { HINT_HEADERS_ENV, isRouterHelper, proxyBaseUrl } from './apimode.ts';
+import { SettingsParseError, defaultClaudeSettings, readConfig, readJsonFile, type CliConfig } from './setup.ts';
 import { health, localRequest } from './daemonctl.ts';
+import { proxyHealth, readSuperviseStatus, type SuperviseStatus } from './supervise.ts';
 
 export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
 
@@ -108,6 +111,76 @@ async function hookClientCheck(port: number): Promise<Check | null> {
   } catch { return null; }
 }
 
+/** Hint headers (x-claude-code-prompt-id, request-class) reach a custom base URL from 2.1.273 (decision 130). */
+export const MIN_CLAUDE_API = [2, 1, 273] as const;
+
+export interface ApiCheckInput {
+  cfg: CliConfig;
+  env: NodeJS.ProcessEnv;
+  claudeVersion: string;
+  settingsFile: string;
+  projectDir: string;
+  keyStatus(): Promise<'present' | VaultErrorCode>;
+  proxyHealth(port: number): Promise<{ ok: boolean; upstream?: string; inflight?: number } | null>;
+  supervise: SuperviseStatus | null;
+}
+
+const CREDENTIAL_KEYS = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+
+/** API-key mode checks (decision 130): settings, project overrides, TLS, keychain, proxy, supervisor. */
+export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
+  const out: Check[] = [];
+  const mode = i.cfg.apiMode!;
+  out.push({ name: 'claude code (API mode)', ok: versionAtLeast(i.claudeVersion, MIN_CLAUDE_API), blocking: true,
+    detail: versionAtLeast(i.claudeVersion, MIN_CLAUDE_API) ? 'sends the gateway hint headers' : `need >= ${MIN_CLAUDE_API.join('.')} for the prompt and request-class headers (have ${i.claudeVersion || 'none'})` });
+  // the user settings the mode needs
+  const problems: string[] = [];
+  try {
+    const s = readJsonFile<Record<string, any>>(i.settingsFile, {});
+    const env = s.env && typeof s.env === 'object' ? s.env as Record<string, unknown> : {};
+    const helper = String(s.apiKeyHelper ?? '');
+    if (mode === 'proxy') {
+      if (!(isRouterHelper(helper) && helper.includes('local-token'))) problems.push('apiKeyHelper is not the router\'s local-token helper');
+      if (env.ANTHROPIC_BASE_URL !== proxyBaseUrl(i.cfg.proxyPort ?? 0)) problems.push(`env.ANTHROPIC_BASE_URL is ${JSON.stringify(env.ANTHROPIC_BASE_URL)}, not ${proxyBaseUrl(i.cfg.proxyPort ?? 0)}`);
+      if (env[HINT_HEADERS_ENV] !== '1') problems.push(`env.${HINT_HEADERS_ENV} is not "1"`);
+    } else {
+      if (!(isRouterHelper(helper) && helper.includes('key-helper'))) problems.push('apiKeyHelper is not the router\'s keychain key helper');
+      if (typeof env.ANTHROPIC_BASE_URL === 'string' && /127\.0\.0\.1|localhost/.test(env.ANTHROPIC_BASE_URL)) problems.push('env.ANTHROPIC_BASE_URL still points at the local proxy');
+    }
+    for (const k of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY']) if (k in env) problems.push(`env.${k} is set and takes precedence over apiKeyHelper`);
+  } catch (e) { problems.push(e instanceof SettingsParseError ? e.message : String(e)); }
+  out.push({ name: `Claude Code settings (${mode})`, ok: problems.length === 0, blocking: true,
+    detail: problems.length ? `${problems.join('; ')} (run agentic-router mode ${mode})` : i.settingsFile });
+  // a project's own settings override the user's
+  for (const f of [path.join(i.projectDir, '.claude', 'settings.json'), path.join(i.projectDir, '.claude', 'settings.local.json')]) {
+    let s: Record<string, any>;
+    try { s = readJsonFile<Record<string, any>>(f, {}); } catch { continue; }
+    const env = s.env && typeof s.env === 'object' ? s.env as Record<string, unknown> : {};
+    const set = [...CREDENTIAL_KEYS.filter(k => k in env).map(k => `env.${k}`), ...(s.apiKeyHelper !== undefined ? ['apiKeyHelper'] : [])];
+    if (set.length) out.push({ name: 'project settings override', ok: false, blocking: false,
+      detail: `${f} sets ${set.join(', ')}: in that project Claude Code does not use the router's ${mode} settings (it may send requests elsewhere)` });
+  }
+  if (i.env.ANTHROPIC_AUTH_TOKEN) out.push({ name: 'ANTHROPIC_AUTH_TOKEN in environment', ok: false, blocking: true,
+    detail: 'it takes precedence over apiKeyHelper, so requests would not carry the router\'s credential; unset it' });
+  if (i.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') out.push({ name: 'NODE_TLS_REJECT_UNAUTHORIZED', ok: false, blocking: true,
+    detail: '0 turns off TLS verification: the proxy refuses to start (it does not send the key without it)' });
+  const ks = await i.keyStatus();
+  const keyHelp: Record<string, string> = {
+    not_found: 'no API key stored: run agentic-router key set',
+    unavailable: 'the OS keychain tool is not available (Windows PowerShell 5.1, macOS security, Linux secret-tool)',
+    constrained_language: 'PowerShell runs in ConstrainedLanguage mode (device policy): keychain access is blocked, API-key mode cannot work here',
+  };
+  out.push({ name: 'API key in the OS keychain', ok: ks === 'present', blocking: true, detail: ks === 'present' ? 'present' : keyHelp[ks] ?? `keychain check failed (${ks})` });
+  if (mode === 'proxy' && i.cfg.proxyPort) {
+    const h = await i.proxyHealth(i.cfg.proxyPort);
+    out.push({ name: 'proxy', ok: !!h?.ok, blocking: false,
+      detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (agentic-router start), or switch with agentic-router mode direct` });
+  }
+  const degraded = Object.entries(i.supervise?.children ?? {}).filter(([, c]) => c.state === 'degraded').map(([n, c]) => `${n} (${c.restarts} restarts)`);
+  if (degraded.length) out.push({ name: 'supervisor', ok: false, blocking: false, detail: `keeps failing: ${degraded.join(', ')}; see the logs in ${paths.logsDir()}` });
+  return out;
+}
+
 export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Check[]> {
   const checks: Check[] = [];
   const node = process.versions.node;
@@ -126,6 +199,14 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
     const h = await health(cfg.daemonPort);
     checks.push({ name: 'daemon', ok: !!h, blocking: false, detail: h ? `running (${h.version ?? '?'})` : 'not running: Claude Code works, but without routing' });
     if (h) { const c = await hookClientCheck(cfg.daemonPort); if (c) checks.push(c); }
+  }
+  if (cfg?.apiMode) {
+    let token = '';
+    try { token = fs.readFileSync(path.join(routerHome(), 'proxy-token'), 'utf8').trim(); } catch { /* reported by the proxy check */ }
+    checks.push(...await apiChecks({
+      cfg, env, claudeVersion: claude, settingsFile: defaultClaudeSettings(env), projectDir: process.cwd(),
+      keyStatus: () => keyStatus(), proxyHealth: port => proxyHealth(port, token), supervise: readSuperviseStatus(),
+    }));
   }
   checks.push(...environmentChecks(env));
   const access = homeAccessCheck();

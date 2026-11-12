@@ -2,7 +2,7 @@
   "name": "agentic-router",
   "version": "0.0.0",
   "private": true,
-  "description": "agentic-router command: init, start, stop, status, doctor",
+  "description": "agentic-router command: init, start, stop, status, doctor, supervise, mode, token, key, proxy",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@agentic-router/core": "0.0.0",
-    "@agentic-router/daemon": "0.0.0"
+    "@agentic-router/daemon": "0.0.0",
+    "@agentic-router/proxy": "*"
   }
 }
