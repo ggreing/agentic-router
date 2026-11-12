@@ -50,7 +50,7 @@ First public pre-release.
   environment-dumping commands. A refusal cannot be overridden by an allow rule.
 - For ordinary Bash the guard is silent: Claude Code's own permission rules decide, as they would
   without the router. To let workers build and test without prompts, allow those commands (e.g.
-  `Bash(npm test)`, `Bash(npm run *)`). See "Permissions for router workers" in the README.
+  `Bash(npm test)`, `Bash(npm run *)`). See docs/worker-permissions.md.
 - The guard is a net, not a sandbox: it reads the text of a tool call and does not observe what a
   program does once it runs. Workers run as your OS user; code you allow a worker to run has your
   file access. See SECURITY.md "Limits".

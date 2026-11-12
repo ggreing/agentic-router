@@ -4,230 +4,134 @@
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-Agentic Router Proxy is a difficulty-based team router for Claude Code: a plugin plus a local daemon that
-read each request, size it up, and either let the main session handle it directly or build a right-sized
-team of subagents (architect, coder, reviewer, tester, ui-designer), each placed on a model × effort
-"ladder" and moved up or down as the work proves hard or easy — to finish the work at the lowest cost
-that still passes. The CLI and package are named `agentic-router`.
+If you run Claude Code on Opus or Sonnet, the main session does almost everything itself, including
+edits that a much cheaper model would get right. This project is a Claude Code plugin plus a small local
+daemon that changes that. For each request it decides whether the main session should just do it, or
+hand the work to a few subagents running on cheaper models while the main session plans and checks.
 
-**How it works.** The Claude Code plugin forwards hook events to a local daemon over `127.0.0.1`; the
-daemon triages each request, writes a plan and a work ledger to one local SQLite file, and injects a
-brief telling the main session (the "lead") whether to handle the request itself or delegate. When it
-delegates, the lead calls subagents with a write scope the plugin enforces; the daemon runs each
-subtask's build, typecheck, lint and tests, records the cost, and adjusts each role on the ladder. Hooks
-that record or advise fail open: if the daemon is not running, Claude Code works as it would without the
-plugin and the work is recorded as unverified. The write-scope guard for router subagents works from
-local files and blocks on error, so a subagent never writes outside its scope.
+In our measurements, letting the main session delegate instead of editing itself (for most tasks that
+meant handing the edit to a single Haiku coder) cut the cost of a task by roughly 40%, with the same pass
+rate on everything short of the hardest tasks. The numbers and how
+we got them are in [docs/measurements](docs/measurements/).
 
-## Triage
+The CLI and package are called `agentic-router`.
 
-Stage 1 is rules only — no embeddings, no extra model call. When the rules cannot tell the size, an
-Opus-class, Sonnet or unknown lead takes the request on as an L2 team, while a Haiku lead decides it itself
-from a rubric injected into its context. There is no extra outbound call in either mode. Similar-case
-search over embeddings is deferred for now.
+## How it works
 
-## Delegation and the ladder
+The plugin forwards Claude Code's hook events to a daemon on `127.0.0.1`. When you send a prompt, the
+daemon sizes it up with plain rules (no model call) and tells the main session, which we call the lead,
+what to do: handle it directly, or delegate to a team.
 
-Whether a level is delegated depends on the lead (main-session) model: an Opus-class, Sonnet, or unknown
-lead delegates from **L1** up, and a Haiku lead from **L2** up; **L0** is always handled directly.
-Delegating pays off because the expensive lead stops doing the edits itself: in the direct-vs-team
-measurements a lead + one Haiku coder was about 40% cheaper than the lead working alone (see
-`docs/measurements/`).
+Small things (a typo, a one-line fix) stay with the lead. Anything bigger is delegated if the lead is an
+Opus-class or Sonnet model, or if the router can't tell which model it is. A Haiku lead keeps L1 work for
+itself, since its workers would run the same model anyway. When the rules can't tell how big a request
+is, it goes to a small team and the lead decides which roles it actually needs (a Haiku lead gets a short
+rubric and decides for itself).
 
-A role moves **up** one rung after two misses in a row, or two rejects, or when the lead asks: once per
-slot without asking unless it changes the model, otherwise after the user confirms. A slot is raised at
-most 3 times, after which the user is asked. A role moves **down** one rung after two results in a row
-that a reviewer or tester judged "easy".
+Workers start on the cheapest rung that usually works (Haiku at low effort for coders) and move up when
+they fail: two misses in a row, two rejections from a reviewer or tester, or the lead asking for it. A
+worker that keeps getting "easy" verdicts from a reviewer moves back down. After three raises the user is
+asked.
 
-## Install (pre-release, from source)
+When a worker finishes, the daemon runs the project's build, typecheck, lint and tests in that working
+tree and checks that the worker stayed inside the files it was given. Everything goes into one local
+SQLite file: what was planned, what happened, what it cost.
 
-Nothing is published to npm yet. Run it from a clone:
+If the daemon isn't running, Claude Code behaves as if the plugin weren't there. The one exception is
+router workers: they can only write while the daemon is up, so they never edit outside their scope.
+
+## Getting started
+
+Nothing is on npm yet. You need Node 24+, Claude Code 2.1.295 or newer, and Git Bash if you're on
+Windows.
 
 ```
-git clone <repo> && cd agentic-router
+git clone https://github.com/ggreing/agentic-router && cd agentic-router
 npm ci
-npm run build:dashboard                        # build the dashboard SPA (npm ci does not)
-node packages/cli/src/index.ts <command>      # pre-release entry point
+npm run build:dashboard
+node packages/cli/src/index.ts init
+node packages/cli/src/index.ts start
 ```
 
-Below, `agentic-router <command>` is that entry point. Requirements: **Node 24+**, **Claude Code
-≥ 2.1.295**, and **Git Bash on Windows**.
+`node packages/cli/src/index.ts` is the CLI until there's a published package; below it's written as
+`agentic-router`. `init` registers the plugin and a status line and asks before it changes your Claude
+Code settings. `agentic-router doctor` checks the setup if something looks off.
 
-- `agentic-router init` — registers the Claude Code plugin (roles, hooks, the lead skill, the router MCP
-  tools) and the status line, and sets subscription mode (the default). Use `init --mode api` for API-key
-  mode.
-- `agentic-router start` — starts the local daemon (triage API, work ledger, dashboard) in the background.
-- `agentic-router doctor` — checks the setup and reports problems.
-- `agentic-router status` / `stop` — show daemon status; stop it.
-- `agentic-router dashboard [--no-open]` — open the local dashboard (see below).
-- `agentic-router mode subscription|api|direct|proxy` — switch mode (see Modes).
-- `agentic-router policy show|accept|revoke` — review and accept a project's `.agentic-router/policy.json`
-  (see Permissions for router workers).
-- `agentic-router data export|purge`, `agentic-router routing reset` — export or clear local data; reset
-  the learned routing.
-- `agentic-router uninstall [--keep-key]` — asks first, then removes the plugin's settings entries, the
-  project's `worktree.baseRef` and `.gitignore` line, the settings backup and the keychain key, and stops
-  the daemon. Your data folder stays.
-- API-key mode only: `agentic-router token rotate [--no-grace]`, `agentic-router key set`,
-  `agentic-router proxy allow-upstream <https origin>`.
+Other commands you'll probably use:
 
-## Modes
+| Command | What it does |
+|---|---|
+| `status`, `stop` | show or stop the daemon |
+| `dashboard` | open the local dashboard |
+| `mode subscription\|api\|direct\|proxy` | switch modes (below) |
+| `policy show\|accept` | review a project's `.agentic-router/policy.json` before it takes effect |
+| `data export`, `data purge` | export or delete what the router has recorded |
+| `uninstall` | undo what `init` did; your data folder stays |
 
-- **Subscription** (default, from `init`): the plugin and the local daemon do everything; there is no
-  proxy, and no subscription credential is ever read or stored. Traffic goes straight from Claude Code to
-  Anthropic.
-- **API key** (`init --mode api`): an opt-in local proxy aggregates real token cost and applies daily
-  budgets of $100 per local token and $300 in total (configurable), plus the per-request budget. These are
-  not hard caps: new calls are refused with a 429 once a budget is reached, but responses already in flight
-  can go over it. The API key is kept only in the OS keychain (Windows Credential Manager / macOS Keychain
-  / Linux libsecret).
-- **Direct**: if the proxy has a problem, `agentic-router mode direct` connects with the API key directly,
-  bypassing the proxy; `agentic-router mode proxy` switches back.
+## Subscription or API key
 
-Switch at any time with `agentic-router mode subscription|api|direct|proxy`.
+By default it runs on your Claude subscription. In that mode there's no proxy and the router never reads
+or stores your subscription credentials; Claude Code talks to Anthropic exactly as before.
 
-## Dashboard
+With an API key, `agentic-router init --mode api` puts a small local proxy in front of the API. It records
+the real token cost of every call and stops sending new calls once a budget is used up: $100 per day per
+local token and $300 per day in total by default, plus a per-request budget. Calls that are already
+streaming are allowed to finish, so you can end up slightly over. The key itself lives only in the OS
+keychain. If the proxy ever gets in your way, `agentic-router mode direct` bypasses it and
+`agentic-router mode proxy` puts it back.
 
-`agentic-router dashboard` opens a read-only local web dashboard (served by the daemon at `127.0.0.1`)
-showing the request timeline, each request's team, steps and verify result, cost (lead vs workers), the
-KPIs, the triage-vs-actual learning report, and the auto-release panel. It is available in English,
-Korean, Japanese and Simplified Chinese. All data stays on the machine.
+## Workers and permissions
 
-## Privacy
-
-Everything is stored in one local SQLite file; nothing leaves the machine except Claude Code's own
-traffic — the router makes no outbound call of its own, in either mode. The learning store keeps
-rule-derived features, outcomes, costs, and numbers such as similarity scores — not embeddings, and not
-prompt text unless you turn on `recordPrompts`. Switching `recordPrompts` off deletes the stored prompt
-text at the next daemon start. Logs and the dashboard mask API keys and tokens. No component reads or
-stores subscription credentials.
-
-## Auto-release holdout
-
-To check that delegating still pays off, about 1 in 10 requests at a delegated level are handled directly
-by the lead on purpose, as a holdout baseline. The default is **observe**: the holdout runs and the
-dashboard shows the comparison and what a release would do, but nothing switches until you turn
-`autoRelease` on. Set `holdoutRate` to `0`, or turn `autoRelease` off, to stop taking the holdout.
-
-## Permissions for router workers
-
-Router workers (the coder, tester and other subagents the lead dispatches) use Claude Code's tools like
-any other agent. The router adds a guard in front of those tools, and the guard gives one of three answers:
-
-| Guard's answer | When | What happens |
-|---|---|---|
-| Refuses | The call is recognised as not allowed: a write outside the subtask's scope, a credential file, the router's own folder, a command or option that is not on the worker allowlist. | The call does not run. No allow rule can override this. |
-| Allows | Reading or searching named files inside the repository, and editing files inside the subtask's scope. | The call runs without a prompt. |
-| Says nothing | Every Bash command it did not refuse. | Claude Code's own permission rules decide, as they would without the router. |
-
-### Bash goes through your permission rules
-
-The guard reads a command line; it does not sandbox it. So it never approves a Bash command on your
-behalf. A worker's `npm test` or `npm run build` is handled like any other Bash command in Claude Code:
-it runs if a rule allows it, and otherwise you are asked. In non-interactive runs (`claude -p`) there is
-nobody to ask, so a command without an allow rule is declined.
-
-To let workers build and test without prompts, allow those commands:
+Router workers run Claude Code's normal tools behind a guard. The guard refuses writes outside a worker's
+scope, anything touching credential files or the router's own folder, and commands outside a small
+allowlist. It doesn't approve Bash on your behalf: a worker's `npm test` goes through your normal Claude
+Code permission rules. To let workers build and test without being asked each time:
 
 ```
 claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 ```
 
-or in `.claude/settings.json`:
+The full list of what's refused, and why, is in [docs/worker-permissions.md](docs/worker-permissions.md).
 
-```json
-{ "permissions": { "allow": ["Bash(npm test)", "Bash(npm run *)"] } }
-```
+## Your data
 
-Use `"Bash(npm run build)"` in place of `"Bash(npm run *)"` to allow one script only. For another
-toolchain, allow its test and build commands the same way.
+Everything stays in one SQLite file on your machine, and the router makes no network calls of its own.
+By default it doesn't keep your prompts or the text of what workers report, only ids, sizes, outcomes and
+costs. If you want prompts kept for your own analysis, turn on `recordPrompts`; turning it off again
+deletes them at the next daemon start. Event records are kept for 30 days.
 
-Things to know before you add a rule:
+## The dashboard
 
-- **A chained command needs every part allowed.** Claude Code splits a command on `&&`, `||`, `;` and `|`
-  and checks each part on its own, so `Bash(npm test)` alone does not cover `make && npm test`. A `cd` into
-  a directory inside the working tree is read-only and needs no rule, so `cd packages/web && npm test` needs
-  only the rule for `npm test`.
-- **Rules are session-wide.** They apply to the lead and to every worker, not only to router workers.
-- **Allowing a command that runs code means vouching for that code.** A test file or a package script is
-  a program. Once allowed, it runs as you, with your file access. The router refuses package scripts and
-  installs when the `scripts` in `package.json` differ from the last commit, until you or the lead confirm;
-  it does not inspect what a test or script does.
-- **A refusal wins over an allow rule.** With `"Bash(npm run *)"` allowed, `npm run env` (which prints the
-  environment) is still refused. With `"Bash(cat *)"` allowed, `cat .env` is still refused.
+`agentic-router dashboard` opens a read-only page served by the daemon: recent requests, who did what,
+which checks passed, what it cost (lead versus workers), and how often the router's first guess about a
+request's size turned out right. It's available in English, Korean, Japanese and Simplified Chinese.
 
-### What workers cannot do, whatever you allow
+## Checking that delegation still pays off
 
-- Write outside the paths of their subtask (`[scope: ...]`), or to CI configuration, `.claude/`, `.git/`,
-  `.mcp.json`, `.husky/`, `CLAUDE.md` and similar files that change how the repository or the agent runs.
-- Read, search for or list credential files (`.env`, `.npmrc`, `~/.ssh`, `~/.aws`, …) or the router's
-  folder (`~/.agentic-router`). `.env.example` and other templates are readable.
-- Run commands outside the worker allowlist (network tools, shells, interpreters with inline code), print
-  the environment, or reference secret-looking variables.
-- Use shell syntax the guard cannot follow: `$'…'` strings, `${VAR}` expansions, command substitution,
-  comments, output redirection to files.
-- Install packages from anywhere but the registry (no URLs, git specs or `user/repo` shorthands).
-- Use PowerShell. Workers use Bash only.
+About one in ten requests that would be delegated is handled by the lead on purpose, so there's
+something to compare against. Out of the box the router only reports what it sees; it won't switch
+anything off by itself unless you set `autoRelease` to on. Set `holdoutRate` to 0 if you'd rather not
+have the comparison at all.
 
-Some refusals may surprise a worker that is doing honest work. The message says what to do instead:
+## What doesn't work well yet
 
-| Refused | Use instead |
-|---|---|
-| `rg --hidden`, `rg --no-ignore` | `rg` without them, or name the files |
-| `git diff --no-index` | `git diff` on tracked files, or `diff` |
-| `printf -v`, `echo ${VAR}` | plain `printf` / `echo $VAR` (non-secret names) |
-| A comment inside a command | drop the comment |
-| `npm install user/repo` | a registry name; ask the lead for anything else |
-| `git commit` with no message on the command line | `git commit -m "…"` (or `-F <file>`, `-C <commit>`) |
-| `git commit --amend`, `-e`, `--reset-author` | a new commit; the lead or user amends |
-| `git add -p`, `-i`, `-e` | `git add <files>` |
-| `git add -A`, `git add .` or `git add <dir>` with an un-ignored credential file below | add the files by name, or put the file in `.gitignore` |
-| `git branch` beyond `--show-current`; write/run options on `git stash list` (`--output`, `--ext-diff`) | ask the lead |
-| `tail -f`, `tail --follow` | `tail -n <N>` |
-| `npm install -g`, `--prefix`, `--location`; `pnpm add -g`; `pip install --user`, `--target`, `--prefix` | install into the project |
-| A build/test/install command writing into `.git`, CI config, `.claude` or the router policy (e.g. `npx tsc --outDir .git/hooks`) | point the output elsewhere; changes to those files go through the lead |
-| A path under `/proc` or `/dev` (except `/dev/null`, stdin, stdout, stderr) | the file's ordinary path |
-| A brace expansion over 64 results, or a command line over 20,000 characters | split the command |
-| A recursive grep (`grep -r`/`-d recurse`) over a directory with an un-ignored credential file | `rg`, the Grep tool, or name the files |
-| A Bash search whose pattern is exactly a credential file name (`grep ".env" …`, `rg '[.]env' …`) | the Grep tool (its pattern is not read as a path), or a longer pattern such as `process.env` |
+The checks after a worker finishes are the project's own tests, so a fix that's wrong in a way the tests
+don't cover will still pass. When that happens the lead can send the work back up a rung, but it has to
+notice first.
 
-Two things that are not refusals but are worth knowing: quotes and backslashes inside a word are read as
-Bash reads them, so `cat .en""v` is treated as `cat .env` and writing a name in pieces changes nothing; and
-a value attached to a short option counts as a path, so `grep -f.env` is refused like `grep -f .env`.
+"Accepted" in the dashboard means nobody reverted the change, asked for it again, or complained within
+the next couple of prompts. That's a ceiling on how often the work was good, not a measurement of it.
 
-### Project policy
+The automatic switch-off is meant to catch delegation that has become clearly more expensive, not to
+fine-tune. With the sample sizes involved it can't tell a 25% loss from noise.
 
-A repository can extend the worker allowlist in `.agentic-router/policy.json` (`bashAllow`) and name
-environment variables to pass to verification (`verifyEnv`). The file takes effect only after you accept
-it:
+This is a pre-release. Commands and defaults may still change.
 
-```
-agentic-router policy show
-agentic-router policy accept
-```
+## Contributing and security
 
-Acceptance is tied to the file's content. If the file changes, for example after a `git pull`, it is
-ignored again until you accept the new content. `agentic-router doctor` shows the current state.
-
-### Workers need the daemon
-
-A worker may write only when the router has a scope record for it, and the daemon writes that record when
-the lead dispatches the worker. If the daemon is not running, router workers cannot edit files; reading
-still works. `agentic-router status` shows whether it is up.
-
-## Limits
-
-- Verify runs the related build/typecheck/lint/tests, so it can pass a fix that is wrong in a way those
-  checks do not exercise.
-- "Accepted" means no objection was seen (no revert, re-request, or complaint), so the success/acceptance
-  rate is an **upper bound**, not a measured approval rate.
-- Auto-release is a brake against gross losses, not a fine optimiser: it releases a level back to direct
-  handling when the team is clearly no longer cheaper, within a wide band.
-
-## Status
-
-Pre-release. Interfaces and defaults may still change.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately as described in
+[SECURITY.md](SECURITY.md), which also lists what the guard can't protect against.
 
 ## License
 
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

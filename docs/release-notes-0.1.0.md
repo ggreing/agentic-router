@@ -33,8 +33,8 @@ npm run build:dashboard
 node packages/cli/src/index.ts init
 ```
 
-Requires Node 24+, Claude Code ≥ 2.1.295, and Git Bash on Windows. See the README for the full command
-list and the "Permissions for router workers" section.
+Requires Node 24+, Claude Code ≥ 2.1.295, and Git Bash on Windows. See the README to get started and
+docs/worker-permissions.md for what router workers may and may not do.
 
 ## Please read before relying on it
 
