@@ -38,10 +38,11 @@ test('delegation starts at L1 for an Opus-class lead and at L2 otherwise (decisi
   assert.equal(opus.L0.leadDirect, true);
   assert.equal(opus.L1.leadDirect, undefined, 'Opus lead delegates L1');
   assert.deepEqual(opus.L1.roles, [{ role: 'coder', count: 1, start: 's1' }], 'light L1 team');
-  const sonnet = withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5');
-  assert.equal(sonnet.L1.leadDirect, true);
-  assert.equal(sonnet.L2.leadDirect, undefined);
-  assert.equal(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5', { sonnet: 'L1' }).L1.leadDirect, undefined, 'config override');
+  assert.equal(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5').L1.leadDirect, undefined, 'Sonnet lead delegates L1 (decision 124)');
+  const haiku = withLeadModel(DEFAULT_PRESETS, 'claude-haiku-5-5');
+  assert.equal(haiku.L1.leadDirect, true);
+  assert.equal(haiku.L2.leadDirect, undefined);
+  assert.equal(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5', { sonnet: 'L2' }).L1.leadDirect, true, 'config override');
   const fileOverride = loadPresets(tmp('teams.yaml', 'L1:\n  lead_direct: true\n'), opus);
   assert.equal(fileOverride.L1.leadDirect, true, 'explicit teams.yaml lead_direct wins');
 });

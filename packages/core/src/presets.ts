@@ -75,12 +75,13 @@ export function leadModelClass(modelId?: string): LeadModelClass {
 }
 
 /**
- * First level that is delegated, per lead model tier (decision 117). Below it the lead handles the request
- * itself. L0 is always lead-direct. Unknown lead model -> 'other' (the conservative L2).
- * Decision-107 measurement (Opus lead): delegating L1 cost 49% less at the same speed; with a Sonnet lead
- * (integration rounds 3-4) the lead doing L0/L1 itself was cheaper.
+ * First level that is delegated, per lead model tier (decisions 117, 124). Below it the lead handles the
+ * request itself. L0 is always lead-direct. Unknown lead model -> 'other' (the conservative L2).
+ * Decision-107 measurement: delegating L1 cost 49% less with an Opus lead at the same speed, and 42% less
+ * with a Sonnet lead (about 20 s slower per request), so both delegate from L1. A Haiku lead is not
+ * measured: its workers would run the same model, so it keeps L1 itself.
  */
-export const DEFAULT_DELEGATE_FROM: Record<LeadModelClass, Level> = { opus: 'L1', sonnet: 'L2', haiku: 'L2', other: 'L2' };
+export const DEFAULT_DELEGATE_FROM: Record<LeadModelClass, Level> = { opus: 'L1', sonnet: 'L1', haiku: 'L2', other: 'L2' };
 
 const ORDER: Level[] = ['L0', 'L1', 'L2', 'L3'];
 

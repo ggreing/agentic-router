@@ -28,7 +28,7 @@ const ask = async (d: TestDaemon, sid: string, prompt: string, transcriptPath?: 
 };
 const req = async (d: TestDaemon, sid: string) => ((await getStatus(d.port, sid)).body as StatusView).request!;
 
-test('decision 117: an Opus-class lead delegates from L1, a Sonnet or unknown lead from L2; L0 is always the lead\'s', () => withDaemon(async d => {
+test('decisions 117, 124: an Opus- or Sonnet-class lead delegates from L1, a Haiku or unknown lead from L2; L0 is always the lead\'s', () => withDaemon(async d => {
   await ask(d, 'opus', L1_PROMPT, transcript(d, 'opus', 'claude-opus-5-5'));
   let r = await req(d, 'opus');
   assert.deepEqual([r.level, r.leadDirect, r.leadModel, r.leadClass], ['L1', false, 'claude-opus-5-5', 'opus']);
@@ -37,7 +37,10 @@ test('decision 117: an Opus-class lead delegates from L1, a Sonnet or unknown le
   assert.deepEqual([(await req(d, 'opus')).level, (await req(d, 'opus')).leadDirect], ['L0', true]);
   await ask(d, 'sonnet', L1_PROMPT, transcript(d, 'sonnet', 'claude-sonnet-5-5'));
   r = await req(d, 'sonnet');
-  assert.deepEqual([r.leadDirect, r.leadClass], [true, 'sonnet']);
+  assert.deepEqual([r.leadDirect, r.leadClass], [false, 'sonnet']);
+  await ask(d, 'haiku', L1_PROMPT, transcript(d, 'haiku', 'claude-haiku-5-5'));
+  r = await req(d, 'haiku');
+  assert.deepEqual([r.leadDirect, r.leadClass], [true, 'haiku']);
   await ask(d, 'unknown', L1_PROMPT);
   r = await req(d, 'unknown');
   assert.deepEqual([r.leadDirect, r.leadModel, r.leadClass], [true, null, 'other']);
@@ -48,20 +51,20 @@ test('decision 117: the lead model is decided at each request (a /model switch),
   await postHook(d.port, { session_id: 's', cwd: d.home, hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5-5' });
   await ask(d, 's', L1_PROMPT);
   assert.deepEqual([(await req(d, 's')).leadClass, (await req(d, 's')).leadDirect], ['opus', false]);
-  // after /model sonnet the transcript's latest assistant line shows the new model
-  await ask(d, 's', 'Fix the bug where format() fails on empty input in src/format.ts', transcript(d, 's', 'claude-sonnet-5-5'));
-  assert.deepEqual([(await req(d, 's')).leadClass, (await req(d, 's')).leadDirect], ['sonnet', true]);
+  // after /model haiku the transcript's latest assistant line shows the new model
+  await ask(d, 's', 'Fix the bug where format() fails on empty input in src/format.ts', transcript(d, 's', 'claude-haiku-5-5'));
+  assert.deepEqual([(await req(d, 's')).leadClass, (await req(d, 's')).leadDirect], ['haiku', true]);
   const rec = rows(d, "SELECT lead_model, lead_class FROM requests WHERE session_id = 's' ORDER BY created_at, rowid");
-  assert.deepEqual(rec, [{ lead_model: 'claude-opus-5-5', lead_class: 'opus' }, { lead_model: 'claude-sonnet-5-5', lead_class: 'sonnet' }]);
+  assert.deepEqual(rec, [{ lead_model: 'claude-opus-5-5', lead_class: 'opus' }, { lead_model: 'claude-haiku-5-5', lead_class: 'haiku' }]);
 }));
 
 test('decision 118: config.delegateFrom changes the start; an explicit lead_direct in teams.yaml still wins', () => withDaemon(async d => {
   await ask(d, 'a', L1_PROMPT, transcript(d, 'a', 'claude-sonnet-5-5'));
-  assert.equal((await req(d, 'a')).leadDirect, false);                          // sonnet: from L1 by config
+  assert.equal((await req(d, 'a')).leadDirect, true);                           // sonnet: from L2 by config
   fs.writeFileSync(path.join(d.home, 'teams.yaml'), 'L1:\n  lead_direct: true\n');
-  await ask(d, 'b', L1_PROMPT, transcript(d, 'b', 'claude-sonnet-5-5'));
+  await ask(d, 'b', L1_PROMPT, transcript(d, 'b', 'claude-opus-5-5'));
   assert.deepEqual([(await req(d, 'b')).leadDirect, (await req(d, 'b')).presetSource], [true, 'user']);
-}, { delegateFrom: { sonnet: 'L1' } }));
+}, { delegateFrom: { sonnet: 'L2' } }));
 
 test('decision 119: an automatic L3 is planned with the L2 team; the first call at an L3 signal step takes the L3 team', () => withDaemon(async d => {
   const sid = 'l3';

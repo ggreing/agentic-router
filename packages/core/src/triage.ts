@@ -14,7 +14,7 @@
 // for a clearly larger change, the L3 team) by calling a router agent: the daemon re-plans the request
 // at the first call and reads the level from that call's values (decisions 109, 113). In API-key mode the
 // stage-2 judge (triage-judge.ts) decides uncertain requests instead.
-// With presets that delegate L1 (an Opus-class lead, decision 117) there is no lead-direct start to
+// With presets that delegate L1 (an Opus- or Sonnet-class lead, decisions 117, 124) there is no lead-direct start to
 // switch from: an uncertain request is planned as the L2 team and the lead calls only the roles the
 // change needs (decision 121). That is the arrangement the measurement of decision 107 ran.
 //

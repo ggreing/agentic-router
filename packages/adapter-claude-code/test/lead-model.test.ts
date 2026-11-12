@@ -68,11 +68,12 @@ test('the resolved lead model drives core delegation tiers end to end (decision 
   const fromTranscript = leadModelFromTranscript(path.join(fixturesDir, 'transcript-main.jsonl'), readUtf8);
   assert.equal(leadModelClass(fromTranscript ?? undefined), 'opus');
 
-  // an Opus-class lead delegates from L1; a Sonnet-class lead keeps L1 lead-direct.
+  // an Opus- or Sonnet-class lead delegates from L1 (decision 124); a Haiku-class lead keeps L1 lead-direct.
   const opusPresets = withLeadModel(DEFAULT_PRESETS, 'claude-opus-4-8');
   assert.equal(opusPresets.L1.leadDirect ?? false, false, 'Opus lead: L1 is delegated');
-  const sonnetPresets = withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5');
-  assert.equal(sonnetPresets.L1.leadDirect, true, 'Sonnet lead: L1 is handled directly');
+  assert.equal(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5').L1.leadDirect ?? false, false, 'Sonnet lead: L1 is delegated');
+  const haikuPresets = withLeadModel(DEFAULT_PRESETS, 'claude-haiku-5-5');
+  assert.equal(haikuPresets.L1.leadDirect, true, 'Haiku lead: L1 is handled directly');
   // L0 is always lead-direct regardless of lead model.
   assert.equal(opusPresets.L0.leadDirect, true);
 });

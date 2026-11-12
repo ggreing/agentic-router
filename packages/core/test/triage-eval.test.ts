@@ -164,7 +164,8 @@ test('the judge answer is used by its score in three bands (decision 115)', () =
 
   // decision 120: the call is skipped when L1 and L2 are staffed the same way, so its answer could not change the staffing
   assert.equal(judgeCanChangeArrangement(DEFAULT_PRESETS), true);
-  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5')), true);
+  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-haiku-5-5')), true);
+  assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5')), false);
   assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5')), false);
   assert.equal(judgeCanChangeArrangement(withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5', { opus: 'L2' })), true);
   assert.equal(judgeCanChangeArrangement({ ...DEFAULT_PRESETS, L2: { ...DEFAULT_PRESETS.L2, leadDirect: true } }), false);

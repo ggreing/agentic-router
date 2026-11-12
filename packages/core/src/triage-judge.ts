@@ -161,7 +161,7 @@ export function judgeDecision(v: JudgeVerdict, bands: JudgeBands = JUDGE_BANDS):
  * Whether a judge answer could change how a request is staffed under these presets (decision 120). Pass
  * the presets in effect for the request, with the lead model applied (withLeadModel) and teams.yaml on
  * top. The judge moves a request between L1 and L2 (never to L3, decision 119), so when both are handled
- * the same way - both delegated, as with an Opus-class lead (decision 117), or both lead-direct - its
+ * the same way - both delegated, as with an Opus- or Sonnet-class lead (decisions 117, 124), or both lead-direct - its
  * answer changes nothing the lead does not already decide, and the call (about $0.004 and 4.5 s) is skipped.
  */
 export function judgeCanChangeArrangement(presets: Record<Level, TeamPreset>): boolean {

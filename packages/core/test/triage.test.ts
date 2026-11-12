@@ -176,16 +176,17 @@ test('the size of the request is not the size of the change', () => {
 test('with a lead that delegates L1, an uncertain request gets the L2 team and staffs it itself (decision 121)', () => {
   const prompt = '태스크에 댓글 기능 넣어줘';
   const opus = withLeadModel(DEFAULT_PRESETS, 'claude-opus-5-5');
+  const haiku = withLeadModel(DEFAULT_PRESETS, 'claude-haiku-5-5');
   const sonnet = withLeadModel(DEFAULT_PRESETS, 'claude-sonnet-5-5');
-  assert.deepEqual([uncertainLevel(DEFAULT_PRESETS), uncertainLevel(sonnet), uncertainLevel(opus)], ['L1', 'L1', 'L2']);
+  assert.deepEqual([uncertainLevel(DEFAULT_PRESETS), uncertainLevel(haiku), uncertainLevel(sonnet), uncertainLevel(opus)], ['L1', 'L1', 'L2', 'L2']);
   // L2 lead-direct as well (teams.yaml): nothing to delegate to, so the request stays L1
   assert.equal(uncertainLevel({ ...opus, L2: { ...opus.L2, leadDirect: true } }), 'L1');
 
   // a lead that handles L1 itself: as before, lead-direct with the rubric
-  const s = triage({ prompt }, sonnet);
+  const s = triage({ prompt }, haiku);
   assert.deepEqual([s.kind, s.level, s.preset, s.source], ['uncertain', 'L1', 'L1', 'default']);
   assert.match(s.rationale, /-> start as L1, the lead decides$/);
-  assert.match(formatTriageContext(s, sonnet[s.level], sonnet), /handled by you directly/);
+  assert.match(formatTriageContext(s, haiku[s.level], haiku), /handled by you directly/);
 
   // a lead that delegates L1: the L2 team, still uncertain (source 'default', low confidence), the lead picks the roles
   const o = triage({ prompt }, opus);
