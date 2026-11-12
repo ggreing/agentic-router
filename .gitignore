@@ -4,6 +4,7 @@ dist/
 *.log
 bench/results/
 bench/.cache/
+scripts/guard-e2e/results/
 .claude/worktrees/
 .env
 .env.*

@@ -23,6 +23,12 @@ open an issue to discuss anything substantial before you start.
   - `npm test` — the unit tests (`node --test`).
   - `npx tsc -b` — the TypeScript build.
   - `npm run -w @agentic-router/dashboard build` — the dashboard type-check and build.
+- For a change to the subagent guard (`plugin/hooks/guard.mjs`, `plugin/hooks/hooks.json`, the scope
+  records, or `plugin/agents/`), also run:
+  - `node --test packages/adapter-claude-code/test/guard.test.ts packages/adapter-claude-code/test/guard-hardening.test.ts`
+    — the guard's decisions, including a regression case for every known bypass. A new bypass gets a case here.
+  - `node scripts/guard-e2e/run.mjs` — the guard as a hook of a real Claude Code, against a local fake
+    upstream (no API call, nothing billed; see `scripts/guard-e2e/README.md`). Every step must end as expected.
 - Line endings are **LF**, enforced by `.gitattributes` (CRLF only for Windows-native `.ps1`/`.cmd`/`.bat`).
 
 ## Pull requests
