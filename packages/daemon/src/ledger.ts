@@ -12,7 +12,7 @@ import type {
 } from '@agentic-router/core';
 import type { Snapshot } from './git.ts';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 10;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -130,7 +130,8 @@ export interface SignalRow extends VerifySignal {
  * - agent_result: PostToolUse(Agent) usage (last call only); recorded for cross-checking, never counted.
  * - lead: the main session (Phase 1: not recorded); counts toward leadCostUsd.
  */
-export type CostSource = 'transcript' | 'estimate' | 'agent_result' | 'lead';
+/** proxy: a usage row of the API-key mode proxy (decision 130); once a request has them they are its cost source. */
+export type CostSource = 'transcript' | 'estimate' | 'agent_result' | 'lead' | 'proxy';
 
 /** actual: transcript cost known; estimate: from notification tokens; unknown: neither; none: nothing recorded. */
 export type AgentCostState = 'actual' | 'estimate' | 'unknown' | 'none';
@@ -284,6 +285,40 @@ CREATE TABLE IF NOT EXISTS costs (
   note               TEXT
 );
 CREATE INDEX IF NOT EXISTS costs_by_request ON costs(request_id);
+
+-- decision 130 (v10): usage rows from the API-key mode proxy, one per exchange, stored once by id
+CREATE TABLE IF NOT EXISTS proxy_rows (
+  id                  TEXT PRIMARY KEY,
+  message_id          TEXT,
+  upstream_request_id TEXT,
+  session_id          TEXT,
+  agent_id            TEXT,
+  parent_agent_id     TEXT,
+  prompt_id           TEXT,
+  request_class       TEXT,
+  agent_type          TEXT,
+  path                TEXT NOT NULL,
+  model               TEXT,
+  input               INTEGER NOT NULL,
+  output              INTEGER NOT NULL,
+  cache_read          INTEGER NOT NULL,
+  cache_write         INTEGER NOT NULL,
+  cache_write_5m      INTEGER NOT NULL,
+  cache_write_1h      INTEGER NOT NULL,
+  usd                 REAL NOT NULL,
+  priced              INTEGER NOT NULL,
+  state               TEXT NOT NULL,
+  http_status         INTEGER NOT NULL,
+  token_id            TEXT NOT NULL,
+  started_at          TEXT NOT NULL,
+  ended_at            TEXT NOT NULL,
+  received_at         TEXT NOT NULL,
+  request_id          TEXT,
+  subtask_id          TEXT,
+  attributed_by       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS proxy_rows_message ON proxy_rows(message_id);
+CREATE INDEX IF NOT EXISTS proxy_rows_request ON proxy_rows(request_id);
 CREATE INDEX IF NOT EXISTS costs_by_agent ON costs(agent_id, source);
 
 CREATE TABLE IF NOT EXISTS pending_levels (
@@ -326,6 +361,11 @@ CREATE TABLE IF NOT EXISTS slots (
   updated_at TEXT NOT NULL,
   fail_streak INTEGER NOT NULL DEFAULT 0,
   lead_raises INTEGER NOT NULL DEFAULT 0,
+  easy_streak INTEGER NOT NULL DEFAULT 0,
+  last_easy   INTEGER NOT NULL DEFAULT 0,
+  lock_step   TEXT,
+  lock_left   INTEGER NOT NULL DEFAULT 0,
+  down_count  INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (request_id, role, slot)
 );
 
@@ -485,7 +525,11 @@ export interface RecordRow {
 
 export type SubtaskPatch = Partial<Pick<SubtaskRow, 'status' | 'verdict' | 'agentId' | 'upCount' | 'writeScope' | 'review' | 'protectedGranted'>>;
 
-export interface SlotRow { role: Role; slot: number; step: Step; upCount: number; failStreak: number; leadRaises: number }
+export interface SlotRow {
+  role: Role; slot: number; step: Step; upCount: number; failStreak: number; leadRaises: number;
+  /** Decision 135 (core SlotAdjust): easy passes in a row, whether the latest result was one, the floor lock, step-downs so far. */
+  easyStreak: number; lastEasy: boolean; lockStep: Step | null; lockLeft: number; downCount: number;
+}
 
 export class Ledger {
   readonly db: DatabaseSync;
@@ -521,6 +565,9 @@ export class Ledger {
     for (const c of ['review', 'protected_granted']) if (!subCols.includes(c)) this.db.exec(`ALTER TABLE subtasks ADD COLUMN ${c} TEXT`);
     const slotCols = (this.db.prepare('PRAGMA table_info(slots)').all() as Row[]).map(r => s(r.name));
     for (const c of ['fail_streak', 'lead_raises']) if (!slotCols.includes(c)) this.db.exec(`ALTER TABLE slots ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`);
+    // v8 -> v9: step-down state per slot (decision 135)
+    for (const c of ['easy_streak', 'last_easy', 'lock_left', 'down_count']) if (!slotCols.includes(c)) this.db.exec(`ALTER TABLE slots ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`);
+    if (!slotCols.includes('lock_step')) this.db.exec('ALTER TABLE slots ADD COLUMN lock_step TEXT');
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -658,8 +705,8 @@ export class Ledger {
   replaceLeadCosts(requestId: string, rows: CostInput[]): void {
     this.tx(() => {
       this.db.prepare(`DELETE FROM costs WHERE request_id = ? AND source = 'lead'`).run(requestId);
-      this.db.prepare('UPDATE requests SET lead_cost_usd = 0 WHERE id = ?').run(requestId);
       for (const r of rows) this.#insertCost({ ...r, requestId, source: 'lead' });
+      this.#recount(requestId);
     });
   }
 
@@ -704,8 +751,30 @@ export class Ledger {
   // ------------------------------------------------------------------ slots (spec 3.5)
 
   getSlots(requestId: string): SlotRow[] {
-    return (this.db.prepare('SELECT role, slot, step, up_count, fail_streak, lead_raises FROM slots WHERE request_id = ? ORDER BY role, slot').all(requestId) as Row[])
-      .map(r => ({ role: s(r.role) as Role, slot: n(r.slot), step: s(r.step) as Step, upCount: n(r.up_count), failStreak: n(r.fail_streak), leadRaises: n(r.lead_raises) }));
+    return (this.db.prepare('SELECT * FROM slots WHERE request_id = ? ORDER BY role, slot').all(requestId) as Row[]).map(r => ({
+      role: s(r.role) as Role, slot: n(r.slot), step: s(r.step) as Step, upCount: n(r.up_count), failStreak: n(r.fail_streak), leadRaises: n(r.lead_raises),
+      easyStreak: n(r.easy_streak), lastEasy: n(r.last_easy) === 1, lockStep: sn(r.lock_step) as Step | null, lockLeft: n(r.lock_left), downCount: n(r.down_count),
+    }));
+  }
+
+  /**
+   * Writes a slot's step-down state (decision 135, core SlotAdjust), with its step and the raises that count:
+   * after an easy pass, a raise, a dispatch. A slot without a row gets one. Reject streak and lead-only raises stay.
+   */
+  setSlotAdjust(requestId: string, role: Role, slot: number,
+    a: { step: Step; upCount: number; easyStreak: number; lastEasy: boolean; lockStep: Step | null; lockLeft: number; downCount: number }, at: string): void {
+    this.db.prepare(`INSERT INTO slots (request_id, role, slot, step, up_count, updated_at, easy_streak, last_easy, lock_step, lock_left, down_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (request_id, role, slot) DO UPDATE SET step = excluded.step, up_count = excluded.up_count, updated_at = excluded.updated_at,
+        easy_streak = excluded.easy_streak, last_easy = excluded.last_easy, lock_step = excluded.lock_step, lock_left = excluded.lock_left,
+        down_count = excluded.down_count`)
+      .run(requestId, role, slot, a.step, a.upCount, at, a.easyStreak, a.lastEasy ? 1 : 0, a.lockStep, a.lockLeft, a.downCount);
+  }
+
+  /** The subtask dispatched last on a slot of a request (its id), if any. */
+  latestSubtaskOnSlot(requestId: string, role: Role, slot: number): string | undefined {
+    const r = this.db.prepare('SELECT id FROM subtasks WHERE request_id = ? AND role = ? AND slot = ? ORDER BY dispatch_seq DESC LIMIT 1').get(requestId, role, slot) as Row | undefined;
+    return r ? s(r.id) : undefined;
   }
 
   /** Moves a slot to a step (a raise). The failure streak starts again at the new step. */
@@ -967,8 +1036,99 @@ export class Ledger {
         cache_write_tokens, cache_read_tokens, usd, created_at, calls, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(c.requestId, c.subtaskId, c.agentId, c.source, c.modelId, c.inputTokens, c.outputTokens, c.cacheWriteTokens,
         c.cacheReadTokens, c.usd, c.createdAt, c.calls ?? null, c.note ?? null);
-    const col = c.source === 'lead' ? 'lead_cost_usd' : c.source === 'transcript' || c.source === 'estimate' ? 'used_usd' : null;
-    if (col && c.requestId && c.usd !== null) this.db.prepare(`UPDATE requests SET ${col} = ${col} + ? WHERE id = ?`).run(c.usd, c.requestId);
+    if (c.requestId) this.#recount(c.requestId);
+  }
+
+  /**
+   * A request's subtask cost (used_usd) and lead cost (lead_cost_usd) from its cost rows. With proxy rows
+   * (API-key mode, decision 130) those are the cost source: an agent's rows are subtask cost, the main
+   * conversation's the lead's; transcript, estimate and lead rows stay as the cross-check. Without proxy rows:
+   * transcript and estimate rows are subtask cost, lead rows the lead's.
+   */
+  #recount(requestId: string): void {
+    const r = this.db.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN source = 'proxy' THEN 1 ELSE 0 END), 0) AS p,
+        COALESCE(SUM(CASE WHEN source = 'proxy' AND agent_id IS NOT NULL THEN usd END), 0) AS pu,
+        COALESCE(SUM(CASE WHEN source = 'proxy' AND agent_id IS NULL THEN usd END), 0) AS pl,
+        COALESCE(SUM(CASE WHEN source IN ('transcript', 'estimate') THEN usd END), 0) AS tu,
+        COALESCE(SUM(CASE WHEN source = 'lead' THEN usd END), 0) AS tl
+      FROM costs WHERE request_id = ?`).get(requestId) as Row;
+    const proxy = n(r.p) > 0;
+    this.db.prepare('UPDATE requests SET used_usd = ?, lead_cost_usd = ? WHERE id = ?')
+      .run(proxy ? n(r.pu) : n(r.tu), proxy ? n(r.pl) : n(r.tl), requestId);
+  }
+
+  /** Whether a request's cost comes from proxy rows (API-key mode). */
+  hasProxyCosts(requestId: string): boolean {
+    return !!this.db.prepare(`SELECT 1 AS x FROM costs WHERE request_id = ? AND source = 'proxy' LIMIT 1`).get(requestId);
+  }
+
+  // ------------------------------------------------------------------ proxy rows (decision 130)
+
+  /**
+   * Stores one proxy usage row (false: already taken, by row id or message id) and, when it belongs to a
+   * request, its cost row of source 'proxy'.
+   */
+  insertProxyRow(row: UsageRow, a: { requestId: string | null; subtaskId: string | null; agentId: string | null; how: string }, at: string): boolean {
+    return this.tx(() => {
+      if (this.db.prepare('SELECT 1 AS x FROM proxy_rows WHERE id = ?').get(row.id)) return false;
+      if (row.messageId && this.db.prepare('SELECT 1 AS x FROM proxy_rows WHERE message_id = ?').get(row.messageId)) return false;
+      this.db.prepare(`INSERT INTO proxy_rows (id, message_id, upstream_request_id, session_id, agent_id, parent_agent_id, prompt_id,
+          request_class, agent_type, path, model, input, output, cache_read, cache_write, cache_write_5m, cache_write_1h, usd, priced,
+          state, http_status, token_id, started_at, ended_at, received_at, request_id, subtask_id, attributed_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(row.id, row.messageId, row.upstreamRequestId, row.sessionId, row.agentId, row.parentAgentId, row.promptId, row.requestClass,
+          row.agentType, row.path, row.model, row.usage.input, row.usage.output, row.usage.cacheRead, row.usage.cacheWrite,
+          row.usage.cacheWrite5m, row.usage.cacheWrite1h, row.usd, row.priced ? 1 : 0, row.state, row.httpStatus, row.tokenId,
+          row.startedAt, row.endedAt, at, a.requestId, a.subtaskId, a.how);
+      if (a.requestId && row.state !== 'error') {
+        this.#insertCost({
+          requestId: a.requestId, subtaskId: a.subtaskId, agentId: a.agentId, source: 'proxy', modelId: row.model, calls: 1,
+          inputTokens: row.usage.input, outputTokens: row.usage.output, cacheWriteTokens: row.usage.cacheWrite, cacheReadTokens: row.usage.cacheRead,
+          usd: row.usd, createdAt: at,
+          note: !row.priced ? 'estimated: a model without a price, at the most expensive rates' : row.state === 'partial' ? 'partial: the stream did not finish' : null,
+        });
+      }
+      return true;
+    });
+  }
+
+  /** The request a prompt belongs to: the one it opened, or one it continued (an answer, a task notification). */
+  requestOfPrompt(sessionId: string, promptId: string): RequestRow | undefined {
+    const opened = this.requestByPromptId(sessionId, promptId);
+    if (opened) return opened;
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(promptId)) return undefined;
+    const e = this.db.prepare(`SELECT request_id AS r FROM events WHERE session_id = ? AND type = 'prompt_submit' AND request_id IS NOT NULL
+        AND payload LIKE ? ORDER BY id DESC LIMIT 1`).get(sessionId, `%"prompt_id":"${promptId}"%`) as Row | undefined;
+    return e ? this.getRequest(s(e.r)) : undefined;
+  }
+
+  /** The session's request open at a time (ISO), if any. */
+  requestOpenAt(sessionId: string, at: string): RequestRow | undefined {
+    const r = this.db.prepare(`SELECT * FROM requests WHERE session_id = ? AND created_at <= ? AND (closed_at IS NULL OR closed_at >= ?)
+        ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(sessionId, at, at) as Row | undefined;
+    return r && toRequest(r);
+  }
+
+  /** Per agent (null: the lead), the proxy total next to the transcript total (decision 130 cross-check). */
+  costPairs(requestId: string): Array<{ agentId: string | null; proxyUsd: number; transcriptUsd: number }> {
+    return (this.db.prepare(`SELECT agent_id AS a,
+        COALESCE(SUM(CASE WHEN source = 'proxy' THEN usd END), 0) AS p,
+        COALESCE(SUM(CASE WHEN (agent_id IS NOT NULL AND source IN ('transcript', 'estimate')) OR (agent_id IS NULL AND source = 'lead') THEN usd END), 0) AS t
+      FROM costs WHERE request_id = ? GROUP BY agent_id`).all(requestId) as Row[])
+      .map(r => ({ agentId: sn(r.a), proxyUsd: Math.round(n(r.p) * 1e6) / 1e6, transcriptUsd: Math.round(n(r.t) * 1e6) / 1e6 }));
+  }
+
+  /** An agent's cost for the lead's result text: proxy rows when there are any, else transcript and estimates. */
+  agentCostUsd(agentId: string): { usd: number; partlyEstimated: boolean } {
+    const r = this.db.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN source = 'proxy' THEN 1 ELSE 0 END), 0) AS p,
+        COALESCE(SUM(CASE WHEN source = 'proxy' THEN usd END), 0) AS pu,
+        COALESCE(SUM(CASE WHEN source = 'proxy' AND note LIKE 'estimated%' THEN 1 ELSE 0 END), 0) AS pe,
+        COALESCE(SUM(CASE WHEN source IN ('transcript', 'estimate') THEN usd END), 0) AS tu,
+        COALESCE(SUM(CASE WHEN source = 'estimate' THEN 1 ELSE 0 END), 0) AS te
+      FROM costs WHERE agent_id = ?`).get(agentId) as Row;
+    return n(r.p) > 0 ? { usd: n(r.pu), partlyEstimated: n(r.pe) > 0 } : { usd: n(r.tu), partlyEstimated: n(r.te) > 0 };
   }
 
   /** Records one cost row; transcript/estimate rows add to usedUsd, lead rows to leadCostUsd, agent_result rows to nothing. */
@@ -983,11 +1143,10 @@ export class Ledger {
    */
   replaceAgentCosts(agentId: string, rows: CostInput[]): void {
     this.tx(() => {
-      const old = this.db.prepare(`SELECT request_id AS r, COALESCE(SUM(usd), 0) AS u FROM costs
-        WHERE agent_id = ? AND source IN ('transcript', 'estimate') GROUP BY request_id`).all(agentId) as Row[];
-      for (const o of old) if (o.r !== null) this.db.prepare('UPDATE requests SET used_usd = used_usd - ? WHERE id = ?').run(n(o.u), s(o.r));
+      const old = this.db.prepare(`SELECT DISTINCT request_id AS r FROM costs WHERE agent_id = ? AND source IN ('transcript', 'estimate')`).all(agentId) as Row[];
       this.db.prepare(`DELETE FROM costs WHERE agent_id = ? AND source IN ('transcript', 'estimate')`).run(agentId);
       for (const r of rows) this.#insertCost({ ...r, agentId });
+      for (const o of old) if (o.r !== null && o.r !== undefined) this.#recount(s(o.r));
     });
   }
 
@@ -997,6 +1156,7 @@ export class Ledger {
    */
   agentCostState(agentId: string): AgentCostState {
     const rows = this.db.prepare(`SELECT source, usd FROM costs WHERE agent_id = ? AND source IN ('transcript', 'estimate')`).all(agentId) as Row[];
+    if (this.db.prepare(`SELECT 1 AS x FROM costs WHERE agent_id = ? AND source = 'proxy' LIMIT 1`).get(agentId)) return 'actual';
     if (!rows.length) return 'none';
     if (rows.some(r => r.source === 'transcript' && r.usd !== null)) return 'actual';
     if (rows.some(r => r.source === 'estimate')) return 'estimate';
@@ -1011,6 +1171,10 @@ export class Ledger {
 
   /** Whether the request's usedUsd contains estimates, or leaves some subagent costs out (unknown). */
   costFlags(requestId: string): { estimated: boolean; unknown: boolean } {
+    if (this.hasProxyCosts(requestId)) {
+      const e = this.db.prepare(`SELECT 1 AS x FROM costs WHERE request_id = ? AND source = 'proxy' AND note LIKE 'estimated%' LIMIT 1`).get(requestId);
+      return { estimated: !!e, unknown: false };
+    }
     const r = this.db.prepare(`SELECT
         COALESCE(SUM(CASE WHEN source = 'estimate' THEN 1 ELSE 0 END), 0) AS e,
         COALESCE(SUM(CASE WHEN source = 'transcript' AND usd IS NULL THEN 1 ELSE 0 END), 0) AS u

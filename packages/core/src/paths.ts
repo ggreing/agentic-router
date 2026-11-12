@@ -57,6 +57,7 @@ export interface RouterConfig {
   budgetsUsd?: Partial<Record<Level, number>>;   // per-request budgets set by `init`; override preset defaults (positive finite only)
   forceLevel?: Level;        // benchmarks / debugging only (decision 107): plan every new request at this level
   recordPrompts?: boolean;   // decision 109: store redacted prompt text in request records (opt-in; default false)
+  stepDown?: 'on' | 'off';   // decision 135: two easy passes in a row move a slot one step down (default on)
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com
@@ -64,4 +65,9 @@ export interface RouterConfig {
     tokenDailyCapUsd?: number;   // per local token per day; default 100
     dailyCapUsd?: number;        // all tokens per day; default 300
   };
+  /**
+   * API-key mode (decision 130), set by `agentic-router init --mode api` / `mode`: 'proxy' runs the proxy and
+   * its usage rows are the cost source; 'direct' is the bypass while it is down. Absent: subscription mode.
+   */
+  apiMode?: 'proxy' | 'direct';
 }

@@ -50,6 +50,11 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
   const budgets = parseBudgets(o.budgetsUsd, warnings);
   if (budgets) out.budgetsUsd = budgets;
   if (o.recordPrompts === true) out.recordPrompts = true;
+  // Decision 130: in API-key proxy mode the proxy's usage rows are the cost source (transcripts a cross-check)
+  if (o.apiMode === 'proxy' || o.apiMode === 'direct') out.apiMode = o.apiMode;
+  else if (o.apiMode !== undefined) warnings.push(`config.apiMode ignored: ${JSON.stringify(o.apiMode)} is not "proxy" or "direct"`);
+  if (o.stepDown === 'on' || o.stepDown === 'off') out.stepDown = o.stepDown;   // decision 135
+  else if (o.stepDown !== undefined) warnings.push('config.stepDown ignored: not "on" or "off"');
   // Decisions 117-118: the first delegated level per lead model class
   if (o.delegateFrom !== undefined) {
     const v = o.delegateFrom;

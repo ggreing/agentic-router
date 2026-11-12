@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
+  MAX_STEP_UPS, PRICING_PER_MTOK, RouterToolCall, afterEasyPass, afterOtherResult, afterRaise, atDispatch, costUsd, decideEscalation, formatTriageContext, isRouterToolName, l3SignalRoles, ladderStep,
   leadModelClass, normalizeLeadTriage, readRoleFile, redact, routerToolDef, routerToolErrorText, routerToolName, stepIndex, stepUp, triage,
   type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
   type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
@@ -15,7 +15,7 @@ import type { ConfigFile } from './config.ts';
 import { awaitsUser, classifyPrompt } from './continuation.ts';
 import { takeSnapshot } from './git.ts';
 import { writeJsonAtomic, type HomeLayout } from './home.ts';
-import type { AgentRow, ClientRow, Ledger, RequestRow, SubtaskReview, SubtaskRow } from './ledger.ts';
+import type { AgentRow, ClientRow, Ledger, RequestRow, SlotRow, SubtaskReview, SubtaskRow } from './ledger.ts';
 import { errorText, nullLogger, type Logger } from './log.ts';
 import { cleanVerifyEnv, verifyEnv, withoutEnvValues } from './env.ts';
 import { eventPayload, tailText } from './payload.ts';
@@ -83,7 +83,7 @@ export interface StatusView {
   /** Decision 97: the node, router home and port the hooks of the latest sessions report (latest 10). */
   clients: ClientRow[];
   /** Spec 3.5 step changes: a miss raises a slot one step; stepping down after easy results waits for review scores. */
-  stepAdjust: { up: 'on'; down: 'deferred' };
+  stepAdjust: { up: 'on'; down: 'on' | 'off' };
 }
 
 export class Router {
@@ -407,6 +407,8 @@ export class Router {
         id: s.id, role: s.role, slot: s.slot, step: s.step, upCount: s.upCount, status: s.status, verdict: s.verdict, attempts: s.attempts, costUsd: subCost(s.id),
         ...(s.review ? { review: { verdict: s.review.verdict, by: s.review.by } } : {}),
       })),
+      // decision 135: where each slot ended, with the raises that still count and its step-downs
+      slots: this.ledger.getSlots(requestId).map(x => ({ role: x.role, slot: x.slot, step: x.step, ups: x.upCount, downs: x.downCount })),
       // decision 127: the lead's own size judgement (router_report_triage), a label for calibrating the triage
       ...((lt) => (lt ? { leadTriage: lt } : {}))(this.ledger.getLeadTriage<Record<string, unknown>>(requestId)),
       verifyFailures: this.ledger.listAgents(requestId).reduce((a, x) => a + x.failCount, 0),
@@ -582,6 +584,7 @@ export class Router {
       requestId: req.id, id: tag, role, slot: check.slot, step: check.step, writeScope: scope.allowed,
       unscoped: scope.unscoped, agentType: agentType!, toolUseId: str(ev.raw.tool_use_id) ?? null, at: this.#at(),
     });
+    this.#slotDispatched(req.id, role, check.slot);   // step-down (decision 135)
     return NONE;
   }
 
@@ -671,7 +674,7 @@ export class Router {
       this.#log.warn('miss with no step left to try: the user decides', { requestId, subtaskId: sub.id, step: sub.step, ups, verdict });
       return;
     }
-    this.ledger.setSlot(requestId, sub.role, sub.slot, next, ups + 1, at);
+    this.#raiseSlot(requestId, sub.role, sub.slot, next, ups + 1, at);
     this.ledger.updateSubtask(requestId, sub.id, { status: 'failed', verdict, upCount: ups + 1 }, at);
     this.#log.info('slot raised after a miss', { requestId, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: sub.step, to: next, verdict });
   }
@@ -681,6 +684,9 @@ export class Router {
     const state = this.ledger.getSlots(sub.requestId).find(x => x.role === sub.role && x.slot === sub.slot);
     if (!state || state.step === sub.step) return '';
     const st = ladderStep(state.step);
+    if (stepIndex(state.step) < stepIndex(sub.step)) {
+      return ` The ${sub.role} slot ${sub.slot} now runs one step lower, at ${state.step} (model="${st.alias}", effort="${st.effort}"), after two easy results: its next subtask must use these values.`;
+    }
     return ` The ${sub.role} slot ${sub.slot} now runs one step higher, at ${state.step} (model="${st.alias}", effort="${st.effort}"): a new attempt must use these values.`;
   }
 
@@ -1373,6 +1379,7 @@ export class Router {
   #applyReject(req: RequestRow, sub: SubtaskRow, review: SubtaskReview, extra: { issues?: number | undefined; categories?: readonly string[] | undefined }, at: string): { raisedTo?: Step; atLimit: boolean } {
     this.ledger.updateSubtask(req.id, sub.id, { status: 'failed', verdict: 'rejected', review }, at);
     this.#reviewSignal(req, sub, review, extra, at);
+    this.#otherResult(req.id, sub, at);   // step-down (decision 135): a reject ends an easy streak
     const slot = this.ledger.getSlots(req.id).find(x => x.role === sub.role && x.slot === sub.slot);
     if (slot && slot.step !== sub.step) return { atLimit: false };   // the slot was raised since this attempt ran
     const streak = (slot?.failStreak ?? 0) + 1;
@@ -1404,6 +1411,7 @@ export class Router {
     const review: SubtaskReview = { verdict: i.verdict, by: i.by, ...(i.bySubtaskId ? { bySubtaskId: i.bySubtaskId } : {}), ...(i.margin ? { margin: i.margin } : {}), at };
     const extra = { issues: i.issues, categories: i.categories };
     let raisedTo: Step | undefined;
+    let steppedDownTo: Step | undefined;
     let atLimit = false;
     if (i.verdict === 'accept') {
       this.ledger.updateSubtask(req.id, sub.id, { review }, at);
@@ -1411,6 +1419,7 @@ export class Router {
       if (this.ledger.getSlots(req.id).some(x => x.role === sub.role && x.slot === sub.slot)) {
         this.ledger.setSlotCounters(req.id, sub.role, sub.slot, sub.step, { failStreak: 0 }, at);
       }
+      steppedDownTo = this.#acceptedResult(req, sub, review, at);   // step-down (decision 135)
     } else if (sub.review?.verdict === 'reject') {
       // the same attempt judged again (a reviewer after the lead): the judgement is replaced, the failure is not counted twice
       this.ledger.updateSubtask(req.id, sub.id, { review }, at);
@@ -1423,7 +1432,7 @@ export class Router {
       ok: true,
       result: {
         requestId: req.id, subtaskId: sub.id, recorded: true, verdict: i.verdict, by: i.by, status: after.status,
-        raised: raisedTo !== undefined, slot: this.#slotView(req.id, sub.role, sub.slot, sub.step),
+        raised: raisedTo !== undefined, ...(steppedDownTo ? { steppedDown: true } : {}), slot: this.#slotView(req.id, sub.role, sub.slot, sub.step),
         next: i.verdict === 'accept' ? 'none' : atLimit ? 'ask_user' : raisedTo ? 'retry_at_raised_step' : 'retry_at_same_step',
         ...(i.verdict === 'reject' && !raisedTo && !atLimit ? { escalation: 'router_request_escalation can raise the slot before the next attempt' } : {}),
       },
@@ -1473,7 +1482,7 @@ export class Router {
         leadOnlyRaises: slot?.leadRaises ?? 0, userTurn: this.#userTurn(req, 'escalation', sub.id, i.userConfirmed),
       });
     if (d.granted) {
-      this.ledger.setSlot(req.id, sub.role, sub.slot, d.to, upCount + 1, at);
+      this.#raiseSlot(req.id, sub.role, sub.slot, d.to, upCount + 1, at);
       if (d.leadOnly) this.ledger.setSlotCounters(req.id, sub.role, sub.slot, d.to, { leadRaises: (slot?.leadRaises ?? 0) + 1 }, at);
       this.ledger.updateSubtask(req.id, sub.id, { upCount: upCount + 1 }, at);
       this.#log.info('slot raised on request', { requestId: req.id, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: step, to: d.to, reason: i.reason, leadOnly: d.leadOnly });
@@ -1547,6 +1556,72 @@ export class Router {
     };
   }
 
+  // ------------------------------------------------------------------ step-down (spec 3.5, decision 135)
+  //
+  // Two easy passes in a row on a slot move it one step down for its next subtask; every raise locks the slot
+  // at its new step for the next two dispatches. The rule is core's (ladder.ts SlotAdjust); this section keeps
+  // its state in the slot row. An easy pass is a first attempt that passed verify without a fix round and
+  // that a finished reviewer or tester subtask accepted with margin "easy" (router_report_result). Verify
+  // alone, and the lead's own "easy", never count. Slots live for one request.
+
+  #stepDownOn(): boolean {
+    return this.#config.stepDown !== 'off';
+  }
+
+  #slotRow(requestId: string, role: Role, slot: number): SlotRow | undefined {
+    return this.ledger.getSlots(requestId).find(x => x.role === role && x.slot === slot);
+  }
+
+  /** A raise (verify miss, second reject, granted request): the slot moves up and is locked there. */
+  #raiseSlot(requestId: string, role: Role, slot: number, to: Step, upCount: number, at: string): void {
+    const before = this.#slotRow(requestId, role, slot);
+    this.ledger.setSlot(requestId, role, slot, to, upCount, at);
+    const a = afterRaise(before ?? { step: to, upCount: upCount - 1, easyStreak: 0, lastEasy: false, lockStep: null, lockLeft: 0, downCount: 0 }, to);
+    this.ledger.setSlotAdjust(requestId, role, slot, { ...a, step: to, upCount }, at);
+  }
+
+  /** A new subtask takes the slot: an unreported previous result ends the streak, one locked task is used up. */
+  #slotDispatched(requestId: string, role: Role, slot: number): void {
+    const row = this.#slotRow(requestId, role, slot);
+    if (!row) return;   // never raised, no easy pass yet: nothing to keep
+    const a = atDispatch(row);
+    if (a.easyStreak !== row.easyStreak || a.lastEasy !== row.lastEasy || a.lockLeft !== row.lockLeft) this.ledger.setSlotAdjust(requestId, role, slot, a, this.#at());
+  }
+
+  /** A result that is not an easy pass ends the slot's easy streak (when the subtask is still the slot's latest). */
+  #otherResult(requestId: string, sub: SubtaskRow, at: string): void {
+    const row = this.#slotRow(requestId, sub.role, sub.slot);
+    if (!row || (!row.easyStreak && !row.lastEasy)) return;
+    if (this.ledger.latestSubtaskOnSlot(requestId, sub.role, sub.slot) !== sub.id) return;
+    this.ledger.setSlotAdjust(requestId, sub.role, sub.slot, afterOtherResult(row), at);
+  }
+
+  /**
+   * An accept was reported for `sub` (its row as it was before this report). Returns the step the slot moved
+   * down to, if it did. A late report for a subtask that is no longer the slot's latest changes nothing, and
+   * the same easy pass reported twice counts once.
+   */
+  #acceptedResult(req: RequestRow, sub: SubtaskRow, review: SubtaskReview, at: string): Step | undefined {
+    if (this.ledger.latestSubtaskOnSlot(req.id, sub.role, sub.slot) !== sub.id) return undefined;
+    const row = this.#slotRow(req.id, sub.role, sub.slot);
+    const step = row?.step ?? sub.step;
+    const agent = sub.agentId ? this.ledger.getAgent(sub.agentId) : undefined;
+    const easy = this.#stepDownOn() && review.margin === 'easy' && review.by !== 'lead'
+      && sub.attempts === 1 && sub.status === 'passed' && sub.verdict === 'meet' && (agent?.failCount ?? 0) === 0 && sub.step === step;
+    if (!easy) {
+      this.#otherResult(req.id, sub, at);
+      return undefined;
+    }
+    const was = sub.review;
+    if (was?.verdict === 'accept' && was.margin === 'easy' && was.by !== 'lead' && row?.lastEasy) return undefined;   // already counted
+    const r = afterEasyPass(row ?? { step, upCount: 0, easyStreak: 0, lastEasy: false, lockStep: null, lockLeft: 0, downCount: 0 });
+    this.ledger.setSlotAdjust(req.id, sub.role, sub.slot, r.state, at);
+    if (!r.steppedDownTo) return undefined;
+    this.ledger.setSlotCounters(req.id, sub.role, sub.slot, r.steppedDownTo, { failStreak: 0 }, at);
+    this.#log.info('slot lowered after two easy results', { requestId: req.id, subtaskId: sub.id, role: sub.role, slot: sub.slot, from: step, to: r.steppedDownTo });
+    return r.steppedDownTo;
+  }
+
   // ------------------------------------------------------------------ summaries
 
   #summary(requestId: string, why: string): string {
@@ -1566,7 +1641,7 @@ export class Router {
   status(sessionId?: string): StatusView {
     const r = sessionId ? this.ledger.latestRequest(sessionId) : this.ledger.latestRequestAny();
     const clients = this.ledger.recentClients(10);
-    const stepAdjust = { up: 'on', down: 'deferred' } as const;
+    const stepAdjust = { up: 'on' as const, down: this.#stepDownOn() ? 'on' as const : 'off' as const };
     if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust };
     const subs = this.ledger.listSubtasks(r.id);
     const slots = this.ledger.getSlots(r.id);

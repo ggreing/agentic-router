@@ -13,8 +13,6 @@ export const COMMON_DEV_PORTS = new Set([3000, 3001, 4200, 5000, 5173, 5432, 637
 export interface CliConfig extends RouterConfig {
   budgetsUsd: Record<Level, number>;
   wrappedStatusLine?: { type: 'command'; command: string; padding?: number };
-  /** API-key mode (decision 130): 'proxy' runs the proxy under the supervisor, 'direct' is the bypass. Absent: subscription mode. */
-  apiMode?: 'proxy' | 'direct';
 }
 
 export function isFree(port: number): Promise<boolean> {

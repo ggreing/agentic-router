@@ -479,7 +479,7 @@ test('the request record keeps the lead\'s judgement and the reviews; a v7 ledge
     l.db.exec("INSERT INTO slots (request_id, role, slot, step, up_count, updated_at) VALUES ('r', 'coder', 0, 's2', 1, 't')");
     l.close();
     const again = new Ledger(file);
-    assert.deepEqual(again.getSlots('r'), [{ role: 'coder', slot: 0, step: 's2', upCount: 1, failStreak: 0, leadRaises: 0 }]);
+    assert.deepEqual((x => [x.step, x.upCount, x.failStreak, x.leadRaises])(again.getSlots('r')[0]!), ['s2', 1, 0, 0]);
     assert.equal(again.count('confirmations'), 0);
     again.close();
     const db = new DatabaseSync(file);

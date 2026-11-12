@@ -57,7 +57,7 @@ test('spec 3.5: a miss raises the slot one step; the next call for it must use t
   assert.deepEqual(rows(d, "SELECT slot, step FROM subtasks WHERE id = 'B'"), [{ slot: 1, step: 's1' }]);
   const st = (await getStatus(d.port, 'up')).body as StatusView;
   assert.deepEqual(st.roles.filter(r => r.role === 'coder').map(r => [r.slot, r.step]), [[0, 's2'], [1, 's1']]);
-  assert.deepEqual(st.stepAdjust, { up: 'on', down: 'deferred' });
+  assert.deepEqual(st.stepAdjust, { up: 'on', down: 'on' });
 }));
 
 test('spec 3.5: after 3 step-ups a further miss is the user\'s decision', () => withRepo({ 'fail.cjs': 'process.exit(1)\n' }, [{ kind: 'test', command: 'node fail.cjs' }], async (d, repo) => {
