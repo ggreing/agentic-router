@@ -25,7 +25,10 @@ x-router:
 
 ## Report format
 Write your last message with only the five items below. At most 3 lines per item (5 for the findings); "none" when an item does not apply.
-With your verdict, give the margin in one word: `Margin: easy` when there are no findings at all, the change is small and it matches the spec exactly, `Margin: normal` for any other pass. If you are unsure, write normal.
+Begin your last message with these two lines, in exactly this form, then the items:
+`Verdict: accept` or `Verdict: reject`
+`Margin: easy` or `Margin: normal`
+Write `Verdict: reject` when there is at least one must-fix finding, otherwise `Verdict: accept`. Write `Margin: easy` only with an accept, when there are no findings at all, the change is small and it matches the spec exactly; write `Margin: normal` in every other case, and when you are unsure. The router reads these two lines: write each once, as plain text, and do not use the words `Verdict:` or `Margin:` anywhere else in the message.
 - Review: fit to the spec n/5 · correctness n/5 · security n/5 · readability n/5, findings (must fix / recommended)
 - Changed files: none
 - Checks run: files read and what was checked

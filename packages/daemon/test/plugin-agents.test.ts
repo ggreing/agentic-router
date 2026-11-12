@@ -68,8 +68,13 @@ test('decision 139: role files, skills and hooks are English; the report items l
   assert.match(router, /list them under "Scope request" in your report/);
   // the margin the lead passes on to router_report_result is the word after "Margin:" in the reviewer's or tester's report
   assert.match(skill, /`margin` exactly as their report says \(`easy` or `normal`\)/);
+  // decision 145: reviewer and tester open the last message with the two lines the daemon reads at
+  // SubagentStop, in exactly this form; the parser relies on these substrings.
   for (const role of ['reviewer', 'tester'] as const) {
     const body = readRoleFile(path.join(AGENTS, `${role}.md`)).body;
+    assert.match(body, /Begin your last message with these two lines/, role);
+    assert.match(body, /`Verdict: accept`/, role);
+    assert.match(body, /`Verdict: reject`/, role);
     assert.match(body, /`Margin: easy`/, role);
     assert.match(body, /`Margin: normal`/, role);
   }
