@@ -1,7 +1,5 @@
 # Contributing to Agentic Router Proxy
 
-> **Draft — to be finalized before release.**
-
 Thanks for your interest. This project is pre-release; interfaces and defaults may still change. Please
 open an issue to discuss anything substantial before you start.
 

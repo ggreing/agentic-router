@@ -1,7 +1,5 @@
 # Agentic Router Proxy
 
-> **草稿 — 发布前定稿。**
-
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 用 Opus 或 Sonnet 跑 Claude Code 时，主会话几乎什么都自己做，连便宜得多的模型也能改对的改动也不例外。

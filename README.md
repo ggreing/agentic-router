@@ -1,7 +1,5 @@
 # Agentic Router Proxy
 
-> **Draft — to be finalized before release.**
-
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 If you run Claude Code on Opus or Sonnet, the main session does almost everything itself, including

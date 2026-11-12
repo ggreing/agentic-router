@@ -1,7 +1,5 @@
 # Agentic Router Proxy
 
-> **ドラフト — 公開前に確定します。**
-
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 Claude Code を Opus や Sonnet で動かすと、メインセッションがほとんどの作業を自分でこなします。ずっと

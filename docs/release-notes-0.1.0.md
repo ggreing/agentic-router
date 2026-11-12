@@ -1,48 +1,46 @@
-# Agentic Router Proxy 0.1.0 (draft)
+# Agentic Router Proxy 0.1.0
 
-First public pre-release. Interfaces and defaults may still change.
+First public release, and still a pre-release: commands and defaults may change.
 
-**Agentic Router Proxy** is a difficulty-based team router for Claude Code. A plugin and a local
-daemon read each request, estimate its difficulty, and either let the main session handle it directly
-or build a right-sized subagent team (architect, coder, reviewer, tester, ui-designer). Each role
-rides a model × effort "ladder" — up when work is hard, down when it's easy — to finish at the lowest
-cost that still passes verification. Everything runs locally.
+This is a Claude Code plugin plus a small local daemon. For each request it decides whether the main
+session should just do the work, or hand it to subagents on cheaper models while the main session plans
+and checks. In our last check, with a Sonnet main session and the router running as shipped, a passed
+task cost 33% less than with plain Claude Code and the same tasks passed. It is slower on bigger tasks,
+because every hand-off starts a new worker. The details are in `docs/measurements/kpi-phase3.md`.
 
-## Highlights
+What's in it:
 
-- **Three modes.** Subscription (default; no proxy, no subscription credential ever read or stored),
-  API-key (a local proxy that aggregates real cost and enforces daily + per-request budgets, key kept
-  only in the OS keychain), and direct.
-- **Delegation and the ladder.** Rules-first triage (no embeddings, no extra model call), right-sized
-  teams, and per-subtask build/typecheck/lint/test verification recorded in a local work ledger.
-- **Local dashboard.** A read-only web view of the request timeline, teams, costs, KPIs and the
-  learning report — in English, Korean, Japanese and Simplified Chinese. All data stays on the machine.
-- **Privacy by default.** One local SQLite file; no prompt text stored unless you opt in with
-  `recordPrompts` (turning it off deletes what was stored at the next daemon start). Logs and the
-  dashboard mask keys and tokens.
-- **A guard for subagents.** Refuses out-of-scope writes, credential files and off-allowlist commands;
-  a refusal can't be overridden. For ordinary Bash it stays silent and your own Claude Code permission
-  rules decide.
+It runs on your Claude subscription by default, with no proxy and without ever reading your subscription
+credentials. With an API key you can put a local proxy in front of the API that records real cost and
+stops sending new calls once a daily or per-request budget is used up (calls already streaming are
+allowed to finish). The key stays in the OS keychain.
 
-## Install (from source, pre-release)
+Workers start on the cheapest model that usually works and move up when they fail or a reviewer rejects
+their work, and back down after two "easy" verdicts. After each worker the daemon runs the project's
+build, typecheck, lint and tests and checks the worker stayed within its files.
+
+A guard sits in front of the workers' tools. It refuses writes outside a worker's scope, anything touching
+credential files or the router's own folder, and commands outside a small allowlist. It never approves
+Bash for you; your own Claude Code permission rules still decide.
+
+Everything is kept in one SQLite file on your machine and the router makes no network calls of its own.
+Prompts and worker reports aren't stored unless you turn on `recordPrompts`. A read-only local dashboard
+shows what happened and what it cost, in English, Korean, Japanese and Simplified Chinese.
+
+Getting started:
 
 ```
-git clone <repo> && cd agentic-router
+git clone https://github.com/ggreing/agentic-router && cd agentic-router
 npm ci
 npm run build:dashboard
 node packages/cli/src/index.ts init
+node packages/cli/src/index.ts start
 ```
 
-Requires Node 24+, Claude Code ≥ 2.1.295, and Git Bash on Windows. See the README to get started and
-docs/worker-permissions.md for what router workers may and may not do.
+You need Node 24+, Claude Code 2.1.295 or newer, and Git Bash on Windows.
 
-## Please read before relying on it
+Before you rely on it, please read the "What doesn't work well yet" section of the README and the
+"Limits" section of SECURITY.md. In short: the checks are only as good as the project's tests, the guard
+is not a sandbox, and on a shared machine the local daemon doesn't separate users.
 
-- The guard is a net, not a sandbox: workers run as your OS user, and code you allow a worker to run
-  has your file access. See SECURITY.md "Limits".
-- Verify can pass a fix that's wrong in a way its checks don't exercise; "accepted" is an upper bound,
-  not a measured approval rate.
-- On a shared machine the local binding does not separate users.
-
-Report anything that gets past the guard through GitHub's private vulnerability reporting (see
-SECURITY.md).
+Security issues: please report them privately through GitHub (see SECURITY.md).

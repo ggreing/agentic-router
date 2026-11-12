@@ -1,7 +1,5 @@
 # Agentic Router Proxy
 
-> **초안 — 공개 전에 확정합니다.**
-
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 Claude Code를 Opus나 Sonnet으로 쓰면 메인 세션이 거의 모든 일을 직접 합니다. 훨씬 싼 모델도 충분히
