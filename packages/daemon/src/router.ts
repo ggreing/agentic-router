@@ -1473,12 +1473,15 @@ export class Router {
 
   // ------------------------------------------------------------------ the review read from the report (decision 145)
   //
-  // A reviewer or tester begins its report with "Verdict: accept|reject" and "Margin: easy|normal". The lead
-  // was asked to pass these on with router_report_result and did not (integration round 5), and copying two
-  // tokens through the lead costs lead tokens for nothing. So the daemon applies them itself when the judge's
-  // own subtask has finished, exactly as that tool call would: to the writer subtasks of the same request
-  // that had passed before the judge was dispatched. A reject with more than one such writer is not applied
-  // (the report line does not say which one); the lead is told to report it.
+  // A reviewer or tester begins its report with "Verdict: accept|reject" and "Margin: easy|normal", and when
+  // it reviewed more than one writer, a "Subtask: <id>[, <id>...]" line naming which writer(s) the verdict is
+  // about (Appendix B). The lead was asked to pass these on with router_report_result and did not (integration
+  // round 5), and copying tokens through the lead costs lead tokens for nothing. So the daemon applies them
+  // itself when the judge's own subtask has finished, exactly as that tool call would: to the writer subtasks
+  // of the same request that had passed before the judge was dispatched. With a Subtask line it applies the
+  // verdict to the named writers; with one writer and no line, to that writer. When several writers were judged
+  // and the line is missing or names an id the judge did not judge, it falls back to the old behaviour (an
+  // accept counts for all of them, a reject for none) and records the fall-back as a signal on the judge.
 
   /** The writer subtasks a judge's verdict is about: passed, and finished before the judge started. */
   #judgedWriters(requestId: string, judge: SubtaskRow): SubtaskRow[] {
@@ -1494,14 +1497,39 @@ export class Router {
       const judge = this.ledger.getSubtask(agent.requestId, agent.subtaskId);
       if (!req || !judge || !isJudgeRole(judge.role) || judge.status !== 'passed') return;   // its verdict counts once it finished itself
       const writers = this.#judgedWriters(req.id, judge);
-      if (!writers.length || (reported.verdict === 'reject' && writers.length > 1)) return;
-      for (const w of writers) {
+      if (!writers.length) return;
+      // Appendix B: a "Subtask:" line names which writer(s) the verdict is about. Apply it to them; otherwise
+      // keep the old behaviour (one writer -> that writer; several -> accept for all, reject for none) and
+      // record the fall-back. The verdict then counts toward each target's slot: two rejects raise it, two
+      // easy passes step it down.
+      let targets: SubtaskRow[];
+      let fallback: string | undefined;
+      if (reported.subtasks?.length) {
+        const named = reported.subtasks.map(id => writers.find(w => w.id === id)).filter((w): w is SubtaskRow => !!w);
+        const unknown = reported.subtasks.filter(id => !writers.some(w => w.id === id));
+        if (unknown.length || !named.length) {
+          fallback = unknown.length ? `named a subtask it did not judge (${unknown.join(', ')})` : 'named no judged subtask';
+          targets = reported.verdict === 'reject' && writers.length > 1 ? [] : writers;
+        } else targets = named;
+      } else if (writers.length > 1) {
+        fallback = 'several writers, no "Subtask:" line';
+        targets = reported.verdict === 'reject' ? [] : writers;
+      } else targets = writers;
+      for (const w of targets) {
         if (w.review?.bySubtaskId === judge.id && w.review.verdict === reported.verdict) continue;   // the judge stopped twice
         const res = this.#toolReportResult(req, {
           subtaskId: w.id, verdict: reported.verdict, by: judge.role as 'reviewer' | 'tester', bySubtaskId: judge.id,
           ...(reported.margin ? { margin: reported.margin } : {}),
         });
         this.#log.info('review read from the report', { requestId: req.id, subtaskId: w.id, by: judge.id, verdict: reported.verdict, margin: reported.margin ?? null, ok: res.ok });
+      }
+      if (fallback) {
+        // record the fall-back without any report prose (decision 141): a signal on the judge's own subtask
+        const applied = targets.length ? `applied to ${targets.map(w => w.id).join(', ')}` : 'not credited to any slot';
+        this.ledger.insertSignals(
+          { requestId: req.id, subtaskId: judge.id, agentId: judge.agentId ?? null, attempt: judge.attempts, at: this.#at() },
+          [{ kind: 'review', ok: targets.length > 0, detail: `verdict ${reported.verdict} over ${writers.length} writers not attributed (${fallback}); ${applied}` }]);
+        this.#log.info('review verdict not attributed to one writer', { requestId: req.id, by: judge.id, verdict: reported.verdict, writers: writers.length, named: reported.subtasks ?? null, fallback });
       }
     } catch (e) {
       this.#log.error('review from the report not applied', { agentId, error: errorText(e) });

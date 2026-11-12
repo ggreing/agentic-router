@@ -77,11 +77,12 @@ test('decision 139: role files, skills and hooks are English; the report items l
   // SubagentStop, in exactly this form; the parser relies on these substrings.
   for (const role of ['reviewer', 'tester'] as const) {
     const body = readRoleFile(path.join(AGENTS, `${role}.md`)).body;
-    assert.match(body, /Begin your last message with these two lines/, role);
+    assert.match(body, /Begin your last message with these lines/, role);
     assert.match(body, /`Verdict: accept`/, role);
     assert.match(body, /`Verdict: reject`/, role);
     assert.match(body, /`Margin: easy`/, role);
     assert.match(body, /`Margin: normal`/, role);
+    assert.match(body, /`Subtask: <id>\[, <id>\.\.\.\]`/, role);   // Appendix B: names which writer(s) the verdict is about
   }
 });
 

@@ -36,6 +36,12 @@ test('parseReportVerdict: one verdict, an optional margin, nothing else', () => 
   assert.equal(p({ verdict: 'accept' }), undefined);
   // the same verdict twice is one verdict; two different margins are no margin
   assert.deepEqual(p('Verdict: accept\nVerdict: accept\nMargin: easy\nMargin: normal'), { verdict: 'accept' });
+  // Appendix B: a "Subtask:" line names which writer(s) the verdict is about
+  assert.deepEqual(p('Verdict: reject\nSubtask: B\n- Review: must fix src/y.ts'), { verdict: 'reject', subtasks: ['B'] });
+  assert.deepEqual(p('Verdict: accept\nMargin: easy\nSubtask: A, C'), { verdict: 'accept', margin: 'easy', subtasks: ['A', 'C'] });
+  assert.deepEqual(p('Verdict: reject\n**Subtask:** c-l1-02'), { verdict: 'reject', subtasks: ['c-l1-02'] });
+  assert.deepEqual(p('Verdict: accept\nSubtask: <id>[, <id>...]'), { verdict: 'accept' }, 'the echoed placeholder names nothing');
+  assert.deepEqual(p('Verdict: reject\nSubtask: none'), { verdict: 'reject' }, '"none" names nothing');
   // only the head of a very long message is read
   assert.equal(p('x'.repeat(20_001) + '\nVerdict: accept'), undefined);
 });
@@ -140,12 +146,47 @@ test('what is not applied: no verdict line, a reject over two writers, a writer 
   const two = await s.run('R2', 'reviewer', 'Verdict: reject\n- Review: must fix');
   assert.deepEqual([sub(d, 'A').status, sub(d, 'B').status, sub(d, 'A').review, sub(d, 'B').review], ['passed', 'passed', null, null]);
   assert.match(two, /No verdict was recorded from its report \(it judged 2 subtasks: A, B\)/);
+  // Appendix B: the fall-back is recorded as a signal on the judge, without any report prose
+  assert.equal(rows(d, "SELECT ok FROM signals WHERE subtask_id = 'R2' AND kind = 'review'").length, 1, 'the fall-back is recorded on the judge');
+  assert.ok(!JSON.stringify(rows(d, 'SELECT detail FROM signals')).includes('must fix'));
   // an accept over two writers is applied to both
   await s.run('R3', 'reviewer', 'Verdict: accept\nMargin: normal');
   assert.deepEqual([sub(d, 'A').review, sub(d, 'B').review], [['accept', 'reviewer', 'R3', 'normal'], ['accept', 'reviewer', 'R3', 'normal']]);
   // a writer dispatched after that reviewer is not covered by its verdict
   await s.run('C', 'coder', WRITER_REPORT, 'z.ts');
   assert.equal(sub(d, 'C').review, null);
+}));
+
+test('Appendix B: a Subtask line credits a reject only to the named writer', () => withDaemon(async (d, s) => {
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT });
+  await s.run('A', 'coder', WRITER_REPORT, 'x.ts');
+  await s.run('B', 'coder', WRITER_REPORT, 'y.ts');
+  await s.run('Rb', 'reviewer', 'Verdict: reject\nSubtask: B\n- Review: must fix src/y.ts:3');
+  assert.equal(sub(d, 'A').review, null, 'A was not named');
+  assert.deepEqual(sub(d, 'B'), { status: 'failed', verdict: 'rejected', review: ['reject', 'reviewer', 'Rb', null] });
+  assert.equal(rows(d, "SELECT ok FROM signals WHERE subtask_id = 'Rb' AND kind = 'review'").length, 0, 'no fall-back signal: the line was used');
+}));
+
+test('Appendix B: a Subtask line can name both writers, and the verdict counts for both', () => withDaemon(async (d, s) => {
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT });
+  await s.run('A', 'coder', WRITER_REPORT, 'x.ts');
+  await s.run('B', 'coder', WRITER_REPORT, 'y.ts');
+  await s.run('Rab', 'reviewer', 'Verdict: accept\nMargin: easy\nSubtask: A, B');
+  assert.deepEqual([sub(d, 'A').review, sub(d, 'B').review], [['accept', 'reviewer', 'Rab', 'easy'], ['accept', 'reviewer', 'Rab', 'easy']]);
+}));
+
+test('Appendix B: an unknown id falls back to the current behaviour and is recorded without prose', () => withDaemon(async (d, s) => {
+  await s.post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT });
+  await s.run('A', 'coder', WRITER_REPORT, 'x.ts');
+  await s.run('B', 'coder', WRITER_REPORT, 'y.ts');
+  await s.run('Rz', 'reviewer', 'Verdict: reject\nSubtask: Z\n- Review: must fix src/x.ts');
+  // Z is not a writer this judge reviewed: a reject over two writers credits no one (the old behaviour)
+  assert.deepEqual([sub(d, 'A').review, sub(d, 'B').review], [null, null]);
+  const fb = rows(d, "SELECT ok, detail FROM signals WHERE subtask_id = 'Rz' AND kind = 'review'");
+  assert.equal(fb.length, 1, 'the fall-back is recorded as a signal on the judge');
+  assert.equal(Number(fb[0]!.ok), 0);
+  assert.match(String(fb[0]!.detail), /not attributed .*did not judge \(Z\).*not credited/);
+  assert.ok(!JSON.stringify(rows(d, 'SELECT detail FROM signals')).includes('must fix'), 'no report prose stored');
 }));
 
 test('a writer whose report asks for more scope gets the scope tool named once', () => withDaemon(async (d, s) => {

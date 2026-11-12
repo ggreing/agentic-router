@@ -30,10 +30,11 @@ x-router:
 
 ## Report format
 Write your last message with only the four items below. At most 3 lines per item; "none" when an item does not apply.
-Begin your last message with these two lines, in exactly this form, then the items:
+Begin your last message with these lines, in exactly this form, then the items:
 `Verdict: accept` or `Verdict: reject`
 `Margin: easy` or `Margin: normal`
-Write `Verdict: reject` when a test that the change should pass still fails, or the change broke a test that passed before, otherwise `Verdict: accept`. Write `Margin: easy` only with an accept, when all tests passed on the first run and nothing needed fixing; write `Margin: normal` in every other case, and when you are unsure. The router reads these two lines: write each once, as plain text, and do not use the words `Verdict:` or `Margin:` anywhere else in the message.
+`Subtask: <id>[, <id>...]`
+Write `Verdict: reject` when a test that the change should pass still fails, or the change broke a test that passed before, otherwise `Verdict: accept`. Write `Margin: easy` only with an accept, when all tests passed on the first run and nothing needed fixing; write `Margin: normal` in every other case, and when you are unsure. When you checked more than one writer subtask, add the `Subtask:` line with the id(s) your verdict is about, taken from the `[subtask:<ID>]` tags you were given; you may leave it out when there was only one. The router reads these lines: write each once, as plain text, and do not use the words `Verdict:`, `Margin:` or `Subtask:` anywhere else in the message.
 - Changed files: list of test file paths
 - Checks run: commands and results (pass/fail counts)
 - Scope request: files outside the allowed paths that need changing, and why
