@@ -54,6 +54,18 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
   등록하고 구독 모드(기본값)로 설정합니다. API 키 모드는 `init --mode api`를 쓰세요.
 - `agentic-router start` — 로컬 데몬(판정 API, 작업 원장, 대시보드)을 백그라운드로 시작합니다.
 - `agentic-router doctor` — 설정을 점검하고 문제를 보고합니다.
+- `agentic-router status` / `stop` — 데몬 상태를 보거나 중지합니다.
+- `agentic-router dashboard [--no-open]` — 로컬 대시보드를 엽니다(아래 참고).
+- `agentic-router mode subscription|api|direct|proxy` — 모드를 전환합니다(모드 참고).
+- `agentic-router policy show|accept|revoke` — 프로젝트의 `.agentic-router/policy.json`을 확인하고
+  수용합니다(라우터 작업자 권한 참고).
+- `agentic-router data export|purge`, `agentic-router routing reset` — 로컬 데이터를 내보내거나 지우고,
+  학습된 라우팅을 초기화합니다.
+- `agentic-router uninstall [--keep-key]` — 먼저 확인한 뒤, 플러그인의 설정 항목, 프로젝트의
+  `worktree.baseRef`와 `.gitignore` 줄, 설정 백업과 키체인의 키를 제거하고 데몬을 중지합니다. 데이터
+  폴더는 남습니다.
+- API 키 모드 전용: `agentic-router token rotate [--no-grace]`, `agentic-router key set`,
+  `agentic-router proxy allow-upstream <https origin>`.
 
 ## 모드
 
@@ -66,6 +78,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 - **직접(direct)**: 프록시에 문제가 생기면 `agentic-router mode direct`로 프록시를 거치지 않고 API
   키로 직접 연결하고, `agentic-router mode proxy`로 되돌립니다.
 
+언제든 `agentic-router mode subscription|api|direct|proxy`로 전환할 수 있습니다.
+
 ## 대시보드
 
 `agentic-router dashboard`는 읽기 전용 로컬 웹 대시보드(데몬이 `127.0.0.1`에서 제공)를 엽니다. 요청
@@ -77,8 +91,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 모든 것은 하나의 로컬 SQLite 파일에 저장됩니다. Claude Code 자체 트래픽과, API 키 모드에 한해 2단계
 judge의 Anthropic 호출 외에는 아무것도 기기 밖으로 나가지 않습니다. 학습 저장소에는 규칙으로 뽑은
 특징값, 결과, 비용, 유사도 같은 수치를 저장하며, 임베딩은 저장하지 않고 프롬프트 원문은 `recordPrompts`를
-켰을 때만 저장합니다. 로그와 대시보드는 API 키와 토큰을 가립니다. 어떤 구성요소도 구독 자격증명을 읽거나
-저장하지 않습니다.
+켰을 때만 저장합니다. `recordPrompts`를 끄면 저장된 프롬프트 원문은 다음 데몬 시작 때 삭제됩니다. 로그와
+대시보드는 API 키와 토큰을 가립니다. 어떤 구성요소도 구독 자격증명을 읽거나 저장하지 않습니다.
 
 ## 자동 해제 홀드아웃
 
@@ -86,6 +100,96 @@ judge의 Anthropic 호출 외에는 아무것도 기기 밖으로 나가지 않�
 기준선으로 삼습니다. 기본값은 **observe**입니다. 홀드아웃은 돌아가고 대시보드가 비교와 해제 시 결과를
 보여 주지만, `autoRelease`를 켜기 전에는 아무것도 전환되지 않습니다. 홀드아웃을 그만두려면
 `holdoutRate`를 `0`으로 두거나 `autoRelease`를 끄면 됩니다.
+
+## 라우터 작업자 권한
+
+라우터 작업자(총괄이 보내는 coder·tester 등 서브에이전트)는 다른 에이전트와 마찬가지로 Claude Code의
+도구를 사용합니다. 라우터는 그 도구 앞에 가드를 두며, 가드는 세 가지 중 하나로 답합니다:
+
+| 가드의 답 | 언제 | 결과 |
+|---|---|---|
+| 거부 | 허용되지 않는 호출로 인식될 때: 하위 작업 범위 밖 쓰기, 자격증명 파일, 라우터 자체 폴더, 작업자 허용 목록에 없는 명령이나 옵션. | 호출이 실행되지 않습니다. 어떤 허용 규칙도 이를 덮어쓸 수 없습니다. |
+| 허용 | 저장소 안에서 이름이 지정된 파일을 읽거나 검색, 그리고 하위 작업 범위 안의 파일 편집. | 확인 없이 실행됩니다. |
+| 침묵 | 거부하지 않은 모든 Bash 명령. | 라우터가 없을 때처럼 Claude Code 자체 권한 규칙이 결정합니다. |
+
+### Bash는 사용자의 권한 규칙을 따릅니다
+
+가드는 명령줄을 읽을 뿐 샌드박스에 넣지 않습니다. 그래서 사용자를 대신해 Bash 명령을 승인하지 않습니다.
+작업자의 `npm test`나 `npm run build`는 Claude Code의 다른 Bash 명령과 똑같이 처리됩니다. 규칙이
+허용하면 실행되고, 아니면 사용자에게 묻습니다. 비대화형 실행(`claude -p`)에서는 물어볼 사람이 없으므로,
+허용 규칙이 없는 명령은 거부됩니다.
+
+작업자가 확인 없이 빌드·테스트하게 하려면 해당 명령을 허용하세요:
+
+```
+claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
+```
+
+또는 `.claude/settings.json`에서:
+
+```json
+{ "permissions": { "allow": ["Bash(npm test)", "Bash(npm run *)"] } }
+```
+
+스크립트 하나만 허용하려면 `"Bash(npm run *)"` 대신 `"Bash(npm run build)"`를 쓰세요. 다른 툴체인은 그
+테스트·빌드 명령을 같은 방식으로 허용하면 됩니다.
+
+규칙을 추가하기 전에 알아둘 점:
+
+- **연결된 명령은 각 부분이 모두 허용되어야 합니다.** Claude Code는 명령을 `&&`, `||`, `;`, `|`로 나눠 각
+  부분을 따로 확인하므로, `Bash(npm test)`만으로는 `make && npm test`를 덮지 못합니다. 작업 트리 안의
+  디렉터리로 들어가는 `cd`는 읽기 전용이라 규칙이 필요 없으므로, `cd packages/web && npm test`에는
+  `npm test` 규칙만 있으면 됩니다.
+- **규칙은 세션 전체에 적용됩니다.** 총괄과 모든 작업자에 적용되며, 라우터 작업자에만 한정되지 않습니다.
+- **코드를 실행하는 명령을 허용하는 것은 그 코드를 보증하는 것입니다.** 테스트 파일이나 패키지 스크립트는
+  프로그램입니다. 한번 허용되면 사용자 권한으로, 사용자의 파일 접근 권한으로 실행됩니다. 라우터는
+  `package.json`의 `scripts`가 마지막 커밋과 다를 때 패키지 스크립트와 설치를 사용자나 총괄이 확인할
+  때까지 거부하지만, 테스트나 스크립트가 무엇을 하는지는 들여다보지 않습니다.
+- **거부는 허용 규칙을 이깁니다.** `"Bash(npm run *)"`를 허용해도 `npm run env`(환경을 출력)는 여전히
+  거부됩니다. `"Bash(cat *)"`를 허용해도 `cat .env`는 여전히 거부됩니다.
+
+### 무엇을 허용하든 작업자가 할 수 없는 것
+
+- 하위 작업 범위(`[scope: ...]`) 밖에 쓰기, 또는 CI 설정, `.claude/`, `.git/`, `.mcp.json`, `.husky/`,
+  `CLAUDE.md` 등 저장소나 에이전트의 동작 방식을 바꾸는 파일에 쓰기.
+- 자격증명 파일(`.env`, `.npmrc`, `~/.ssh`, `~/.aws` 등)이나 라우터 폴더(`~/.agentic-router`)를 읽거나
+  검색·나열하기. `.env.example` 같은 템플릿은 읽을 수 있습니다.
+- 작업자 허용 목록 밖의 명령(네트워크 도구, 셸, 인라인 코드를 실행하는 인터프리터) 실행, 환경 출력,
+  비밀로 보이는 변수 참조.
+- 가드가 따라갈 수 없는 셸 구문 사용: `$'…'` 문자열, `${VAR}` 확장, 명령 치환, 주석, 파일로의 출력
+  리다이렉션.
+- 레지스트리가 아닌 곳에서 패키지 설치(URL, git 스펙, `user/repo` 축약 금지).
+- PowerShell 사용. 작업자는 Bash만 씁니다.
+
+정직하게 일하는 작업자도 일부 거부에 놀랄 수 있습니다. 메시지가 대신 할 방법을 알려 줍니다:
+
+| 거부됨 | 대신 쓰기 |
+|---|---|
+| `rg --hidden`, `rg --no-ignore` | 해당 옵션 없는 `rg`, 또는 파일을 직접 지정 |
+| `git diff --no-index` | 추적되는 파일에 대한 `git diff`, 또는 `diff` |
+| `printf -v`, `echo ${VAR}` | 평범한 `printf` / `echo $VAR`(비밀이 아닌 이름) |
+| 명령 안의 주석 | 주석을 지우기 |
+| `npm install user/repo` | 레지스트리 이름; 그 외에는 총괄에게 요청 |
+| 무시되지 않는 `.env`가 있는 디렉터리 전체 grep | glob이나 타입을 추가, 하위 디렉터리를 검색, 또는 그 파일을 `.gitignore`에 추가 |
+
+### 프로젝트 정책
+
+저장소는 `.agentic-router/policy.json`에서 작업자 허용 목록(`bashAllow`)을 확장하고 검증에 전달할 환경
+변수(`verifyEnv`)를 지정할 수 있습니다. 이 파일은 사용자가 수용한 뒤에만 적용됩니다:
+
+```
+agentic-router policy show
+agentic-router policy accept
+```
+
+수용은 파일 내용에 묶입니다. 예를 들어 `git pull` 뒤처럼 파일이 바뀌면, 새 내용을 수용할 때까지 다시
+무시됩니다. `agentic-router doctor`가 현재 상태를 보여 줍니다.
+
+### 작업자에는 데몬이 필요합니다
+
+작업자는 라우터에 자신의 범위 기록이 있을 때만 쓸 수 있고, 데몬은 총괄이 작업자를 보낼 때 그 기록을
+씁니다. 데몬이 실행 중이 아니면 라우터 작업자는 파일을 편집할 수 없지만, 읽기는 됩니다.
+`agentic-router status`가 데몬이 떠 있는지 보여 줍니다.
 
 ## 한계
 

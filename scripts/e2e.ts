@@ -150,42 +150,70 @@ function httpJson(port: number, method: string, pathname: string, opts: { cookie
   });
 }
 
-function summarize(s: R5, repo: string, r1: any, r2: any): any {
+async function summarize(s: R5, repo: string, r1: any, r2: any): Promise<any> {
   const sids = [r1?.out?.session_id, r2?.out?.session_id].filter(Boolean) as string[];
-  const db = new DatabaseSync(path.join(HOME, 'router.db'), { readOnly: true });
-  const q = (sql: string, ...p: any[]) => { try { return db.prepare(sql).all(...p) as any[]; } catch { return []; } };
   const inClause = (col: string, xs: string[]) => `${col} IN (${xs.map(() => '?').join(',') || "''"})`;
-  const recs = q(`SELECT * FROM request_records WHERE ${inClause('session_id', sids)} ORDER BY created_at`, ...sids);
-  const reqIds = recs.map(r => String(r.request_id));
-  const subs = reqIds.length ? q(`SELECT * FROM subtasks WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
-  const signals = reqIds.length ? q(`SELECT * FROM signals WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
-  const tools = sids.length ? q(`SELECT DISTINCT tool_name FROM events WHERE ${inClause('session_id', sids)} AND tool_name LIKE 'mcp__plugin_agentic-router_router__%'`, ...sids) : [];
-  db.close();
+  // one read of everything keyed on the hook session id(s)
+  const read = () => {
+    const db = new DatabaseSync(path.join(HOME, 'router.db'), { readOnly: true });
+    const q = (sql: string, ...p: any[]) => { try { return db.prepare(sql).all(...p) as any[]; } catch { return []; } };
+    const recs = q(`SELECT * FROM request_records WHERE ${inClause('session_id', sids)} ORDER BY created_at`, ...sids);
+    const reqRows = sids.length ? q(`SELECT lead_class, holdout, lead_model FROM requests WHERE ${inClause('session_id', sids)} ORDER BY created_at`, ...sids) : [];
+    const reqIds = recs.map(r => String(r.request_id));
+    const subs = reqIds.length ? q(`SELECT * FROM subtasks WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
+    const signals = reqIds.length ? q(`SELECT * FROM signals WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
+    const tools = sids.length ? q(`SELECT DISTINCT tool_name FROM events WHERE ${inClause('session_id', sids)} AND tool_name LIKE 'mcp__plugin_agentic-router_router__%'`, ...sids) : [];
+    // the daemon does not log the lead's/worker's Edit/Write calls as events, so "did a subagent run at all"
+    // (an agents row) is the available signal: a lead-direct session has none, so any edit there was the lead's.
+    const agents = sids.length ? q(`SELECT agent_id, agent_type FROM agents WHERE ${inClause('session_id', sids)}`, ...sids) : [];
+    db.close();
+    return { recs, reqRows, subs, signals, tools, agents };
+  };
+  // the request record is written at close, after the hook answers, so poll briefly rather than reading once
+  let data = read();
+  for (let i = 0; i < 20 && sids.length && !data.recs.length; i++) { await sleep(500); data = read(); }
+  const { recs, reqRows, subs, signals, tools, agents } = data;
+  const subagentRan = agents.length > 0;
   const toolNames = tools.map(t => String(t.tool_name).replace('mcp__plugin_agentic-router_router__', ''));
   const first = recs[0] ?? {};
+  // a session can hold more than one request row (e.g. lead_class "other" before the model resolves, then
+  // "sonnet"); show every distinct value so a wrong lead class is visible at a glance
+  const distinct = (col: string) => [...new Set(reqRows.map(r => r[col]).filter(v => v !== null && v !== undefined).map(String))];
+  const leadClass = distinct('lead_class').join(',') || null;
+  const holdout = distinct('holdout').join(',') || null;
   const worktrees = execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').length - 1;
   const changed = execFileSync('git', ['status', '--short', '--', '.', ':!.claude', ':!.bench-hidden'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
   const costUsd = Number(r1?.out?.total_cost_usd ?? 0) + Number(r2?.out?.total_cost_usd ?? 0);
   const turns = Number(r1?.out?.num_turns ?? 0) + Number(r2?.out?.num_turns ?? 0);
   const unexpected: string[] = [];
+  const notes: string[] = [];
   if (r1?.code !== 0) unexpected.push(`r1 exit ${r1?.code}`);
   if (r2 && r2.code !== 0) unexpected.push(`r2 exit ${r2.code}`);
   if (!recs.length) unexpected.push('no request record for the session');
   if (worktrees > 0) unexpected.push(`${worktrees} leftover worktree(s)`);
   const envChanged = changed.some(c => c.includes('.env.example'));
-  if (s.kind === 'protected' && envChanged) unexpected.push('.env.example was modified (guard should have blocked a subagent)');
+  // the guard covers router subagents only. A lead-direct session (no subagent ran) means the lead edited it,
+  // which is by design; a session that ran a subagent and still changed .env.example is a bug to confirm.
+  let envExampleEditor: 'subagent' | 'lead' | 'none' = 'none';
+  if (envChanged) {
+    envExampleEditor = subagentRan ? 'subagent' : 'lead';
+    if (s.kind === 'protected') {
+      if (subagentRan) unexpected.push('.env.example changed in a session that ran a subagent (guard should have blocked a subagent edit — confirm which agent edited it)');
+      else notes.push('.env.example edited by the lead (no guard by design)');
+    }
+  }
   return {
     id: s.id, title: s.title, kind: s.kind,
-    level: first.level ?? '?', finalLevel: first.final_level ?? '?', outcome: first.outcome ?? '?',
+    level: first.level ?? '?', finalLevel: first.final_level ?? '?', outcome: first.outcome ?? '?', leadClass, holdout,
     acceptance: first.acceptance ?? null, acceptSignals: (() => { try { return JSON.parse(first.accept_signals ?? 'null'); } catch { return null; } })(),
     routerToolsSeen: toolNames,
     reportResultCalled: toolNames.includes('router_report_result'),
     requestScopeCalled: toolNames.includes('router_request_scope'),
     reviewSignals: signals.filter(x => String(x.kind) === 'review').length,
     subtasks: subs.map(x => ({ role: x.role, slot: x.slot, step: x.step, status: x.status, verdict: x.verdict })),
-    requests: recs.length, envExampleChanged: envChanged,
+    requests: recs.length, envExampleChanged: envChanged, envExampleEditor, subagentRan, agentsRan: agents.length,
     costUsd, turns, exit: [r1?.code, r2 ? r2.code : null], durationSec: Math.round(((r1?.ms ?? 0) + (r2?.ms ?? 0)) / 1000),
-    changedFiles: changed, worktrees, promptHead: promptOf(s).replace(/\s+/g, ' ').slice(0, 48), unexpected,
+    changedFiles: changed, worktrees, promptHead: promptOf(s).replace(/\s+/g, ' ').slice(0, 48), notes, unexpected,
   };
 }
 
@@ -246,16 +274,16 @@ if (ROUND5) {
     if (s.kind === 'reask') r2 = await claude(repo, prompt, 900, false, sid);
     else if (s.kind === 'revert') { execFileSync('git', ['checkout', '--', '.'], { cwd: repo }); r2 = await claude(repo, s.follow!, 900, false, sid); }
     else if (s.kind === 'commit') { execFileSync('git', ['add', '-A'], { cwd: repo }); execFileSync('git', ['commit', '-qm', 'accept the change'], { cwd: repo }); r2 = await claude(repo, s.follow!, 900, false, sid); }
-    const sum = summarize(s, repo, r1, r2);
+    const sum = await summarize(s, repo, r1, r2);
     summaries.push(sum);
     fs.writeFileSync(path.join(TMP, `${s.id}-summary.json`), JSON.stringify(sum, null, 2));
-    log(`\n== ${s.id} ${s.title}: level=${sum.level} outcome=${sum.outcome} acceptance=${sum.acceptance} tools=[${sum.routerToolsSeen.join(', ') || 'none'}] reviewSignals=${sum.reviewSignals} cost=$${sum.costUsd.toFixed(4)} turns=${sum.turns}${sum.unexpected.length ? ' !! ' + sum.unexpected.join('; ') : ''}`);
+    log(`\n== ${s.id} ${s.title}: level=${sum.level} outcome=${sum.outcome} lead_class=${sum.leadClass ?? '?'} holdout=${sum.holdout ?? '-'} acceptance=${sum.acceptance} tools=[${sum.routerToolsSeen.join(', ') || 'none'}] reviewSignals=${sum.reviewSignals} cost=$${sum.costUsd.toFixed(4)} turns=${sum.turns}${sum.notes.length ? ' | ' + sum.notes.join('; ') : ''}${sum.unexpected.length ? ' !! ' + sum.unexpected.join('; ') : ''}`);
   }
   let dash: any = { skipped: true };
   if (wantDash) { dash = await dashboardCheck(port, token, summaries); log(`\n== R7 dashboard: ${dash.ok ? 'OK' : 'ISSUE'} ${JSON.stringify(dash).slice(0, 300)}`); }
   log('\n== round 5 table');
-  log('id   | level | outcome      | acceptance    | router tools seen                 | cost     | turns');
-  for (const s of summaries) log(`${s.id.padEnd(4)} | ${String(s.level).padEnd(5)} | ${String(s.outcome).padEnd(12)} | ${String(s.acceptance).padEnd(13)} | ${(s.routerToolsSeen.join(',') || '-').padEnd(33)} | $${s.costUsd.toFixed(4).padStart(7)} | ${s.turns}`);
+  log('id   | level | lead_class      | holdout    | outcome      | acceptance    | router tools seen                 | cost     | turns');
+  for (const s of summaries) log(`${s.id.padEnd(4)} | ${String(s.level).padEnd(5)} | ${String(s.leadClass ?? '?').padEnd(15)} | ${String(s.holdout ?? '-').padEnd(10)} | ${String(s.outcome).padEnd(12)} | ${String(s.acceptance).padEnd(13)} | ${(s.routerToolsSeen.join(',') || '-').padEnd(33)} | $${s.costUsd.toFixed(4).padStart(7)} | ${s.turns}`);
   fs.writeFileSync(path.join(TMP, 'round5-summary.json'), JSON.stringify({ model: MODEL, auth: AUTH, scenarios: summaries, dashboard: dash }, null, 2));
   log('\n' + cli('stop').trim());
   fs.writeFileSync(path.join(TMP, 'e2e-report.txt'), report.join('\n'));

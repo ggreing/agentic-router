@@ -57,6 +57,18 @@ Below, `agentic-router <command>` is that entry point. Requirements: **Node 24+*
   mode.
 - `agentic-router start` — starts the local daemon (triage API, work ledger, dashboard) in the background.
 - `agentic-router doctor` — checks the setup and reports problems.
+- `agentic-router status` / `stop` — show daemon status; stop it.
+- `agentic-router dashboard [--no-open]` — open the local dashboard (see below).
+- `agentic-router mode subscription|api|direct|proxy` — switch mode (see Modes).
+- `agentic-router policy show|accept|revoke` — review and accept a project's `.agentic-router/policy.json`
+  (see Permissions for router workers).
+- `agentic-router data export|purge`, `agentic-router routing reset` — export or clear local data; reset
+  the learned routing.
+- `agentic-router uninstall [--keep-key]` — asks first, then removes the plugin's settings entries, the
+  project's `worktree.baseRef` and `.gitignore` line, the settings backup and the keychain key, and stops
+  the daemon. Your data folder stays.
+- API-key mode only: `agentic-router token rotate [--no-grace]`, `agentic-router key set`,
+  `agentic-router proxy allow-upstream <https origin>`.
 
 ## Modes
 
@@ -70,6 +82,8 @@ Below, `agentic-router <command>` is that entry point. Requirements: **Node 24+*
 - **Direct**: if the proxy has a problem, `agentic-router mode direct` connects with the API key directly,
   bypassing the proxy; `agentic-router mode proxy` switches back.
 
+Switch at any time with `agentic-router mode subscription|api|direct|proxy`.
+
 ## Dashboard
 
 `agentic-router dashboard` opens a read-only local web dashboard (served by the daemon at `127.0.0.1`)
@@ -82,8 +96,9 @@ Korean, Japanese and Simplified Chinese. All data stays on the machine.
 Everything is stored in one local SQLite file; nothing leaves the machine except Claude Code's own
 traffic and, in API-key mode only, the stage-2 judge call to Anthropic. The learning store keeps
 rule-derived features, outcomes, costs, and numbers such as similarity scores — not embeddings, and not
-prompt text unless you turn on `recordPrompts`. Logs and the dashboard mask API keys and tokens. No
-component reads or stores subscription credentials.
+prompt text unless you turn on `recordPrompts`. Switching `recordPrompts` off deletes the stored prompt
+text at the next daemon start. Logs and the dashboard mask API keys and tokens. No component reads or
+stores subscription credentials.
 
 ## Auto-release holdout
 
@@ -91,6 +106,97 @@ To check that delegating still pays off, about 1 in 10 requests at a delegated l
 by the lead on purpose, as a holdout baseline. The default is **observe**: the holdout runs and the
 dashboard shows the comparison and what a release would do, but nothing switches until you turn
 `autoRelease` on. Set `holdoutRate` to `0`, or turn `autoRelease` off, to stop taking the holdout.
+
+## Permissions for router workers
+
+Router workers (the coder, tester and other subagents the lead dispatches) use Claude Code's tools like
+any other agent. The router adds a guard in front of those tools, and the guard gives one of three answers:
+
+| Guard's answer | When | What happens |
+|---|---|---|
+| Refuses | The call is recognised as not allowed: a write outside the subtask's scope, a credential file, the router's own folder, a command or option that is not on the worker allowlist. | The call does not run. No allow rule can override this. |
+| Allows | Reading or searching named files inside the repository, and editing files inside the subtask's scope. | The call runs without a prompt. |
+| Says nothing | Every Bash command it did not refuse. | Claude Code's own permission rules decide, as they would without the router. |
+
+### Bash goes through your permission rules
+
+The guard reads a command line; it does not sandbox it. So it never approves a Bash command on your
+behalf. A worker's `npm test` or `npm run build` is handled like any other Bash command in Claude Code:
+it runs if a rule allows it, and otherwise you are asked. In non-interactive runs (`claude -p`) there is
+nobody to ask, so a command without an allow rule is declined.
+
+To let workers build and test without prompts, allow those commands:
+
+```
+claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
+```
+
+or in `.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(npm test)", "Bash(npm run *)"] } }
+```
+
+Use `"Bash(npm run build)"` in place of `"Bash(npm run *)"` to allow one script only. For another
+toolchain, allow its test and build commands the same way.
+
+Things to know before you add a rule:
+
+- **A chained command needs every part allowed.** Claude Code splits a command on `&&`, `||`, `;` and `|`
+  and checks each part on its own, so `Bash(npm test)` alone does not cover `make && npm test`. A `cd` into
+  a directory inside the working tree is read-only and needs no rule, so `cd packages/web && npm test` needs
+  only the rule for `npm test`.
+- **Rules are session-wide.** They apply to the lead and to every worker, not only to router workers.
+- **Allowing a command that runs code means vouching for that code.** A test file or a package script is
+  a program. Once allowed, it runs as you, with your file access. The router refuses package scripts and
+  installs when the `scripts` in `package.json` differ from the last commit, until you or the lead confirm;
+  it does not inspect what a test or script does.
+- **A refusal wins over an allow rule.** With `"Bash(npm run *)"` allowed, `npm run env` (which prints the
+  environment) is still refused. With `"Bash(cat *)"` allowed, `cat .env` is still refused.
+
+### What workers cannot do, whatever you allow
+
+- Write outside the paths of their subtask (`[scope: ...]`), or to CI configuration, `.claude/`, `.git/`,
+  `.mcp.json`, `.husky/`, `CLAUDE.md` and similar files that change how the repository or the agent runs.
+- Read, search for or list credential files (`.env`, `.npmrc`, `~/.ssh`, `~/.aws`, …) or the router's
+  folder (`~/.agentic-router`). `.env.example` and other templates are readable.
+- Run commands outside the worker allowlist (network tools, shells, interpreters with inline code), print
+  the environment, or reference secret-looking variables.
+- Use shell syntax the guard cannot follow: `$'…'` strings, `${VAR}` expansions, command substitution,
+  comments, output redirection to files.
+- Install packages from anywhere but the registry (no URLs, git specs or `user/repo` shorthands).
+- Use PowerShell. Workers use Bash only.
+
+Some refusals may surprise a worker that is doing honest work. The message says what to do instead:
+
+| Refused | Use instead |
+|---|---|
+| `rg --hidden`, `rg --no-ignore` | `rg` without them, or name the files |
+| `git diff --no-index` | `git diff` on tracked files, or `diff` |
+| `printf -v`, `echo ${VAR}` | plain `printf` / `echo $VAR` (non-secret names) |
+| A comment inside a command | drop the comment |
+| `npm install user/repo` | a registry name; ask the lead for anything else |
+| Grep over a directory that holds an un-ignored `.env` | add a glob or type, search a subdirectory, or add the file to `.gitignore` |
+
+### Project policy
+
+A repository can extend the worker allowlist in `.agentic-router/policy.json` (`bashAllow`) and name
+environment variables to pass to verification (`verifyEnv`). The file takes effect only after you accept
+it:
+
+```
+agentic-router policy show
+agentic-router policy accept
+```
+
+Acceptance is tied to the file's content. If the file changes, for example after a `git pull`, it is
+ignored again until you accept the new content. `agentic-router doctor` shows the current state.
+
+### Workers need the daemon
+
+A worker may write only when the router has a scope record for it, and the daemon writes that record when
+the lead dispatches the worker. If the daemon is not running, router workers cannot edit files; reading
+still works. `agentic-router status` shows whether it is up.
 
 ## Limits
 

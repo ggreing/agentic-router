@@ -43,3 +43,42 @@ reach them; tokens still matter because they sit in local files.
   outbound call is the stage-2 triage judge in API-key mode, made with your key. Prompt text is stored
   locally only when you turn on `recordPrompts`, and the stored copy never leaves the machine.
 - It never stores API keys outside the OS keychain — not in environment variables, not in plaintext files.
+
+## Limits
+
+**The guard is a net, not a sandbox.** It decides from the text of a tool call: the paths it names and
+the command line it carries. It refuses what it recognises and refuses shell syntax it cannot follow. It
+does not observe what a program does once it runs, and a command on the worker allowlist may have an
+option or behaviour that the guard's list does not cover.
+
+**Workers run as you.** The hooks, the daemon and every worker are processes of the same OS user, so
+there is no isolation boundary between them. What the router does: it keeps a worker's own tool calls
+away from the router folder and from credential files, on every path spelling it can resolve; it never
+places the router's tokens in a worker's environment or on a command line; and it keeps the records the
+guard trusts (scope records, the accepted project policy) where workers may not write. What it cannot do:
+stop code that you allow a worker to run. A test, a build script or any other program that runs with
+your approval has your user's file access, including to `~/.agentic-router` and your credential files.
+Treat an allow rule for a command that runs code as you would treat running that code yourself.
+
+**Searches.** A search that names no files opens whatever the search tool opens below its start
+directory. Files ignored by git are skipped. The guard refuses such a search when it finds a credential
+file that git does not ignore, but it looks only four directory levels deep and at a bounded number of
+entries, so a credential file committed deep in a large tree can be missed. Keep credential files out of
+the repository or in `.gitignore`.
+
+**Writes depend on the daemon.** A worker without a scope record cannot write (fail-closed). This means
+a stopped or crashed daemon blocks worker edits rather than leaving them unchecked.
+
+**Outside the guard's reach.** The guard applies to this plugin's subagents only. The main session, other
+plugins' agents, and anything else running on the machine are not restricted by it.
+
+**Shared machines.** On a machine with other local users, another user could bind the daemon's or proxy's
+port while it is down, and hooks would then send it the local token and hook data. The router binds
+`127.0.0.1` only, which does not separate users. Use it on a machine you don't share, or keep the daemon
+running; proving the listener's identity before sending the token is planned.
+
+**What real isolation would take.** Running workers as another OS user or in a container. That is not
+part of this release.
+
+Report anything that gets past the guard as a security issue (see "Reporting a vulnerability" above).
+Every confirmed bypass becomes a regression test and a step in `scripts/guard-e2e`.
