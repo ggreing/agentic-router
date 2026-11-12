@@ -60,6 +60,7 @@ export interface RouterConfig {
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com
+    allowedUpstreams?: string[];   // extra https origins added by `agentic-router proxy allow-upstream` (user-confirmed)
     tokenDailyCapUsd?: number;   // per local token per day; default 100
     dailyCapUsd?: number;        // all tokens per day; default 300
   };

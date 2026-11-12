@@ -1,0 +1,17 @@
+{
+  "name": "@agentic-router/proxy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "API-key mode gateway for Claude Code: byte-exact passthrough, usage per session and agent, budget blocking, keychain-only key",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "agentic-router-proxy": "./src/main.ts"
+  }
+}

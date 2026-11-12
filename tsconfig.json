@@ -4,6 +4,7 @@
     { "path": "packages/core" },
     { "path": "packages/adapter-claude-code" },
     { "path": "packages/daemon" },
+    { "path": "packages/proxy" },
     { "path": "packages/cli" }
   ]
 }
