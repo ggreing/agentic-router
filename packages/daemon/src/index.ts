@@ -141,5 +141,5 @@ export { Ledger } from './ledger.ts';
 export type { ClientAdapter } from './adapter.ts';
 export { runVerify, checkScope, type VerifyCommand, type VerifyPlan } from './verify.ts';
 export { SessionQueue } from './queue.ts';
-export { API, MAX_BODY_BYTES } from './server.ts';
+export { API, MAX_BODY_BYTES, DEFAULT_DASHBOARD_DIST } from './server.ts';
 export { exportLines, isoTime, liveSessions, pruneEvents, purge, purgeFiles, scrubProse, scrubStoredPrompts, REQUEST_TABLES, SESSION_TABLES, type DataHome, type ExportOptions, type PurgeOptions, type PurgeResult } from './data.ts';

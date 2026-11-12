@@ -56,6 +56,19 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 const CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'";
 
+// audit C6: `npm ci` does not build the SPA, so dist can be absent. Rather than a bare 404, a navigation to
+// /dashboard then gets this small page telling the user how to build it.
+const UNBUILT_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Dashboard not built</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font:14px/1.6 system-ui,-apple-system,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;color:#222}code{background:#f0f0f0;padding:.1rem .35rem;border-radius:3px}pre{background:#f0f0f0;padding:.75rem 1rem;border-radius:6px;overflow:auto}</style>
+</head><body>
+<h1>Dashboard not built yet</h1>
+<p>The dashboard's web assets have not been built. <code>npm ci</code> installs dependencies but does not build the SPA. From the project root, run:</p>
+<pre><code>npm run build:dashboard</code></pre>
+<p>Then reload this page. <code>agentic-router doctor</code> also reports the dashboard build state.</p>
+</body></html>`;
+const UNBUILT_CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
+
 export interface Dashboard {
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean;
   /** Test/CLI helper: mint a one-time login code without going through HTTP. */
@@ -226,6 +239,15 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     let file = path.resolve(d.distDir, rel);
     // path confinement: the resolved file must stay within distDir
     if (!within(distReal, file)) return sendJson(res, 403, { error: 'forbidden' });
+    // audit C6: SPA not built — guide a navigation instead of a 404; a missing hashed asset still 404s
+    if (!fileExists(path.join(d.distDir, 'index.html')) && (rel === 'index.html' || !path.extname(rel))) {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(UNBUILT_PAGE),
+        'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'content-security-policy': UNBUILT_CSP, 'cache-control': 'no-store',
+      });
+      res.end(UNBUILT_PAGE);
+      return;
+    }
     if (!fileExists(file)) {
       if (path.extname(rel)) return sendJson(res, 404, { error: 'not found' });   // a real asset: do not mask with HTML
       file = path.join(d.distDir, 'index.html');                                 // SPA route fallback

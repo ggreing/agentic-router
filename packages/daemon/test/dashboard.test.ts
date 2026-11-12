@@ -152,6 +152,30 @@ test('static SPA is served unauthenticated with CSP and nosniff; assets 404 but 
   });
 });
 
+test('when the SPA is not built, /dashboard serves the build-instructions page (not a 404); a missing asset still 404s (C6)', async () => {
+  const ledger = new Ledger(':memory:');
+  const emptyDist = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-nodist-'));   // no index.html: the SPA was never built
+  let addr: () => number = () => 0;
+  const dash = createDashboard({ ledger, token: TOKEN, distDir: emptyDist, port: () => addr() });
+  const server = http.createServer((req, res) => { if (!dash.handle(req, res)) { res.writeHead(404); res.end('{}'); } });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  addr = () => port;
+  try {
+    const index = await rq(port, 'GET', '/dashboard', { headers: host(port) });
+    assert.equal(index.status, 200, 'the shell gets the instructions page, not a 404');
+    assert.match(String(index.headers['content-type']), /text\/html/);
+    assert.match(index.body, /npm run build:dashboard/);
+    const route = await rq(port, 'GET', '/dashboard/some/route', { headers: host(port) });
+    assert.equal(route.status, 200, 'an SPA route also gets the instructions page');
+    assert.match(route.body, /not built/i);
+    const asset = await rq(port, 'GET', '/dashboard/assets/app.js', { headers: host(port) });
+    assert.equal(asset.status, 404, 'a missing hashed asset is still a 404, not the HTML page');
+  } finally {
+    dash.stop(); await new Promise<void>(r => server.close(() => r())); ledger.close(); fs.rmSync(emptyDist, { recursive: true, force: true });
+  }
+});
+
 test('handle returns false for non-dashboard paths so server.ts keeps its own routing', async () => {
   await withServer(async ({ port }) => {
     const other = await rq(port, 'GET', '/router/v1/status', { headers: host(port) });

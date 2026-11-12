@@ -44,6 +44,7 @@ Haiku 또는 알 수 없는 총괄은 **L2**부터 위임하며, **L0**은 항�
 ```
 git clone <repo> && cd agentic-router
 npm ci
+npm run build:dashboard                        # build the dashboard SPA (npm ci does not)
 node packages/cli/src/index.ts <command>      # pre-release entry point
 ```
 

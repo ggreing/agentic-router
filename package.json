@@ -1,7 +1,7 @@
 {
   "name": "agentic-router-monorepo",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Difficulty-based team router for Claude Code: triage each request, build a right-sized subagent team, and move each session up or down a model x effort ladder.",
   "license": "Apache-2.0",
   "type": "module",
@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "build:dashboard": "npm run build --workspace @agentic-router/dashboard",
     "clean": "tsc -b --clean",
     "test": "node --test \"packages/*/test/**/*.test.ts\"",
     "bench": "node bench/src/cli.ts"

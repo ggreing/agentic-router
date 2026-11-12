@@ -2,3 +2,6 @@ Agentic Router Proxy
 Copyright 2026 ggreing
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles third-party software in its distributed dashboard assets. Their licenses and
+notices are listed in THIRD_PARTY_NOTICES.md.

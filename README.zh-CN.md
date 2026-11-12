@@ -39,6 +39,7 @@ tester、ui-designer）。每个角色都位于一个「模型 × effort」阶�
 ```
 git clone <repo> && cd agentic-router
 npm ci
+npm run build:dashboard                        # build the dashboard SPA (npm ci does not)
 node packages/cli/src/index.ts <command>      # pre-release entry point
 ```
 

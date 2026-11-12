@@ -46,6 +46,7 @@ Nothing is published to npm yet. Run it from a clone:
 ```
 git clone <repo> && cd agentic-router
 npm ci
+npm run build:dashboard                        # build the dashboard SPA (npm ci does not)
 node packages/cli/src/index.ts <command>      # pre-release entry point
 ```
 
