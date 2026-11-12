@@ -283,8 +283,9 @@ export function validTreePath(p: string): boolean {
 export function existsInTree(root: string, rel: string): boolean | 'invalid' {
   if (!validTreePath(rel)) return 'invalid';
   try {
-    const realRoot = fs.realpathSync(root);
-    const real = fs.realpathSync(path.resolve(root, rel));
+    // the native call on both sides: it also expands Windows 8.3 names, which the JS one keeps
+    const realRoot = fs.realpathSync.native(root);
+    const real = fs.realpathSync.native(path.resolve(root, rel));
     const inside = path.relative(realRoot, real);
     return inside === '' || (!inside.startsWith('..') && !path.isAbsolute(inside));
   } catch {

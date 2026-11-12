@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { canonicalPath } from '../src/canonical.ts';
 import { scrubbedEnv } from '../src/env.ts';
 import { gitMetaChanges, gitMetaFingerprint, takeSnapshot } from '../src/git.ts';
 import { inferKind, projectCommands, resolveVerifyCommands } from '../src/verify-source.ts';
@@ -274,7 +275,8 @@ test('git metadata in a worktree: hooks and config live in the main .git and are
     assert.ok(snapshot?.gitMeta);
     assert.ok(Object.keys(snapshot.gitMeta).includes('.git/worktrees/agent-x/config.worktree'), Object.keys(snapshot.gitMeta).join(', '));
     const common = path.resolve(wt, git(wt, 'rev-parse', '--git-common-dir').trim());
-    assert.equal(fs.realpathSync(common), fs.realpathSync(path.join(dir, '.git')));
+    // canonicalPath on both sides: git prints long names, the temp folder may be an 8.3 spelling (Windows runners)
+    assert.equal(canonicalPath(common), canonicalPath(path.join(dir, '.git')));
     fs.writeFileSync(path.join(common, 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n');
     const s = await checkScope(wt, { allowed: ['**'], protected: PROTECTED, unscoped: true, snapshot });
     assert.equal(s.ok, false);

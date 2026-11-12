@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { costUsd, type Usage } from '@agentic-router/core';
+import { relativeWithin } from './canonical.ts';
 
 export const MAX_TRANSCRIPT_BYTES = 256 * 1024 * 1024;
 
@@ -208,8 +209,10 @@ export async function readEditedPaths(file: string | undefined, root: string): P
         if (b?.type !== 'tool_use' || typeof b.name !== 'string' || !EDIT_TOOLS.has(b.name)) continue;
         const p = typeof b.input?.file_path === 'string' ? b.input.file_path : typeof b.input?.notebook_path === 'string' ? b.input.notebook_path : undefined;
         if (!p) continue;
-        const rel = path.relative(root, path.resolve(root, p)).replace(/\\/g, '/');
-        if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) out.add(rel);
+        // both canonicalized: git names the root resolved (macOS /private/var, Windows long names, no links)
+        // while a tool path keeps the spelling of the session's working directory
+        const rel = relativeWithin(root, path.resolve(root, p));
+        if (rel) out.add(rel);
       }
     }
   } catch {

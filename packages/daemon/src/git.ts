@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { canonicalPath } from './canonical.ts';
 import { gitEnv } from './env.ts';
 import { fingerprint, normalizeEol, sameContent, scanTree, type TreeMarks } from './tree.ts';
 
@@ -174,8 +175,10 @@ export interface GitDirs { gitDir: string; common: string }
 /** The work tree's own git dir and the shared one; they differ only in a linked worktree. */
 export async function gitDirs(cwd: string): Promise<GitDirs | undefined> {
   try {
-    const common = path.resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).trim());
-    const gitDir = path.resolve(cwd, (await git(cwd, ['rev-parse', '--git-dir'])).trim());
+    // canonical: git may print one of them relative (resolved against cwd's spelling) and the other absolute
+    // (resolved), and gitMetaOf takes the path from one to the other
+    const common = canonicalPath(path.resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).trim()));
+    const gitDir = canonicalPath(path.resolve(cwd, (await git(cwd, ['rev-parse', '--git-dir'])).trim()));
     return { gitDir, common };
   } catch {
     return undefined;

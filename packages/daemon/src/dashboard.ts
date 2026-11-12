@@ -18,6 +18,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type http from 'node:http';
+import { isWithin } from './canonical.ts';
 import type { Ledger } from './ledger.ts';
 import { metricsSummary, metricsRequests, metricsRequestDetail, metricsTriageReport, type RequestsQuery } from './metrics.ts';
 import { latestLimits } from './limits.ts';
@@ -235,10 +236,10 @@ export function createDashboard(d: DashboardDeps): Dashboard {
   function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): void {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
     const rel = pathname === '/dashboard' || pathname === '/dashboard/' ? 'index.html' : pathname.slice('/dashboard/'.length);
-    const distReal = safeReal(d.distDir);
     let file = path.resolve(d.distDir, rel);
-    // path confinement: the resolved file must stay within distDir
-    if (!within(distReal, file)) return sendJson(res, 403, { error: 'forbidden' });
+    // path confinement: the resolved file must stay within distDir (both sides canonicalized: a route below a
+    // folder that does not exist, a symlinked or 8.3-named dist folder, and macOS /var are all inside)
+    if (!isWithin(d.distDir, file)) return sendJson(res, 403, { error: 'forbidden' });
     // audit C6: SPA not built — guide a navigation instead of a 404; a missing hashed asset still 404s
     if (!fileExists(path.join(d.distDir, 'index.html')) && (rel === 'index.html' || !path.extname(rel))) {
       res.writeHead(200, {
@@ -303,15 +304,6 @@ export function createDashboard(d: DashboardDeps): Dashboard {
   return { handle, mintCode, stop: () => clearInterval(sweeper) };
 }
 
-function safeReal(p: string): string {
-  try { return (fs.realpathSync.native ?? fs.realpathSync)(p); } catch { return path.resolve(p); }
-}
-function within(dir: string, file: string): boolean {
-  const base = safeReal(dir);
-  const target = safeReal(path.dirname(file)) + path.sep + path.basename(file);
-  const rel = path.relative(base, target);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
 function fileExists(p: string): boolean {
   try { return fs.statSync(p).isFile(); } catch { return false; }
 }
