@@ -7,9 +7,9 @@
 // command says how to remove it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { routerHome } from '@agentic-router/core';
+import { redact, routerHome } from '@agentic-router/core';
 import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper } from './apimode.ts';
-import { backupFile, isRouterStatusLine, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
+import { SettingsParseError, backupFile, isRouterStatusLine, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
 export interface UninstallDeps {
   settingsFile: string;
@@ -23,17 +23,31 @@ export interface UninstallDeps {
   out(line: string): void;
 }
 
-/** Claude Code's user settings without the router's entries; null when none are there. */
-export function planUserSettings(settingsFile: string, config: CliConfig | null): PlannedChange | null {
+/**
+ * What the user had before the router replaced it (decision 149, audit B6): the status line it wrapped (from
+ * config.json, else the settings backup when the router home is gone) and an apiKeyHelper of their own that API
+ * mode replaced (the backup is its only copy). Values that are the router's own are not "the user's".
+ */
+export function userOriginals(config: CliConfig | null, backup: Record<string, any> | null): { statusLine?: Record<string, unknown>; apiKeyHelper?: string } {
+  const statusLine = config?.wrappedStatusLine
+    ?? (backup?.statusLine?.type === 'command' && !isRouterStatusLine(backup.statusLine.command) ? backup.statusLine : undefined);
+  const helper = typeof backup?.apiKeyHelper === 'string' && !isRouterHelper(backup.apiKeyHelper) ? backup.apiKeyHelper : undefined;
+  return { ...(statusLine ? { statusLine } : {}), ...(helper ? { apiKeyHelper: helper } : {}) };
+}
+
+/** Claude Code's user settings without the router's entries, the user's own put back; null when none are there. */
+export function planUserSettings(settingsFile: string, config: CliConfig | null, backup: Record<string, any> | null = null): PlannedChange | null {
   if (!fs.existsSync(settingsFile)) return null;
   const s = readJsonFile<Record<string, any>>(settingsFile, {});
   const notes: string[] = [];
   const next: Record<string, any> = { ...s };
+  const own = userOriginals(config, backup);
   if (isRouterStatusLine(s.statusLine?.command)) {
-    const wrapped = config?.wrappedStatusLine;
-    if (wrapped) { next.statusLine = wrapped; notes.push(`statusLine: put back "${wrapped.command}"`); } else { delete next.statusLine; notes.push('statusLine: remove the router\'s'); }
+    if (own.statusLine) { next.statusLine = own.statusLine; notes.push(`statusLine: put back your "${String(own.statusLine.command)}"`); } else { delete next.statusLine; notes.push('statusLine: remove the router\'s'); }
   }
-  if (isRouterHelper(s.apiKeyHelper)) { delete next.apiKeyHelper; notes.push('apiKeyHelper: remove the router\'s'); }
+  if (isRouterHelper(s.apiKeyHelper)) {
+    if (own.apiKeyHelper) { next.apiKeyHelper = own.apiKeyHelper; notes.push(`apiKeyHelper: put back your "${redact(own.apiKeyHelper)}" (from the backup)`); } else { delete next.apiKeyHelper; notes.push('apiKeyHelper: remove the router\'s'); }
+  }
   const env: Record<string, unknown> = s.env && typeof s.env === 'object' ? { ...s.env } : {};
   if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove'); }
   if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
@@ -70,15 +84,44 @@ export function planProjectUndo(projectDir: string): PlannedChange[] {
   return out;
 }
 
+/** Whether the settings still lack something of the user's that only the backup holds (then it is kept). */
+function backupStillNeeded(settingsFile: string, own: ReturnType<typeof userOriginals>): boolean {
+  let now: Record<string, any>;
+  try { now = readJsonFile<Record<string, any>>(settingsFile, {}); } catch { return true; }
+  if (own.statusLine && JSON.stringify(now.statusLine) !== JSON.stringify(own.statusLine)) return true;
+  if (own.apiKeyHelper && now.apiKeyHelper !== own.apiKeyHelper) return true;
+  return false;
+}
+
 export async function uninstall(f: Record<string, string | boolean>, d: UninstallDeps): Promise<number> {
   const config = readConfig();
-  const changes: PlannedChange[] = [];
-  const settings = planUserSettings(d.settingsFile, config);
-  if (settings) changes.push(settings);
-  changes.push(...planProjectUndo(d.projectDir));
   const bak = backupFile(d.settingsFile);
-  if (fs.existsSync(bak)) changes.push({ file: bak, summary: 'delete the settings backup made by init', apply() { fs.rmSync(bak, { force: true }); } });
+  let backup: Record<string, any> | null = null;
+  let backupUnreadable = false;
+  if (fs.existsSync(bak)) {
+    try { backup = readJsonFile<Record<string, any>>(bak, {}); } catch { backupUnreadable = true; }
+  }
+  const changes: PlannedChange[] = [];
+  try {
+    const settings = planUserSettings(d.settingsFile, config, backup);
+    if (settings) changes.push(settings);
+    changes.push(...planProjectUndo(d.projectDir));
+  } catch (e) {
+    // audit C2: an unparseable settings file stops here, with nothing changed
+    d.out(`${e instanceof SettingsParseError ? e.message : (e as Error).message}. Nothing was changed; fix the file and run uninstall again.`);
+    return 2;
+  }
+  const own = userOriginals(config, backup);
+  if (fs.existsSync(bak)) {
+    changes.push(backupUnreadable
+      ? { file: bak, summary: 'kept: the settings backup could not be read, so it may hold your settings', apply() { /* kept */ } }
+      : { file: bak, summary: 'delete the settings backup made by init (kept if something of yours could not be put back)', apply() {
+        if (backupStillNeeded(d.settingsFile, own)) { d.out(`Kept ${bak}: it still holds settings of yours that could not be put back.`); return; }
+        fs.rmSync(bak, { force: true });
+      } });
+  }
   const key = f['keep-key'] === true ? 'kept' : await d.keyStatus();
+  if (key !== 'present' && key !== 'not_found' && key !== 'kept') d.out(`The OS keychain could not be checked (${key}): an API key may remain in it under "agentic-router".`);
   d.out('agentic-router uninstall will:');
   d.out('  - stop the daemon and the proxy');
   for (const c of changes) d.out(`  - ${c.file}: ${c.summary}`);
@@ -89,7 +132,9 @@ export async function uninstall(f: Record<string, string | boolean>, d: Uninstal
     if (!await d.ask('Uninstall? [y/N] ')) { d.out('Nothing changed.'); return 1; }
   }
   d.out(await d.stop());
-  for (const c of changes) c.apply();
+  for (const c of changes) {
+    try { c.apply(); } catch (e) { d.out(`Could not change ${c.file}: ${(e as Error).message}`); }
+  }
   if (key === 'present') {
     try { await d.deleteKey(); d.out('API key deleted from the OS keychain.'); }
     catch (e) { d.out(`The API key could not be deleted (${(e as Error).message}); remove it with the keychain tool.`); }

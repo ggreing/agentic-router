@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { paths } from '@agentic-router/core';
 import { planApiSettings } from '../src/apimode.ts';
-import { backupCredentials, backupFile, ensureLocalState, planBackupClean, planStatusLine, readConfig, writeConfig, writeJsonAtomic } from '../src/setup.ts';
+import { backupCredentials, backupFile, ensureLocalState, planBackupClean, planStatusLine, readConfig, writeBackup, writeConfig, writeJsonAtomic } from '../src/setup.ts';
 
 let tmp = '';
 beforeEach(() => {
@@ -35,7 +35,7 @@ test('decision 142: an older backup that holds a key is found (doctor) and clean
   const file = path.join(tmp, 'settings.json');
   fs.writeFileSync(file, '{}');
   fs.writeFileSync(backupFile(file), JSON.stringify({ apiKeyHelper: 'x', env: { ANTHROPIC_AUTH_TOKEN: KEY } }));
-  assert.deepEqual(backupCredentials(file), ['ANTHROPIC_AUTH_TOKEN']);
+  assert.deepEqual(backupCredentials(file), ['env.ANTHROPIC_AUTH_TOKEN']);
   const plan = planBackupClean(file)!;
   assert.equal(plan.file, backupFile(file));
   assert.match(plan.summary, /remove env\.ANTHROPIC_AUTH_TOKEN from the backup/);
@@ -68,4 +68,23 @@ test('decision 142: init and doctor say what switching recordPrompts off does', 
   const { promptStorageSummary } = await import('../src/setup.ts');
   assert.match(promptStorageSummary(undefined), /^recordPrompts is off: no prompt or conversation text is stored\..*switching it off again deletes that text at the next daemon start\.$/);
   assert.match(promptStorageSummary(true), /^recordPrompts is on: .*Switching it off deletes the stored prompt text at the next daemon start\.$/);
+});
+
+test('decision 149: the backup also leaves out ANTHROPIC_CUSTOM_HEADERS and an apiKeyHelper that holds a key; a plain helper stays', () => {
+  const file = path.join(tmp, 'settings.json');
+  fs.writeFileSync(file, JSON.stringify({ apiKeyHelper: `echo ${KEY}`, env: { ANTHROPIC_CUSTOM_HEADERS: 'X-Gateway: t-0123456789', FOO: 'bar' } }));
+  writeBackup(file);
+  const bak = fs.readFileSync(backupFile(file), 'utf8');
+  assert.ok(!bak.includes(KEY) && !bak.includes('t-0123456789'), bak);
+  assert.deepEqual(JSON.parse(bak), { env: { FOO: 'bar' } });
+  // an older backup with both: found and cleaned
+  fs.writeFileSync(backupFile(file), JSON.stringify({ apiKeyHelper: `echo ${KEY}`, env: { ANTHROPIC_CUSTOM_HEADERS: 'h' } }));
+  assert.deepEqual(backupCredentials(file), ['env.ANTHROPIC_CUSTOM_HEADERS', 'apiKeyHelper']);
+  planBackupClean(file)!.apply();
+  assert.deepEqual(JSON.parse(fs.readFileSync(backupFile(file), 'utf8')), {});
+  // a helper that only names a vault command is the user's setting, not a credential
+  fs.rmSync(backupFile(file));
+  fs.writeFileSync(file, JSON.stringify({ apiKeyHelper: 'corp-vault get anthropic' }));
+  writeBackup(file);
+  assert.deepEqual(JSON.parse(fs.readFileSync(backupFile(file), 'utf8')), { apiKeyHelper: 'corp-vault get anthropic' });
 });

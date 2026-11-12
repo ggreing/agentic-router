@@ -27,23 +27,50 @@ function routerHome() {
   return process.env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
 }
 
-// ---------------------------------------------------------------- masking (core/security.ts redact)
-// The patterns come from secret-patterns.json next to this file, generated from core SECRET_PATTERN_SPECS (decision
-// 142; a test keeps it current), applied the way core's redact applies them. Without the file nothing is spooled.
+// ---------------------------------------------------------------- masking (core/security.ts redact, redactJson)
+// The patterns and the secret-key rules come from secret-patterns.json next to this file, generated from core
+// SECRET_PATTERN_SPECS and SECRET_KEY_NAME_SPECS (decision 142, audit N1; a test keeps it current), applied the
+// way core applies them. Without the file nothing is spooled.
+const MAX_MASK_LENGTH = 1_000_000;   // core MAX_MASK_LENGTH (audit N6)
 function loadPatterns() {
   try {
-    const specs = JSON.parse(fs.readFileSync(new URL('./secret-patterns.json', import.meta.url), 'utf8'));
-    return specs.map(s => ({ re: new RegExp(s.source, s.flags), lead: s.lead === true }));
+    const doc = JSON.parse(fs.readFileSync(new URL('./secret-patterns.json', import.meta.url), 'utf8'));
+    if (!doc || !Array.isArray(doc.patterns) || !Array.isArray(doc.secretKeyNames)) return null;
+    return {
+      text: doc.patterns.map(s => ({ re: new RegExp(s.source, s.flags), lead: s.lead === true })),
+      keys: doc.secretKeyNames.map(s => new RegExp(s.source, s.flags)),
+    };
   } catch { return null; }
 }
 const SECRET_PATTERNS = loadPatterns();
+const missing = () => new Error('secret-patterns.json is missing: nothing can be masked');
 export function redact(text) {
-  if (!SECRET_PATTERNS) throw new Error('secret-patterns.json is missing: nothing can be masked');
+  if (!SECRET_PATTERNS) throw missing();
   let out = String(text);
-  for (const p of SECRET_PATTERNS) {
+  if (out.length > MAX_MASK_LENGTH) out = out.slice(0, MAX_MASK_LENGTH) + '…[truncated]';
+  for (const p of SECRET_PATTERNS.text) {
     out = p.lead ? out.replace(p.re, (_m, g1) => `${g1}[REDACTED]`) : out.replace(p.re, m => m.slice(0, 7) + '…[REDACTED]');
   }
   return out;
+}
+/**
+ * Audit N1: masks a PARSED value (string leaves; a string under a secret-named key whole), so the JSON written
+ * after it stays valid. Masking the serialized text could cut a string at a quote or eat a closing brace.
+ */
+export function redactJson(value) {
+  if (!SECRET_PATTERNS) throw missing();
+  const secretKey = k => SECRET_PATTERNS.keys.some(re => re.test(k));
+  const walk = (v, keyIsSecret) => {
+    if (typeof v === 'string') return keyIsSecret ? '[REDACTED]' : redact(v);
+    if (Array.isArray(v)) return v.map(x => walk(x, false));
+    if (v && typeof v === 'object') {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = walk(x, secretKey(k));
+      return out;
+    }
+    return v;
+  };
+  return walk(value, false);
 }
 
 // ---------------------------------------------------------------- verify env passthrough (decision 99)
@@ -181,7 +208,8 @@ export function minimalHookInput(raw) {
 
 /** What goes to the spool: the minimal form, or (recordPrompts on) the input with verify-env names only. */
 export function spoolForm(input, recordPrompts) {
-  if (!recordPrompts) return minimalHookInput(input);
+  // decision 149: an edit tool is spooled by path only even with recordPrompts on (it covers prompt text, not file contents)
+  if (!recordPrompts || (isRecord(input) && EDIT_TOOL_PATH[input.tool_name])) return minimalHookInput(input);
   if (!isRecord(input) || !isRecord(input.verifyEnv)) return input;
   return { ...input, verifyEnv: Object.keys(input.verifyEnv).sort() };
 }
@@ -220,7 +248,8 @@ export function spool(home, eventInput, receivedAt, recordPrompts = false) {
     cleanSpool(dir);                              // prune before writing (decision 100)
     const stamp = receivedAt.replace(/[:.]/g, '-');
     const file = path.join(dir, `${stamp}-${EVENT || 'event'}-${Math.random().toString(36).slice(2, 8)}.jsonl`);
-    const line = redact(JSON.stringify({ receivedAt, input: spoolForm(eventInput, recordPrompts) })) + '\n';
+    // audit N1: mask the parsed value, then serialize (the line stays one valid JSON record)
+    const line = JSON.stringify({ receivedAt, input: redactJson(spoolForm(eventInput, recordPrompts)) }) + '\n';
     fs.writeFileSync(file, line, { mode: 0o600 });
   } catch { /* spool is best-effort; never block the hook on a spool failure */ }
 }
@@ -293,7 +322,8 @@ export async function relay(raw, { home = routerHome(), write = s => process.std
 
   const timeoutMs = TIMEOUTS[EVENT] ?? DEFAULT_TIMEOUT;
   try {
-    const body = JSON.stringify(input);
+    // decision 149: the lead's edit reaches the daemon as tool name and path only; its content never leaves this hook
+    const body = JSON.stringify(isRecord(input) && EDIT_TOOL_PATH[input.tool_name] ? minimalHookInput(input) : input);
     const response = await post({ port, token, body, timeoutMs });
     write(response);                        // verbatim: JSON for most events, text/plain for pre_compact
   } catch {

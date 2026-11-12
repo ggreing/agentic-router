@@ -81,3 +81,49 @@ test('audit B4: --keep-key keeps the key; declining or no terminal without --yes
   assert.equal(await uninstall({ yes: true }, deps(i, { key: 'not_found' }).d), 0);
   assert.deepEqual(read(path.join(i.project, '.claude', 'settings.local.json')), { worktree: { baseRef: 'fresh' } });
 });
+
+test('decision 149: with config.json gone, the status line comes back from the backup; the user\'s own apiKeyHelper too', async () => {
+  const i = await installed();
+  // the user had a helper of their own before API mode: it is only in the backup
+  const bak = `${i.settings}.agentic-router.bak`;
+  fs.writeFileSync(bak, JSON.stringify({ ...read(bak), apiKeyHelper: 'corp-vault get anthropic' }));
+  fs.rmSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'config.json'));
+  const { d, log } = deps(i);
+  assert.equal(await uninstall({}, d), 0);
+  const after = read(i.settings);
+  assert.deepEqual(after.statusLine, { type: 'command', command: 'my-status --fancy' });
+  assert.equal(after.apiKeyHelper, 'corp-vault get anthropic');
+  assert.match(log.join('\n'), /apiKeyHelper: put back your "corp-vault get anthropic"/);
+  assert.ok(!fs.existsSync(bak), 'everything of the user\'s is back, so the backup goes');
+});
+
+test('decision 149: the backup is kept, and its path said, when what it holds could not be put back', async () => {
+  const i = await installed();
+  const bak = `${i.settings}.agentic-router.bak`;
+  fs.rmSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'config.json'));
+  // the user replaced the router's status line meanwhile: it is not ours to change, so the backup's stays the only copy
+  fs.writeFileSync(i.settings, JSON.stringify({ ...read(i.settings), statusLine: { type: 'command', command: 'other-status' } }));
+  const { d, log } = deps(i);
+  assert.equal(await uninstall({}, d), 0);
+  assert.equal(read(i.settings).statusLine.command, 'other-status');
+  assert.ok(fs.existsSync(bak), 'kept');
+  assert.ok(log.some(l => l.includes(`Kept ${bak}`)), log.join('\n'));
+});
+
+test('decision 149: an unreadable backup is kept; an unparseable settings file stops uninstall with nothing changed', async () => {
+  const i = await installed();
+  const bak = `${i.settings}.agentic-router.bak`;
+  fs.writeFileSync(bak, '{ not json');
+  let r = deps(i);
+  assert.equal(await uninstall({}, r.d), 0);
+  assert.equal(fs.readFileSync(bak, 'utf8'), '{ not json');
+  assert.match(r.log.join('\n'), /kept: the settings backup could not be read/);
+  const j = await installed();
+  fs.writeFileSync(j.settings, '{ "statusLine": ');
+  const before = fs.readFileSync(j.settings, 'utf8');
+  r = deps(j);
+  assert.equal(await uninstall({}, r.d), 2);
+  assert.equal(fs.readFileSync(j.settings, 'utf8'), before);
+  assert.deepEqual(r.calls, [], 'nothing stopped or deleted');
+  assert.match(r.log.join('\n'), /cannot parse .* Nothing was changed/);
+});

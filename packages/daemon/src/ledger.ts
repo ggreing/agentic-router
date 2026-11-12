@@ -16,7 +16,7 @@ import { LIMITS_SCHEMA } from './limits.ts';
 import { scrubProse, scrubStoredPrompts } from './data.ts';
 import { storedPromptKind } from './payload.ts';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export type RequestStatus = 'open' | 'awaiting_user' | 'closed';
 
@@ -299,7 +299,11 @@ CREATE TABLE IF NOT EXISTS signals (
   kind       TEXT NOT NULL,
   ok         INTEGER NOT NULL,
   detail     TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  exit_code    INTEGER,
+  duration_ms  INTEGER,
+  tests_passed INTEGER,
+  tests_failed INTEGER
 );
 CREATE INDEX IF NOT EXISTS signals_by_subtask ON signals(request_id, subtask_id);
 
@@ -594,6 +598,8 @@ export interface SlotRow {
 
 export class Ledger {
   readonly db: DatabaseSync;
+  /** Decision 149: whether a verify signal keeps its output tail (recordPrompts on) or its first line only. */
+  #keepOutput = false;
 
   /**
    * `keepPrompts` (config.recordPrompts): conversation text in stored events is kept. Otherwise every open takes
@@ -648,6 +654,14 @@ export class Ledger {
     // v12 -> v13 (decisions 141-142): stored events are in the minimal form unless recordPrompts is on; verify
     // variables are kept as names (the values were never needed after the agent's verify)
     if (opts.keepPrompts !== true) { scrubProse(this.db); scrubStoredPrompts(this.db); }   // and the prompts kept while it was on
+    // v14 -> v15 (decision 149): structured verify results; with recordPrompts off a signal keeps its first line only
+    const sigCols = (this.db.prepare('PRAGMA table_info(signals)').all() as Row[]).map(r => s(r.name));
+    for (const c of ['exit_code', 'duration_ms', 'tests_passed', 'tests_failed']) if (!sigCols.includes(c)) this.db.exec(`ALTER TABLE signals ADD COLUMN ${c} INTEGER`);
+    this.#keepOutput = opts.keepPrompts === true;
+    if (!this.#keepOutput) {
+      const n = Number(this.db.prepare("UPDATE signals SET detail = substr(detail, 1, instr(detail, char(10)) - 1) WHERE instr(detail, char(10)) > 0").run().changes);
+      if (n) this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    }
     for (const r of this.db.prepare("SELECT agent_id, verify_env FROM agents WHERE verify_env LIKE '{%'").all() as Row[]) {
       this.db.prepare('UPDATE agents SET verify_env = ? WHERE agent_id = ?').run(JSON.stringify(envNames(json<unknown>(r.verify_env))), s(r.agent_id));
     }
@@ -1170,9 +1184,15 @@ export class Ledger {
 
   insertSignals(ctx: { requestId: string | null; subtaskId: string | null; agentId: string | null; attempt: number; at: string },
     signals: VerifySignal[]): void {
-    const st = this.db.prepare(`INSERT INTO signals (request_id, subtask_id, agent_id, attempt, kind, ok, detail, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-    for (const x of signals) st.run(ctx.requestId, ctx.subtaskId, ctx.agentId, ctx.attempt, x.kind, x.ok ? 1 : 0, x.detail ?? null, ctx.at);
+    const st = this.db.prepare(`INSERT INTO signals (request_id, subtask_id, agent_id, attempt, kind, ok, detail, created_at,
+        exit_code, duration_ms, tests_passed, tests_failed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const num = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
+    for (const x of signals) {
+      // decision 149: the output tail reached the subagent at the stop; it is stored only with recordPrompts on
+      const detail = x.detail === undefined ? null : this.#keepOutput ? x.detail : x.detail.split('\n', 1)[0]!;
+      st.run(ctx.requestId, ctx.subtaskId, ctx.agentId, ctx.attempt, x.kind, x.ok ? 1 : 0, detail, ctx.at,
+        num(x.exitCode), num(x.durationMs), num(x.testsPassed), num(x.testsFailed));
+    }
   }
 
   listSignals(requestId: string, subtaskId?: string): SignalRow[] {
@@ -1182,6 +1202,10 @@ export class Ledger {
     return rows.map(r => ({
       requestId: sn(r.request_id), subtaskId: sn(r.subtask_id), agentId: sn(r.agent_id), attempt: n(r.attempt),
       kind: s(r.kind) as SignalKind, ok: n(r.ok) === 1, ...(r.detail === null ? {} : { detail: s(r.detail) }), createdAt: s(r.created_at),
+      ...(r.exit_code === null || r.exit_code === undefined ? {} : { exitCode: n(r.exit_code) }),
+      ...(r.duration_ms === null || r.duration_ms === undefined ? {} : { durationMs: n(r.duration_ms) }),
+      ...(r.tests_passed === null || r.tests_passed === undefined ? {} : { testsPassed: n(r.tests_passed) }),
+      ...(r.tests_failed === null || r.tests_failed === undefined ? {} : { testsFailed: n(r.tests_failed) }),
     }));
   }
 

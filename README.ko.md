@@ -20,10 +20,10 @@ Agentic Router Proxy는 Claude Code를 위한 난이도 기반 팀 라우터입�
 
 ## 판정
 
-1단계는 규칙만 씁니다 — 임베딩도, 추가 모델 호출도 없습니다. 규칙이 크기를 가늠하지 못할 때에만 2단계로
-갑니다. **구독** 모드에서는 총괄이 컨텍스트에 주입된 루브릭으로 판단하고, **API 키** 모드에서는 Sonnet
-5.5 judge 호출(effort medium)이 사용자의 API 키로 실행됩니다. 임베딩 기반 유사 사례 검색은 지금은
-보류되어 있습니다.
+1단계는 규칙만 씁니다 — 임베딩도, 추가 모델 호출도 없습니다. 규칙이 크기를 가늠하지 못하면, Opus급·
+Sonnet·알 수 없는 총괄은 그 요청을 L2 팀으로 처리하고, Haiku 총괄은 컨텍스트에 주입된 루브릭으로 스스로
+판단합니다. 어느 모드에서도 추가 외부 호출은 없습니다. 임베딩 기반 유사 사례 검색은 지금은 보류되어
+있습니다.
 
 ## 위임과 사다리
 
@@ -73,8 +73,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 - **구독**(기본, `init`): 플러그인과 로컬 데몬만으로 동작합니다. 프록시가 없고, 어떤 구성요소도 구독
   자격증명을 읽거나 저장하지 않습니다. 트래픽은 Claude Code에서 Anthropic으로 바로 갑니다.
 - **API 키**(`init --mode api`): 옵트인 로컬 프록시가 실제 토큰 비용을 집계하고, 로컬 토큰당 하루 $100·
-  전체 하루 $300 상한(설정 가능)과 요청별 예산을 적용합니다. 상한을 넘으면 프록시는 새 호출을 429로
-  거부하며, 진행 중인 응답은 끊지 않습니다. API 키는 OS 보안 저장소(Windows 자격 증명 관리자 / macOS
+  전체 하루 $300 예산(설정 가능)과 요청별 예산을 적용합니다. 이는 절대적 상한이 아닙니다. 예산에 도달하면
+  새 호출은 429로 거부되지만, 이미 진행 중인 응답은 그 값을 넘을 수 있습니다. API 키는 OS 보안 저장소(Windows 자격 증명 관리자 / macOS
   키체인 / Linux libsecret)에만 보관됩니다.
 - **직접(direct)**: 프록시에 문제가 생기면 `agentic-router mode direct`로 프록시를 거치지 않고 API
   키로 직접 연결하고, `agentic-router mode proxy`로 되돌립니다.
@@ -89,8 +89,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 
 ## 프라이버시
 
-모든 것은 하나의 로컬 SQLite 파일에 저장됩니다. Claude Code 자체 트래픽과, API 키 모드에 한해 2단계
-judge의 Anthropic 호출 외에는 아무것도 기기 밖으로 나가지 않습니다. 학습 저장소에는 규칙으로 뽑은
+모든 것은 하나의 로컬 SQLite 파일에 저장됩니다. Claude Code 자체 트래픽 외에는 아무것도 기기 밖으로
+나가지 않으며, 라우터는 어느 모드에서도 자체 외부 호출을 하지 않습니다. 학습 저장소에는 규칙으로 뽑은
 특징값, 결과, 비용, 유사도 같은 수치를 저장하며, 임베딩은 저장하지 않고 프롬프트 원문은 `recordPrompts`를
 켰을 때만 저장합니다. `recordPrompts`를 끄면 저장된 프롬프트 원문은 다음 데몬 시작 때 삭제됩니다. 로그와
 대시보드는 API 키와 토큰을 가립니다. 어떤 구성요소도 구독 자격증명을 읽거나 저장하지 않습니다.
@@ -171,7 +171,22 @@ claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 | `printf -v`, `echo ${VAR}` | 평범한 `printf` / `echo $VAR`(비밀이 아닌 이름) |
 | 명령 안의 주석 | 주석을 지우기 |
 | `npm install user/repo` | 레지스트리 이름; 그 외에는 총괄에게 요청 |
-| 무시되지 않는 `.env`가 있는 디렉터리 전체 grep | glob이나 타입을 추가, 하위 디렉터리를 검색, 또는 그 파일을 `.gitignore`에 추가 |
+| `git commit` 명령줄에 메시지 없음 | `git commit -m "…"`(또는 `-F <file>`, `-C <commit>`) |
+| `git commit --amend`, `-e`, `--reset-author` | 새 커밋; 수정은 총괄이나 사용자가 |
+| `git add -p`, `-i`, `-e` | `git add <파일>` |
+| `git add -A`, `git add .`, 또는 무시되지 않는 자격증명 파일이 아래에 있는 `git add <디렉터리>` | 파일을 이름으로 추가하거나 그 파일을 `.gitignore`에 추가 |
+| `--show-current` 외의 `git branch`; `git stash list`의 쓰기/실행 옵션(`--output`, `--ext-diff`) | 총괄에게 요청 |
+| `tail -f`, `tail --follow` | `tail -n <N>` |
+| `npm install -g`, `--prefix`, `--location`; `pnpm add -g`; `pip install --user`, `--target`, `--prefix` | 프로젝트 안에 설치 |
+| `.git`, CI 설정, `.claude`, 라우터 정책에 쓰는 빌드/테스트/설치 명령(예: `npx tsc --outDir .git/hooks`) | 출력 위치를 바꾸기; 그런 파일 변경은 총괄을 거침 |
+| `/proc`나 `/dev` 아래 경로(`/dev/null`, stdin, stdout, stderr 제외) | 파일의 일반 경로 |
+| 결과가 64개를 넘는 중괄호 확장, 또는 20,000자가 넘는 명령줄 | 명령을 나누기 |
+| 무시되지 않는 자격증명 파일이 있는 디렉터리에 대한 재귀 grep(`grep -r`/`-d recurse`) | `rg`, Grep 도구, 또는 파일을 이름으로 지정 |
+| 패턴이 정확히 자격증명 파일 이름인 Bash 검색(`grep ".env" …`, `rg '[.]env' …`) | Grep 도구(패턴을 경로로 읽지 않음), 또는 `process.env` 같은 더 긴 패턴 |
+
+거부는 아니지만 알아둘 점: 단어 안의 따옴표와 백슬래시는 Bash가 읽는 대로 해석되므로 `cat .en""v`는
+`cat .env`로 취급되고, 이름을 조각내도 달라지지 않습니다. 또한 짧은 옵션에 붙은 값은 경로로 간주되어
+`grep -f.env`는 `grep -f .env`처럼 거부됩니다.
 
 ### 프로젝트 정책
 

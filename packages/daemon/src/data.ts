@@ -70,7 +70,7 @@ export function* exportLines(db: DatabaseSync, o: ExportOptions): Generator<stri
   const args: SQLInputValue[] = [];
   if (o.since) { where.push('closed_at >= ?'); args.push(o.since); }
   if (o.until) { where.push('closed_at < ?'); args.push(o.until); }
-  const signals = db.prepare('SELECT subtask_id, attempt, kind, ok, detail, created_at FROM signals WHERE request_id = ? ORDER BY id');
+  const signals = db.prepare('SELECT subtask_id, attempt, kind, ok, detail, created_at, exit_code, duration_ms, tests_passed, tests_failed FROM signals WHERE request_id = ? ORDER BY id');
   const rows = db.prepare(`SELECT * FROM request_records ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY closed_at, request_id`).iterate(...args) as Iterable<Row>;
   for (const r of rows) {
     const line = {
@@ -79,7 +79,11 @@ export function* exportLines(db: DatabaseSync, o: ExportOptions): Generator<stri
       changedFiles: r.changed_files, linesAdded: r.lines_added, linesRemoved: r.lines_removed, durationMs: r.duration_ms, activeMs: r.active_ms,
       subtaskUsd: r.subtask_usd, leadUsd: r.lead_usd, totalUsd: r.total_usd,
       record: json(r.record), acceptance: r.acceptance ?? null, acceptSignals: json(r.accept_signals),
-      signals: (signals.all(String(r.request_id)) as Row[]).map(x => ({ subtaskId: x.subtask_id, attempt: x.attempt, kind: x.kind, ok: Number(x.ok) === 1, detail: x.detail, createdAt: x.created_at })),
+      signals: (signals.all(String(r.request_id)) as Row[]).map(x => ({
+        subtaskId: x.subtask_id, attempt: x.attempt, kind: x.kind, ok: Number(x.ok) === 1, detail: x.detail, createdAt: x.created_at,
+        // decision 149: the structured verify result (the output tail is stored only with recordPrompts on)
+        ...Object.fromEntries(([['exitCode', x.exit_code], ['durationMs', x.duration_ms], ['testsPassed', x.tests_passed], ['testsFailed', x.tests_failed]] as const).filter(([, v]) => v !== null && v !== undefined)),
+      })),
       ...(o.includePrompts && typeof r.prompt === 'string' && r.prompt ? { prompt: r.prompt } : {}),
     };
     yield JSON.stringify(masked(line, o.secrets));
@@ -212,7 +216,8 @@ export function pruneEvents(db: DatabaseSync, days: number, nowIso: string): num
 
 // ------------------------------------------------------------------ decision 142: purge --all, the files
 
-export interface DataHome { spoolDir: string; scopesDir: string; agentsDir: string; logsDir: string }
+/** The router home's folders that purge --all clears; `root` adds limits-cache/ and the dashboard launch page. */
+export interface DataHome { spoolDir: string; scopesDir: string; agentsDir: string; logsDir: string; root?: string }
 
 /** Sessions with an open request or one awaiting the user: purge and retention leave everything of them alone. */
 export function liveSessions(db: DatabaseSync): Set<string> {
@@ -220,28 +225,42 @@ export function liveSessions(db: DatabaseSync): Set<string> {
 }
 
 /**
- * The files `purge --all` clears: the spool, the scope and agent files of sessions that are not live (the guard
- * reads those of running subagents), and the logs (truncated, since the daemon and the proxy keep them open).
- * Counts per kind; with dryRun only counts.
+ * The files `purge --all` clears: the spool; the scope, agent and limits-cache files of sessions that are not
+ * live (the guard reads those of running subagents); the logs (current ones truncated, since the daemon and the
+ * proxy keep them open; rotated ones deleted); the dashboard launch page. A link or junction is never followed or
+ * removed (audit C5): only regular files directly in these folders count. Counts per kind; with dryRun only counts.
  */
 export function purgeFiles(home: DataHome, live: ReadonlySet<string>, dryRun = false): Record<string, number> {
   const out: Record<string, number> = {};
-  const list = (dir: string, re: RegExp) => { try { return fs.readdirSync(dir).filter(f => re.test(f)).map(f => path.join(dir, f)); } catch { return []; } };
+  const regular = (p: string) => { try { return fs.lstatSync(p).isFile(); } catch { return false; } };
+  const realDir = (d: string) => { try { return fs.lstatSync(d).isDirectory(); } catch { return false; } };   // not a link to elsewhere
+  const list = (dir: string, re: RegExp) => {
+    if (!realDir(dir)) return [];
+    try { return fs.readdirSync(dir).filter(f => re.test(f)).map(f => path.join(dir, f)).filter(regular); } catch { return []; }
+  };
   const drop = (kind: string, file: string) => { if (!dryRun) { try { fs.rmSync(file, { force: true }); } catch { return; } } out[kind] = (out[kind] ?? 0) + 1; };
-  for (const f of list(home.spoolDir, /.jsonl(.sending)?$/)) drop('spool', f);
+  for (const f of list(home.spoolDir, /\.jsonl(\.sending)?$/)) drop('spool', f);
   const livePrefixes = [...live].map(s => `${safeName(s).slice(0, 40)}__`);
-  for (const f of list(home.scopesDir, /.json$/)) if (!livePrefixes.some(p => path.basename(f).startsWith(p))) drop('scopes', f);
-  for (const f of list(home.agentsDir, /.json$/)) {
+  for (const f of list(home.scopesDir, /\.json$/)) if (!livePrefixes.some(p => path.basename(f).startsWith(p))) drop('scopes', f);
+  for (const f of list(home.agentsDir, /\.json$/)) {
     let session: unknown;
     try { session = (JSON.parse(fs.readFileSync(f, 'utf8')) as { sessionId?: unknown }).sessionId; } catch { /* unreadable: not live */ }
     if (typeof session !== 'string' || !live.has(session)) drop('agents', f);
   }
-  for (const f of list(home.logsDir, /.log(.d+)?$/)) {
+  for (const f of list(home.logsDir, /\.log\.\d+$/)) drop('logs', f);   // rotated
+  for (const f of list(home.logsDir, /\.log$/)) {
     let size = 0;
     try { size = fs.statSync(f).size; } catch { continue; }
     if (!size) continue;
     if (!dryRun) { try { fs.truncateSync(f, 0); } catch { continue; } }
     out.logs = (out.logs ?? 0) + 1;
+  }
+  if (home.root) {
+    // the status line's per-session stamp (plugin/statusline.mjs names the file by this rule)
+    const liveStamps = new Set([...live].map(s => `${String(s).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128)}.json`));
+    for (const f of list(path.join(home.root, 'limits-cache'), /\.json$/)) if (!liveStamps.has(path.basename(f))) drop('limitsCache', f);
+    const page = path.join(home.root, 'dashboard-open.html');
+    if (regular(page)) drop('launchPage', page);
   }
   return out;
 }

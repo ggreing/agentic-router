@@ -235,7 +235,7 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   try { checks.push(policyCheck(await loadGuard(cfg?.pluginDir), process.cwd())); } catch { /* no plugin here */ }
   // decision 142: a settings backup made before it may hold a credential in plain text
   const held = backupCredentials(defaultClaudeSettings());
-  if (held.length) checks.push({ name: 'settings backup', ok: false, blocking: false, detail: `${backupFile(defaultClaudeSettings())} holds ${held.map(n => `env.${n}`).join(', ')} in plain text: run agentic-router init, which offers to remove it` });
+  if (held.length) checks.push({ name: 'settings backup', ok: false, blocking: false, detail: `${backupFile(defaultClaudeSettings())} holds ${held.join(', ')} in plain text: run agentic-router init, which offers to remove it` });
   const access = homeAccessCheck();
   if (access) checks.push(access);
   checks.push(...ladderBreakers(env));

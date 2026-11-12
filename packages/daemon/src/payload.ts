@@ -1,5 +1,5 @@
 // Masked, size-limited copy of a hook payload for the events table.
-import { redact } from '@agentic-router/core';
+import { redact, redactJson } from '@agentic-router/core';
 import { AWAITING_USER_MARKER, TASK_NOTIFICATION } from './continuation.ts';
 
 export const MAX_STRING = 2000;
@@ -7,20 +7,18 @@ export const MAX_ARRAY = 50;
 export const MAX_DEPTH = 6;
 export const MAX_PAYLOAD = 16_384;
 
-function compact(v: unknown, secrets: string[], depth: number): unknown {
-  if (typeof v === 'string') {
-    const s = redact(v, secrets);
-    return s.length > MAX_STRING ? `${s.slice(0, MAX_STRING)}…[${s.length - MAX_STRING} chars omitted]` : s;
-  }
+/** Size limits on an already masked value (strings, arrays, depth); masking happens once, before (audit N1). */
+function compact(v: unknown, depth: number): unknown {
+  if (typeof v === 'string') return v.length > MAX_STRING ? `${v.slice(0, MAX_STRING)}…[${v.length - MAX_STRING} chars omitted]` : v;
   if (v === null || typeof v !== 'object') return v;
   if (depth >= MAX_DEPTH) return '[nested]';
   if (Array.isArray(v)) {
-    const head = v.slice(0, MAX_ARRAY).map(x => compact(x, secrets, depth + 1));
+    const head = v.slice(0, MAX_ARRAY).map(x => compact(x, depth + 1));
     if (v.length > MAX_ARRAY) head.push(`[${v.length - MAX_ARRAY} items omitted]`);
     return head;
   }
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = compact(x, secrets, depth + 1);
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = compact(x, depth + 1);
   return out;
 }
 
@@ -143,10 +141,15 @@ export function storedPromptKind(payload: string): PromptKind | undefined {
   } catch { return undefined; }
 }
 
+/**
+ * The stored form of a hook payload: masked while still a parsed value (audit N1: secret-named keys replaced
+ * whole, string leaves through redact), size-limited per string and array, then serialized. Always valid JSON:
+ * a payload over MAX_PAYLOAD is stored as a marker object with a masked, cut preview instead of cut JSON text.
+ */
 export function eventPayload(raw: unknown, secrets: string[] = []): string {
-  let s = redact(JSON.stringify(compact(raw, secrets, 0)) ?? 'null', secrets);
-  if (s.length > MAX_PAYLOAD) s = `${s.slice(0, MAX_PAYLOAD)}…[truncated ${s.length - MAX_PAYLOAD} chars]`;
-  return s;
+  const s = JSON.stringify(compact(redactJson(raw, secrets), 0)) ?? 'null';
+  if (s.length <= MAX_PAYLOAD) return s;
+  return JSON.stringify({ _truncated: s.length, preview: s.slice(0, MAX_PAYLOAD / 2) });
 }
 
 /** Short masked text for signal details and block reasons. Keeps the end, where errors usually are. */

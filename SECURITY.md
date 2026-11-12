@@ -1,7 +1,5 @@
 # Security Policy
 
-> **Draft — to be finalized before release.**
-
 ## Reporting a vulnerability
 
 Please report security issues **privately** through GitHub's **"Report a vulnerability"** (private
@@ -39,9 +37,9 @@ reach them; tokens still matter because they sit in local files.
 ## What the project never does
 
 - It never reads or stores subscription (Claude.ai) credentials.
-- It never sends prompt text anywhere except Anthropic: apart from Claude Code's own traffic, the only
-  outbound call is the stage-2 triage judge in API-key mode, made with your key. Prompt text is stored
-  locally only when you turn on `recordPrompts`, and the stored copy never leaves the machine.
+- It never sends prompt text anywhere except Anthropic through Claude Code's own traffic; the router makes
+  no outbound call of its own, in either mode. Prompt text is stored locally only when you turn on
+  `recordPrompts`, and the stored copy never leaves the machine.
 - It never stores API keys outside the OS keychain — not in environment variables, not in plaintext files.
 
 ## Limits
@@ -65,6 +63,11 @@ directory. Files ignored by git are skipped. The guard refuses such a search whe
 file that git does not ignore, but it looks only four directory levels deep and at a bounded number of
 entries, so a credential file committed deep in a large tree can be missed. Keep credential files out of
 the repository or in `.gitignore`.
+
+**Credential files committed to the repository.** A file that is in the repository's history can be read
+through git itself (`git grep`, `git show HEAD`, `git log -p`), and workers may run those commands. The
+guard refuses paths that name a credential file, but no path check can cover content that git prints from
+its own store. Keep secrets out of the repository; if one was committed, treat it as exposed and rotate it.
 
 **Writes depend on the daemon.** A worker without a scope record cannot write (fail-closed). This means
 a stopped or crashed daemon blocks worker edits rather than leaving them unchecked.

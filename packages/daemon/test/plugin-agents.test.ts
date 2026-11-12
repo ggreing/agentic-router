@@ -164,7 +164,9 @@ test('decision 86: the install step is skipped in the user\'s tree (node_modules
     assert.equal(fs.existsSync(path.join(repo, 'installed.txt')), false);
     git(repo, 'worktree', 'add', '-q', '-b', 'wt-x', wt);
     const fresh = await runVerify({ cwd: wt, root: wt, commands: [install] });
-    assert.deepEqual(fresh, [{ kind: 'build', ok: true, detail: 'node install.cjs: exit 0' }]);
+    // decision 149: a command that ran also carries its exit code and duration
+    assert.deepEqual(fresh.map(({ kind, ok, detail, exitCode }) => ({ kind, ok, detail, exitCode })), [{ kind: 'build', ok: true, detail: 'node install.cjs: exit 0', exitCode: 0 }]);
+    assert.equal(typeof fresh[0]!.durationMs, 'number');
     assert.equal(fs.readFileSync(path.join(wt, 'installed.txt'), 'utf8'), 'yes');
   } finally {
     try { git(repo, 'worktree', 'remove', '--force', wt); } catch { /* best effort */ }

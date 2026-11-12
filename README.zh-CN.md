@@ -18,9 +18,9 @@ tester、ui-designer）。每个角色都位于一个「模型 × effort」阶�
 
 ## 判定
 
-第一阶段仅用规则——没有嵌入，也没有额外的模型调用。只有当规则无法判断规模时才进入第二阶段：在**订阅**
-模式下由主控依据注入其上下文的评分表（rubric）判断；在**API 密钥**模式下，一次 Sonnet 5.5 的 judge 调用
-（effort medium）会通过你的 API 密钥执行。基于嵌入的相似案例检索目前暂缓。
+第一阶段仅用规则——没有嵌入，也没有额外的模型调用。当规则无法判断规模时，Opus 级、Sonnet 或未知主控会把
+该请求作为 L2 团队承接，而 Haiku 主控则依据注入其上下文的评分表（rubric）自行判断。两种模式都不会有额外的
+外部调用。基于嵌入的相似案例检索目前暂缓。
 
 ## 委派与阶梯
 
@@ -67,8 +67,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 - **订阅**（默认, `init`）：仅由插件和本地守护进程完成全部工作；没有代理，任何组件都不会读取或存储订阅
   凭据。流量从 Claude Code 直接发往 Anthropic。
 - **API 密钥**（`init --mode api`）：可选启用的本地代理会汇总真实的令牌成本，并执行每个本地令牌每天
-  $100、总计每天 $300 的上限（可配置）以及每次请求的预算；超过上限时，代理以 429 拒绝新调用，且绝不中断
-  正在进行的响应。API 密钥仅保存在操作系统的密钥库（Windows 凭据管理器 / macOS 钥匙串 / Linux
+  $100、总计每天 $300 的预算（可配置）以及每次请求的预算。这些不是硬性上限：达到预算后新调用会被以 429
+  拒绝，但已在进行中的响应可能会超出它。API 密钥仅保存在操作系统的密钥库（Windows 凭据管理器 / macOS 钥匙串 / Linux
   libsecret）中。
 - **直连（direct）**：当代理出现问题时，用 `agentic-router mode direct` 以 API 密钥直接连接、绕过代理，
   再用 `agentic-router mode proxy` 切回。
@@ -83,8 +83,8 @@ node packages/cli/src/index.ts <command>      # pre-release entry point
 
 ## 隐私
 
-一切都存储在单个本地 SQLite 文件中；除 Claude Code 自身的流量，以及仅在 API 密钥模式下第二阶段 judge 对
-Anthropic 的调用之外，不会有任何内容离开本机。学习存储保存由规则提取的特征、结果、成本以及相似度等数值，
+一切都存储在单个本地 SQLite 文件中；除 Claude Code 自身的流量外，不会有任何内容离开本机，路由器在两种模式
+下都不会发起自己的外部调用。学习存储保存由规则提取的特征、结果、成本以及相似度等数值，
 不保存嵌入；除非你启用 `recordPrompts`，否则不保存提示词原文。关闭 `recordPrompts` 后，已保存的提示词
 原文会在下次守护进程启动时删除。日志和仪表板会对 API 密钥和令牌进行脱敏。任何组件都不会读取或存储订阅
 凭据。
@@ -160,7 +160,22 @@ claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 | `printf -v`、`echo ${VAR}` | 普通的 `printf` / `echo $VAR`（非密钥名称） |
 | 命令中的注释 | 去掉注释 |
 | `npm install user/repo` | 注册表名称；其他情况请向主控请求 |
-| 对含有未被忽略的 `.env` 的目录做 grep | 添加 glob 或类型、搜索子目录，或把该文件加入 `.gitignore` |
+| 命令行上没有提交信息的 `git commit` | `git commit -m "…"`（或 `-F <file>`、`-C <commit>`） |
+| `git commit --amend`、`-e`、`--reset-author` | 新建一次提交；由主控或用户修订 |
+| `git add -p`、`-i`、`-e` | `git add <文件>` |
+| `git add -A`、`git add .`，或其下有未被忽略凭据文件的 `git add <目录>` | 按名称添加文件，或把该文件加入 `.gitignore` |
+| 除 `--show-current` 外的 `git branch`；`git stash list` 的写入/执行选项（`--output`、`--ext-diff`） | 向主控请求 |
+| `tail -f`、`tail --follow` | `tail -n <N>` |
+| `npm install -g`、`--prefix`、`--location`；`pnpm add -g`；`pip install --user`、`--target`、`--prefix` | 安装到项目内 |
+| 写入 `.git`、CI 配置、`.claude` 或路由器策略的构建/测试/安装命令（例如 `npx tsc --outDir .git/hooks`） | 改变输出位置；这些文件的更改经由主控 |
+| `/proc` 或 `/dev` 下的路径（`/dev/null`、stdin、stdout、stderr 除外） | 文件的常规路径 |
+| 结果超过 64 个的花括号展开，或超过 20,000 字符的命令行 | 拆分命令 |
+| 对含有未被忽略凭据文件的目录的递归 grep（`grep -r`/`-d recurse`） | `rg`、Grep 工具，或按名称指明文件 |
+| 模式恰好是凭据文件名的 Bash 搜索（`grep ".env" …`、`rg '[.]env' …`） | Grep 工具（其模式不会被当作路径），或更长的模式如 `process.env` |
+
+以下两点不是拒绝，但值得了解：单词内的引号和反斜杠会按 Bash 的方式解析，所以 `cat .en""v` 会被当作
+`cat .env`，把名字拆开写也不会改变什么；另外，附加在短选项上的值会被当作路径，所以 `grep -f.env` 会像
+`grep -f .env` 一样被拒绝。
 
 ### 项目策略
 

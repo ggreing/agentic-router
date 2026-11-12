@@ -176,6 +176,27 @@ test('when the SPA is not built, /dashboard serves the build-instructions page (
   }
 });
 
+test('N2: a cross-site top-level GET navigation reaches the HTML shell, but cross-site metrics/auth stay 403', async () => {
+  await withServer(async ({ port }) => {
+    // the exact headers Chromium sends when the launch page navigates to the dashboard URL (cross-site)
+    const nav = { ...host(port), 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+    const shell = await rq(port, 'GET', '/dashboard', { headers: nav });
+    assert.equal(shell.status, 200, 'the shell is served to a cross-site navigation');
+    assert.match(String(shell.headers['content-type']), /text\/html/);
+    const route = await rq(port, 'GET', '/dashboard/some/spa/route', { headers: nav });
+    assert.equal(route.status, 200, 'an SPA route navigation is served too');
+    // a cross-site fetch() for metrics (not a navigation) is still refused
+    const metricsFetch = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: { ...host(port), 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' } });
+    assert.equal(metricsFetch.status, 403, 'cross-site metrics fetch stays blocked');
+    // even a cross-site navigation to a metrics path is refused (metrics keeps the strict rule)
+    const metricsNav = await rq(port, 'GET', '/dashboard/metrics/summary', { headers: nav });
+    assert.equal(metricsNav.status, 403, 'metrics is strict even as a document navigation');
+    // a cross-site POST to auth is refused
+    const authPost = await rq(port, 'POST', '/dashboard/auth', { headers: { ...host(port), 'sec-fetch-site': 'cross-site', 'content-type': 'application/json' }, body: '{"code":"x"}' });
+    assert.equal(authPost.status, 403, 'cross-site auth POST stays blocked');
+  });
+});
+
 test('handle returns false for non-dashboard paths so server.ts keeps its own routing', async () => {
   await withServer(async ({ port }) => {
     const other = await rq(port, 'GET', '/router/v1/status', { headers: host(port) });

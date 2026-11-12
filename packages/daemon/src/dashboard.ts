@@ -271,17 +271,31 @@ export function createDashboard(d: DashboardDeps): Dashboard {
     if (p !== '/dashboard' && !p.startsWith('/dashboard/')) return false;
 
     if (!hostOk(req)) { sendJson(res, 403, { error: 'host not allowed' }); return true; }
-    if (!originOk(req)) { sendJson(res, 403, { error: 'cross-origin requests are not allowed' }); return true; }
-    if (!secFetchOk(req)) { sendJson(res, 403, { error: 'cross-site requests are not allowed' }); return true; }
 
-    if (p === '/dashboard/register-code') { registerCode(req, res); return true; }
+    // N2: a cross-site TOP-LEVEL GET navigation to the HTML shell is allowed — the launch page opens the
+    // dashboard URL cross-site, and the shell carries nothing secret. Every sensitive route below keeps the
+    // strict same-origin / same-site rule; the session cookie is SameSite=Strict, so it is not sent on a
+    // cross-site navigation anyway, and the shell's SPA then calls auth and metrics same-origin.
+    const navToDocument = req.method === 'GET'
+      && req.headers['sec-fetch-mode'] === 'navigate'
+      && req.headers['sec-fetch-dest'] === 'document';
+    const strict = (): boolean => {
+      if (!originOk(req)) { sendJson(res, 403, { error: 'cross-origin requests are not allowed' }); return false; }
+      if (!secFetchOk(req)) { sendJson(res, 403, { error: 'cross-site requests are not allowed' }); return false; }
+      return true;
+    };
+
+    if (p === '/dashboard/register-code') { if (strict()) registerCode(req, res); return true; }
     if (p === '/dashboard/auth') {
+      if (!strict()) return true;
       // A client that aborts mid-body rejects the body read; handle it so there is no unhandled rejection.
       auth(req, res).catch(() => { try { if (!res.headersSent && res.writable) sendJson(res, 400, { error: 'bad request' }); } catch { /* socket gone */ } });
       return true;
     }
-    if (p === '/dashboard/logout') { logout(req, res); return true; }
-    if (p === '/dashboard/metrics' || p.startsWith('/dashboard/metrics/')) { metrics(req, res, url); return true; }
+    if (p === '/dashboard/logout') { if (strict()) logout(req, res); return true; }
+    if (p === '/dashboard/metrics' || p.startsWith('/dashboard/metrics/')) { if (strict()) metrics(req, res, url); return true; }
+    // static shell / assets: a top-level document navigation may be cross-site (N2); anything else stays strict.
+    if (!navToDocument && !strict()) return true;
     serveStatic(req, res, p);
     return true;
   }

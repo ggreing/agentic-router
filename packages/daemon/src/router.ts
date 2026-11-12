@@ -192,7 +192,8 @@ export class Router {
         sessionId: ev.sessionId, requestId: ctx.requestId, agentId: ev.agentId ?? null, type: ev.type,
         toolName: ev.toolName ?? null, receivedAt: ev.receivedAt || this.#at(), spooled: ev.spooled === true,
         // decision 99: env names only; decisions 141-142: the minimal form unless recordPrompts is on
-        payload: eventPayload(this.#config.recordPrompts === true ? withoutEnvValues(ev.raw) : minimalPayload(withoutEnvValues(ev.raw)), this.#secrets),
+        // decision 149: an edit tool's event is the path only even with recordPrompts on (it covers prompt text, not file contents)
+        payload: eventPayload(this.#config.recordPrompts === true && !EDIT_TOOLS.has(ev.toolName ?? '') ? withoutEnvValues(ev.raw) : minimalPayload(withoutEnvValues(ev.raw)), this.#secrets),
       });
     } catch (e) {
       this.#log.error('event record failed', { type: ev.type, error: errorText(e) });

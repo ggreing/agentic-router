@@ -6,8 +6,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SECRET_PATTERN_SPECS } from '@agentic-router/core';
+import { SECRET_PATTERN_SPECS, SECRET_KEY_NAME_SPECS } from '@agentic-router/core';
 
+// The relay walks parsed JSON (audit N1): it masks string leaves with `patterns` and replaces a string
+// whole when its object key matches one of `secretKeyNames`.
+const doc = { patterns: SECRET_PATTERN_SPECS, secretKeyNames: SECRET_KEY_NAME_SPECS };
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'hooks', 'secret-patterns.json');
-fs.writeFileSync(out, JSON.stringify(SECRET_PATTERN_SPECS, null, 2) + '\n');
-console.log(`wrote ${out} (${SECRET_PATTERN_SPECS.length} patterns)`);
+fs.writeFileSync(out, JSON.stringify(doc, null, 2) + '\n');
+console.log(`wrote ${out} (${SECRET_PATTERN_SPECS.length} patterns, ${SECRET_KEY_NAME_SPECS.length} key rules)`);

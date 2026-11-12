@@ -153,39 +153,69 @@ export const PACKAGE_INSTALL_PREFIXES = [
 /**
  * Secret-masking patterns (audit A5). `lead: true` means the regex captures the part to KEEP as group 1
  * (a header/field name up to its separator, or a URL's `scheme://user:`) and only the value after it is
- * masked; the rest mask the whole match, keeping a 7-char hint. One list lives here; the relay's copy is
- * generated from SECRET_PATTERN_SPECS into plugin/hooks/secret-patterns.json (scripts/sync-secret-patterns.ts),
- * and a test fails when that file is stale. Masking is a net, not a guarantee (see A4's field allowlist).
+ * masked; the rest mask the whole match, keeping a 7-char hint. Every quantifier is bounded so masking stays
+ * linear on long unbroken input (audit N6). Masking is a net, not a guarantee (see A4's field allowlist).
+ *
+ * The relay is dependency-free and ships the generated plugin/hooks/secret-patterns.json
+ * (scripts/sync-secret-patterns.ts), which carries BOTH these text patterns and the secret-key-name rules
+ * below; a test fails when the committed file is stale. For JSON, never run `redact` over a serialized
+ * document (audit N1: it corrupts the document) — walk the parsed value with `redactJson` instead.
  */
 const SECRET_PATTERNS: Array<{ re: RegExp; lead?: boolean }> = [
   // vendor-prefixed tokens — mask the whole token, keep a short hint
-  { re: /sk-ant-[A-Za-z0-9_-]{8,}/g },
-  { re: /\b(?:xox[baprs]-|sk-proj-|sk_live_|sk_test_|glpat-|npm_|github_pat_|gh[pousr]_)[A-Za-z0-9_-]{8,}/g },
-  { re: /\bAKIA[0-9A-Z]{16}\b/g },                                    // AWS access key id
-  { re: /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g },                    // JWT
-  { re: /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g },  // PEM block
-  { re: /\b(?:bearer|basic|token)\s+[A-Za-z0-9+/=._~-]{12,}/gi },      // auth-scheme values
-  // URL userinfo — keep scheme://user:, mask the password up to '@'
-  { re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi, lead: true },
+  { re: /sk-ant-[A-Za-z0-9_-]{8,512}/g },
+  { re: /\b(?:xox[baprs]-|sk-proj-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|glpat-|glrt-|npm_|hf_|github_pat_|gh[pousr]_|AIza|SG\.|ya29\.)[A-Za-z0-9_.-]{8,512}/g },
+  { re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },                          // AWS access key id (long-term / temporary)
+  { re: /\beyJ[\w-]{8,512}\.[\w-]{8,512}\.[\w-]{8,512}/g },          // JWT
+  { re: /-----BEGIN (?:[A-Z ]{0,40} )?PRIVATE KEY-----[\s\S]{0,8192}?-----END (?:[A-Z ]{0,40} )?PRIVATE KEY-----/g },  // PEM private key
+  { re: /-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]{0,8192}?-----END PGP PRIVATE KEY BLOCK-----/g },                  // PGP private key
+  { re: /\b(?:bearer|basic|token)\s+[A-Za-z0-9+/=._~-]{12,1024}/gi },  // auth-scheme values
+  // URL userinfo — keep scheme://user:, mask the password up to '@' (classes bounded; N6)
+  { re: /([a-z][a-z0-9+.-]{0,32}:\/\/[^\s:@/]{1,128}:)[^\s@/]{1,256}@/gi, lead: true },
   // Cookie / Set-Cookie header — keep the name, mask the value to end of line
-  { re: /((?:set-)?cookie["']?\s*[:=]\s*)[^\r\n]+/gi, lead: true },
+  { re: /((?:set-)?cookie["']?\s*[:=]\s*)[^\r\n]{1,4096}/gi, lead: true },
   // JSON {"name":"...secret-ish...","value":"..."} — keep up to the value's opening quote
-  { re: /("name"\s*:\s*"[^"]*(?:key|token|secret|password|passwd|credential)[^"]*"\s*,\s*"value"\s*:\s*")[^"]*/gi, lead: true },
-  // any NAME containing a secret word = VALUE (env/flag/json); value runs to whitespace or a quote, past
-  // commas, any length. Runs before the legacy field pattern so a comma in the value does not cut it short.
-  { re: /([A-Za-z0-9_]*(?:key|token|secret|password|passwd|credential)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"']+/gi, lead: true },
+  { re: /("name"\s*:\s*"[^"]{0,128}(?:key|token|secret|password|passwd|credential)[^"]{0,128}"\s*,\s*"value"\s*:\s*")[^"]{0,4096}/gi, lead: true },
+  // NAME ending in a secret word = "quoted value": keep the name and opening quote, mask to the closing
+  // quote (N1: a value with a space is masked whole; the quote is a lookahead, so it is not consumed).
+  { re: /((?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_.-]{0,64}[_.-](?:key|token|secret|password|passwd|credential)|token|secret|password|passwd|credential)["']?\s*[:=]\s*")[^"\r\n]{0,4096}(?=")/gi, lead: true },
+  { re: /((?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_.-]{0,64}[_.-](?:key|token|secret|password|passwd|credential)|token|secret|password|passwd|credential)["']?\s*[:=]\s*')[^'\r\n]{0,4096}(?=')/gi, lead: true },
+  // A secret-word name: either `token`/`secret`/`password`/`passwd`/`credential` on its own, or any name whose
+  // last segment after a separator is one of those or `key`. So `password=`, `api_key=`, `--password` and
+  // `AWS_SECRET_ACCESS_KEY=` match, but a bare `key` does not (prose like `primary key = id`, and `monkey`, are
+  // left alone; a bare secret-word JSON key is caught by redactJson's key rule). The `(?!\[REDACTED\])` keeps
+  // re-masking idempotent (so a value already `[REDACTED]` is not partly re-matched). The value stops at
+  // whitespace, a quote or a JSON close.
+  { re: /((?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_.-]{0,64}[_.-](?:key|token|secret|password|passwd|credential)|token|secret|password|passwd|credential)["']?\s*[:=]\s*)(?!\[REDACTED\])[^\s"'}\]]{1,4096}/gi, lead: true },
   // legacy header/JSON credential field with an auth scheme (kept; 8+ value) for names without a secret word
-  { re: /(?:authorization|x-api-key|access[-_]?token|auth[-_]?token)["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s"',}]{8,}/gi },
-  { re: /\bANTHROPIC_[A-Z_]*\s*=\s*\S+/g },                            // ANTHROPIC_API_KEY=…, ANTHROPIC_AUTH_TOKEN=…
+  { re: /(?:authorization|x-api-key|access[-_]?token|auth[-_]?token)["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?[^\s"',}]{8,1024}/gi },
+  { re: /\bANTHROPIC_[A-Z_]{0,64}\s*=\s*\S{1,1024}/g },               // ANTHROPIC_API_KEY=…, ANTHROPIC_AUTH_TOKEN=…
 ];
 
-/** Serializable form of SECRET_PATTERNS for the plugin's generated copy; `lead` matches the redact rule above. */
+/**
+ * An object key whose name marks its string value as a secret, for `redactJson` (audit N1). The secret word
+ * must be the WHOLE key or sit at a separator or camelCase boundary, so `api_key`, `apiKey`, `accessToken`
+ * and `clientSecret` match while `totalTokens` and `monkey` do not.
+ */
+const SECRET_KEY_NAMES: RegExp[] = [
+  /(?:^|[_\-.])(?:key|token|secret|password|passwd|credential)$/i,
+  /[a-z0-9](?:Key|Token|Secret|Password|Passwd|Credential)$/,
+];
+function isSecretKey(name: string): boolean {
+  return SECRET_KEY_NAMES.some(re => re.test(name));
+}
+
+/** Masking never scans more than this many characters of one string, so it stays bounded (audit N6). */
+export const MAX_MASK_LENGTH = 1_000_000;
+
+/** Serializable form of the text patterns and the secret-key rules for the plugin's generated copy. */
 export interface SecretPatternSpec { source: string; flags: string; lead?: boolean }
 export const SECRET_PATTERN_SPECS: SecretPatternSpec[] = SECRET_PATTERNS.map(p => ({ source: p.re.source, flags: p.re.flags, ...(p.lead ? { lead: true } : {}) }));
+export const SECRET_KEY_NAME_SPECS: SecretPatternSpec[] = SECRET_KEY_NAMES.map(re => ({ source: re.source, flags: re.flags }));
 
-/** Masks API keys, OAuth tokens, cookies and secret-named values. Apply before writing anything to logs or the ledger. */
+/** Masks secrets in one text string: API keys, OAuth tokens, cookies and secret-named values. */
 export function redact(text: string, extraSecrets: string[] = []): string {
-  let out = text;
+  let out = text.length > MAX_MASK_LENGTH ? text.slice(0, MAX_MASK_LENGTH) + '…[truncated]' : text;
   for (const s of extraSecrets) if (s && s.length >= 8) out = out.split(s).join('[REDACTED]');
   for (const p of SECRET_PATTERNS) {
     out = p.lead
@@ -193,4 +223,24 @@ export function redact(text: string, extraSecrets: string[] = []): string {
       : out.replace(p.re, (m: string) => m.slice(0, 7) + '…[REDACTED]');
   }
   return out;
+}
+
+/**
+ * Masks secrets in a PARSED JSON value without breaking its shape (audit N1): walks the value, masks string
+ * leaves, and leaves keys, numbers, booleans and null untouched. A string under a secret-named key is
+ * replaced whole; any other string is run through `redact`. Serialize the result — never `redact` the
+ * serialized text. Returns a new value; the input is not mutated.
+ */
+export function redactJson(value: unknown, extraSecrets: string[] = []): unknown {
+  const walk = (v: unknown, keyIsSecret: boolean): unknown => {
+    if (typeof v === 'string') return keyIsSecret ? '[REDACTED]' : redact(v, extraSecrets);
+    if (Array.isArray(v)) return v.map(x => walk(x, false));
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v)) out[k] = walk(val, isSecretKey(k));
+      return out;
+    }
+    return v;
+  };
+  return walk(value, false);
 }

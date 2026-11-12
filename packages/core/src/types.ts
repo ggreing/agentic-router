@@ -47,7 +47,18 @@ export interface TeamPreset {
 // ---------------------------------------------------------------- evaluation (spec 3.5)
 
 export type SignalKind = 'build' | 'typecheck' | 'lint' | 'test' | 'scope' | 'review' | 'error_repeat' | 'max_turns' | 'tool_error';
-export interface VerifySignal { kind: SignalKind; ok: boolean; detail?: string }
+export interface VerifySignal {
+  kind: SignalKind;
+  ok: boolean;
+  /** First line: what ran and how it ended. Then the masked output tail, which reaches the subagent at once and is
+   * stored only with recordPrompts on (decision 149). */
+  detail?: string;
+  /** Decision 149: the structured result of a verify command, stored whatever the option. */
+  exitCode?: number | null;
+  durationMs?: number;
+  testsPassed?: number;
+  testsFailed?: number;
+}
 
 /** Outcome of one session: 1st failure, miss (2 consecutive failures), meet, ample (first-try pass + review score >= threshold). */
 export type Verdict = 'fail_once' | 'miss' | 'meet' | 'ample';

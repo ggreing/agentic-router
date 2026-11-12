@@ -133,7 +133,7 @@ export async function dataPurge(f: Flags, d: DataDeps): Promise<number> {
     const { liveSessions, purge, purgeFiles } = await lib();
     try {
       const r = purge(o.ledger.db, { ...(all ? { all } : { before: before.value! }), dryRun });
-      if (all) r.files = purgeFiles({ spoolDir: paths.spoolDir(), scopesDir: paths.scopesDir(), agentsDir: paths.agentsDir(), logsDir: paths.logsDir() }, liveSessions(o.ledger.db), dryRun);
+      if (all) r.files = purgeFiles({ spoolDir: paths.spoolDir(), scopesDir: paths.scopesDir(), agentsDir: paths.agentsDir(), logsDir: paths.logsDir(), root: routerHome() }, liveSessions(o.ledger.db), dryRun);
       return r;
     } finally { o.ledger.close(); }
   };

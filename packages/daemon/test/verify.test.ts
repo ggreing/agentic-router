@@ -196,7 +196,9 @@ test('ifExists: runs the step when the path exists in the work tree, skips it as
       { kind: 'test', command: 'node bad.cjs', ifExists: 'package.json' },
       { kind: 'lint', command: 'node ok.cjs', ifExists: 'sub' },
     ] });
-    assert.deepEqual(s, [
+    // decision 149: the steps that ran carry exit code and duration; a skipped step does not
+    assert.deepEqual(s.map(x => [x.kind, x.exitCode ?? null, typeof x.durationMs]), [['build', 0, 'number'], ['test', null, 'undefined'], ['lint', 0, 'number']]);
+    assert.deepEqual(s.map(({ kind, ok, detail }) => ({ kind, ok, detail })), [
       { kind: 'build', ok: true, detail: 'node ok.cjs: exit 0' },
       { kind: 'test', ok: true, detail: 'node bad.cjs: skipped (no package.json)' },
       { kind: 'lint', ok: true, detail: 'node ok.cjs: exit 0' },

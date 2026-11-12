@@ -2,6 +2,7 @@
 // .agentic-router/policy.json (extra Bash commands for workers, extra verify variables) is ignored until the user
 // accepts its exact content; a change to the file needs a new acceptance. The guard owns the rules and the
 // record (plugin/hooks/guard.mjs); this is its front end, and doctor's line.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Check } from './doctor.ts';
@@ -19,7 +20,8 @@ export interface PolicyStatus {
 export interface GuardPolicy {
   policyRoot(dir: string): string;
   policyStatus(root: string): PolicyStatus;
-  acceptPolicy(root: string): PolicyStatus;
+  /** expectedHash (audit N5): nothing is recorded when the file is no longer the content that was shown. */
+  acceptPolicy(root: string, stateHome?: string, now?: Date, expectedHash?: string): PolicyStatus & { changed?: boolean };
   revokePolicy(root: string): boolean;
 }
 
@@ -29,16 +31,37 @@ export async function loadGuard(pluginDir = readConfig()?.pluginDir): Promise<Gu
   return await import(pathToFileURL(path.join(dir, 'hooks', 'guard.mjs')).href) as GuardPolicy;
 }
 
-const list = (v: unknown[] | undefined) => (v && v.length ? v.map(x => JSON.stringify(x)).join(', ') : 'none');
+/**
+ * Audit N5: an entry as the terminal shows it: quoted, with everything outside printable ASCII escaped, so a
+ * control sequence, a bidi override or a zero-width character cannot hide or rewrite what is being accepted.
+ */
+export const shownEntry = (x: unknown): string =>
+  `"${String(x).replace(/[^\x20-\x7e]|["\\]/g, c => (c === '"' || c === '\\' ? `\\${c}` : `\\u{${c.codePointAt(0)!.toString(16).padStart(4, '0')}}`))}"`;
+
+/** Entries of the file the guard leaves out (more than 100, longer than 200, not a string); for the listing. */
+function droppedEntries(root: string, key: 'bashAllow' | 'verifyEnv', kept: number): number {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(root, '.agentic-router', 'policy.json'), 'utf8')) as Record<string, unknown>;
+    return Array.isArray(j[key]) ? Math.max(0, (j[key] as unknown[]).length - kept) : 0;
+  } catch { return 0; }
+}
 
 export function describePolicy(root: string, s: PolicyStatus): string[] {
   if (!s.present) return [`${root}: no .agentic-router/policy.json`];
   const state = !s.valid ? `not valid${s.error ? ` (${s.error})` : ''}: ignored`
     : s.accepted ? 'accepted' : s.acceptedHash ? 'changed since you accepted it: ignored until you accept it again' : 'not accepted: ignored';
+  const section = (key: 'bashAllow' | 'verifyEnv', label: string) => {
+    const entries = s.policy?.[key] ?? [];
+    const dropped = droppedEntries(root, key, entries.length);
+    return [
+      `  ${key} (${label}): ${entries.length ? `${entries.length}` : 'none'}${dropped ? ` (${dropped} more in the file are ignored: over 100 entries, over 200 characters, or not text)` : ''}`,
+      ...entries.map(x => `    - ${shownEntry(x)}`),
+    ];
+  };
   return [
     `${path.join(root, '.agentic-router', 'policy.json')} (sha256 ${s.hash?.slice(0, 12) ?? '?'}): ${state}`,
-    `  bashAllow (extra commands workers may run): ${list(s.policy?.bashAllow)}`,
-    `  verifyEnv (extra variables passed to verify): ${list(s.policy?.verifyEnv)}`,
+    ...section('bashAllow', 'extra commands workers may run'),
+    ...section('verifyEnv', 'extra variables passed to verify'),
   ];
 }
 
@@ -58,8 +81,11 @@ export async function policyCommand(sub: string | undefined, f: Record<string, s
       if (!d.isTTY) { d.out('Not a terminal: re-run with --yes to accept.'); return 1; }
       if (!await d.ask('Accept this policy? [y/N] ')) { d.out('Not accepted.'); return 1; }
     }
-    const after = d.guard.acceptPolicy(root);
-    d.out(after.accepted ? 'Accepted. A change to the file needs a new `agentic-router policy accept`.' : 'Not accepted: the file changed or is no longer valid.');
+    // audit N5: record the content that was shown, or nothing (a build script or watcher may rewrite the file meanwhile)
+    const after = d.guard.acceptPolicy(root, undefined, undefined, s.hash ?? undefined);
+    d.out(after.accepted ? 'Accepted. A change to the file needs a new `agentic-router policy accept`.'
+      : after.changed ? 'Not accepted: the file changed while you were asked. Run `agentic-router policy accept` again to see its current content.'
+      : 'Not accepted: the file changed or is no longer valid.');
     return after.accepted ? 0 : 1;
   }
   if (sub === 'revoke') {

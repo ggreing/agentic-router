@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { redact } from '@agentic-router/core';
 import { backupNote, readJsonFile, writeBackup, writeJsonAtomic, type PlannedChange } from './setup.ts';
 
 export type ApiMode = 'proxy' | 'direct';
@@ -43,6 +44,8 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
   const prevHelper = settings.apiKeyHelper;
   if (prevHelper !== undefined && prevHelper !== helper) {
     notes.push(isRouterHelper(prevHelper) ? 'apiKeyHelper: switch to the router\'s ' + (mode === 'proxy' ? 'local-token helper' : 'keychain key helper')
+      // decision 149: a helper that holds a key literal is neither echoed nor copied into the backup
+      : redact(String(prevHelper)) !== String(prevHelper) ? 'apiKeyHelper: replace yours (it holds a key, so it is not shown or kept in the backup)'
       : `apiKeyHelper: replace "${String(prevHelper)}" (kept in the settings backup)`);
   } else if (prevHelper === undefined) notes.push(`apiKeyHelper: ${mode === 'proxy' ? 'the router\'s local token' : 'the API key from the OS keychain'}`);
   for (const k of CREDENTIAL_ENV) if (k in env) { delete env[k]; notes.push(`env.${k}: remove (it would take precedence over apiKeyHelper)`); }

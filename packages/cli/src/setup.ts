@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { PROVISIONAL_BUDGET_USD, paths, routerHome, type Level, type RouterConfig } from '@agentic-router/core';
+import { PROVISIONAL_BUDGET_USD, paths, redact, routerHome, type Level, type RouterConfig } from '@agentic-router/core';
 
 /** Ports common dev servers use; the daemon never takes them (spec 2.1). */
 export const COMMON_DEV_PORTS = new Set([3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8081, 8443, 8787, 8888, 9000, 9229, 27017]);
@@ -102,16 +102,28 @@ export function writeConfig(c: CliConfig): void {
 export const isCredentialName = (name: string): boolean => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH/i.test(name);
 export const backupFile = (settingsFile: string): string => `${settingsFile}.agentic-router.bak`;
 
-function credentialNames(settings: unknown): string[] {
-  const env = (settings as { env?: unknown } | null)?.env;
-  return env && typeof env === 'object' && !Array.isArray(env) ? Object.keys(env).filter(isCredentialName).sort() : [];
+/** Env names a backup leaves out besides credential-looking ones (decision 149): headers can carry a credential. */
+const BACKUP_DROP_ENV = new Set(['ANTHROPIC_CUSTOM_HEADERS']);
+
+/**
+ * The settings fields a backup must not keep, as labels: `env.<NAME>` for credential-looking env values and
+ * ANTHROPIC_CUSTOM_HEADERS, and `apiKeyHelper` when the helper command itself holds a key-shaped literal
+ * (masking would change it).
+ */
+function credentialFields(settings: unknown): string[] {
+  const s = settings as { env?: unknown; apiKeyHelper?: unknown } | null;
+  const env = s?.env;
+  const out = env && typeof env === 'object' && !Array.isArray(env)
+    ? Object.keys(env).filter(k => isCredentialName(k) || BACKUP_DROP_ENV.has(k)).sort().map(k => `env.${k}`) : [];
+  if (typeof s?.apiKeyHelper === 'string' && redact(s.apiKeyHelper) !== s.apiKeyHelper) out.push('apiKeyHelper');
+  return out;
 }
 function withoutCredentials<T extends Record<string, any>>(settings: T): T {
-  const names = credentialNames(settings);
-  if (!names.length) return settings;
-  const env = { ...settings.env };
-  for (const k of names) delete env[k];
+  const fields = credentialFields(settings);
+  if (!fields.length) return settings;
   const next: Record<string, any> = { ...settings };
+  const env = { ...settings.env };
+  for (const f of fields) { if (f === 'apiKeyHelper') delete next.apiKeyHelper; else delete env[f.slice('env.'.length)]; }
   if (Object.keys(env).length) next.env = env; else delete next.env;
   return next as T;
 }
@@ -119,8 +131,8 @@ function withoutCredentials<T extends Record<string, any>>(settings: T): T {
 /** For a plan summary: what the one-time backup about to be made leaves out. */
 export function backupNote(settingsFile: string): string {
   if (!fs.existsSync(settingsFile) || fs.existsSync(backupFile(settingsFile))) return '';
-  const names = credentialNames(readJsonFile<Record<string, any>>(settingsFile, {}));
-  return names.length ? ` (the one-time backup leaves out ${names.map(n => `env.${n}`).join(', ')}: credentials are not copied)` : '';
+  const fields = credentialFields(readJsonFile<Record<string, any>>(settingsFile, {}));
+  return fields.length ? ` (the one-time backup leaves out ${fields.join(', ')}: credentials are not copied)` : '';
 }
 
 /** The one-time backup of a settings file (0600), without credential env values. A backup that exists is kept. */
@@ -130,11 +142,11 @@ export function writeBackup(settingsFile: string): void {
   writeJsonAtomic(bak, withoutCredentials(readJsonFile<Record<string, any>>(settingsFile, {})), { mode: 0o600 });
 }
 
-/** Credential env names an existing backup still holds (made before decision 142). */
+/** The credential fields an existing backup still holds (made before decisions 142 and 149), as labels. */
 export function backupCredentials(settingsFile: string): string[] {
   const bak = backupFile(settingsFile);
   if (!fs.existsSync(bak)) return [];
-  try { return credentialNames(readJsonFile<unknown>(bak, {})); } catch { return []; }
+  try { return credentialFields(readJsonFile<unknown>(bak, {})); } catch { return []; }
 }
 
 /** init offers this when an existing backup holds credentials: the backup rewritten without them. */
@@ -144,7 +156,7 @@ export function planBackupClean(settingsFile: string): PlannedChange | null {
   const bak = backupFile(settingsFile);
   return {
     file: bak,
-    summary: `remove ${names.map(n => `env.${n}`).join(', ')} from the backup (a credential kept in plain text)`,
+    summary: `remove ${names.join(', ')} from the backup (a credential kept in plain text)`,
     apply() { writeJsonAtomic(bak, withoutCredentials(readJsonFile<Record<string, any>>(bak, {})), { mode: 0o600 }); },
   };
 }

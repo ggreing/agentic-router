@@ -12,10 +12,10 @@ First public pre-release.
 - **Subscription mode** (default): the plugin and a local daemon do all the work. There is no proxy,
   and no subscription credential is ever read or stored. Traffic goes straight from Claude Code to
   Anthropic.
-- **API-key mode** (opt-in): a local proxy aggregates real token cost and enforces daily caps ($100
-  per local token, $300 total, both configurable) plus a per-request budget. Over a cap it refuses
-  new calls with a 429 and never cuts a response already in progress. The API key lives only in the
-  OS keychain (Windows Credential Manager / macOS Keychain / Linux libsecret).
+- **API-key mode** (opt-in): a local proxy aggregates real token cost and applies daily budgets ($100
+  per local token, $300 total, both configurable) plus a per-request budget. These are not hard caps:
+  new calls are refused with a 429 once a budget is reached, but responses already in flight can go over
+  it. The API key lives only in the OS keychain (Windows Credential Manager / macOS Keychain / Linux libsecret).
 - **Direct mode**: connect with the API key, bypassing the proxy, if the proxy has a problem. Switch
   between modes with `agentic-router mode subscription|api|direct|proxy`.
 
@@ -38,7 +38,7 @@ First public pre-release.
 ### Privacy (defaults)
 
 - Everything is stored in one local SQLite file; nothing leaves the machine except Claude Code's own
-  traffic and, in API-key mode only, the stage-2 triage judge call to Anthropic.
+  traffic — the router makes no outbound call of its own, in either mode.
 - The learning store keeps rule-derived features, outcomes, costs and numbers — not embeddings, and
   not prompt text unless you turn on `recordPrompts`. Turning it back off deletes the stored prompt
   text at the next daemon start. Logs and the dashboard mask API keys and tokens.

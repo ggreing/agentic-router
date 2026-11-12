@@ -154,7 +154,10 @@ export async function runVerify(plan: VerifyPlan): Promise<VerifySignal[]> {
       command = command.split(RELATED_TESTS_PLACEHOLDER).join(tests.map(shQuote).join(' '));
     }
     const limit = Math.min(c.timeoutMs ?? plan.commandTimeoutMs ?? COMMAND_TIMEOUT_MS, left);
+    const t0 = Date.now();
     const r = await runCommand(command, plan.cwd, limit, plan.signal, { env, shell });
+    // decision 149: the structured result, stored whatever recordPrompts says (the output tail is not)
+    const facts = { exitCode: r.code, durationMs: Date.now() - t0, ...testCounts(r.output) };
     const zero = !r.timedOut && !r.aborted ? zeroTestsRan(command, r.output, r.code) : undefined;
     const ok = !r.timedOut && !r.aborted && r.code === 0 && !zero;
     const status = r.aborted ? 'aborted' : r.timedOut ? `timed out after ${Math.round(limit / 1000)}s`
@@ -162,11 +165,11 @@ export async function runVerify(plan: VerifyPlan): Promise<VerifySignal[]> {
     const missing = !ok && !zero && !r.timedOut && !r.aborted ? missingTool(r.code, r.output) : undefined;
     if (missing) {
       outcome.envMissing = [...(outcome.envMissing ?? []), c.command];
-      out.push({ kind: c.kind, ok: false, detail: `${command}: ${ENV_MARK}${missing} (exit ${r.code ?? r.signal}); verify cannot run this here, not counted as the subagent's failure` });
+      out.push({ kind: c.kind, ok: false, detail: `${command}: ${ENV_MARK}${missing} (exit ${r.code ?? r.signal}); verify cannot run this here, not counted as the subagent's failure`, ...facts });
       continue;
     }
     const tail = ok ? '' : tailText(r.output, DETAIL_MAX, plan.secrets);
-    out.push({ kind: c.kind, ok, detail: `${command}: ${status}${tail ? `\n${tail}` : ''}` });
+    out.push({ kind: c.kind, ok, detail: `${command}: ${status}${tail ? `\n${tail}` : ''}`, ...facts });
   }
   // What the commands themselves wrote (build info, caches) is recorded so the next stop does not count it.
   if (sc?.state && snap && plan.commands.length && !plan.signal?.aborted) {
@@ -241,6 +244,22 @@ export const isEnvFailure = (s: VerifySignal) => !s.ok && s.kind !== 'scope' && 
  * cmd.exe "is not recognized as an internal or external command", e.g. npm scripts on Windows) says
  * nothing about the subagent's work. Returns what was missing, or undefined.
  */
+/**
+ * Decision 149: the pass and fail counts a test runner printed, from its last summary (node --test "ℹ pass N",
+ * TAP "# pass N", pytest "N passed, N failed", jest/vitest "Tests: N failed, N passed", mocha "N passing").
+ * Only numbers leave the output; nothing when there is no summary.
+ */
+export function testCounts(output: string): { testsPassed?: number; testsFailed?: number } {
+  const last = (res: RegExp[]) => {
+    let found: number | undefined;
+    for (const re of res) for (const m of output.matchAll(re)) found = Number(m[1]);
+    return found;
+  };
+  const passed = last([/(?:ℹ|#) pass (\d+)/g, /\b(\d+) (?:passed|passing)\b/g]);
+  const failed = last([/(?:ℹ|#) fail (\d+)/g, /\b(\d+) (?:failed|failing)\b/g]);
+  return { ...(passed !== undefined ? { testsPassed: passed } : {}), ...(failed !== undefined ? { testsFailed: failed } : {}) };
+}
+
 export function missingTool(code: number | null, output: string): string | undefined {
   const cmd = /'([^'\r\n]+)' is not recognized as an internal or external command/.exec(output);
   if (cmd) return `${cmd[1]} not found`;

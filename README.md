@@ -21,10 +21,10 @@ local files and blocks on error, so a subagent never writes outside its scope.
 
 ## Triage
 
-Stage 1 is rules only — no embeddings, no extra model call. Only when the rules cannot tell the size does
-the request go to stage 2: in **subscription** mode the lead decides with a rubric injected into its
-context; in **API-key** mode a Sonnet 5.5 judge call (effort medium) runs through your API key. Similar-
-case search over embeddings is deferred for now.
+Stage 1 is rules only — no embeddings, no extra model call. When the rules cannot tell the size, an
+Opus-class, Sonnet or unknown lead takes the request on as an L2 team, while a Haiku lead decides it itself
+from a rubric injected into its context. There is no extra outbound call in either mode. Similar-case
+search over embeddings is deferred for now.
 
 ## Delegation and the ladder
 
@@ -76,10 +76,11 @@ Below, `agentic-router <command>` is that entry point. Requirements: **Node 24+*
 - **Subscription** (default, from `init`): the plugin and the local daemon do everything; there is no
   proxy, and no subscription credential is ever read or stored. Traffic goes straight from Claude Code to
   Anthropic.
-- **API key** (`init --mode api`): an opt-in local proxy aggregates real token cost and enforces daily
-  caps of $100 per local token and $300 in total (configurable), plus the per-request budget; over a cap
-  the proxy refuses new calls with a 429 and never cuts a response already in progress. The API key is
-  kept only in the OS keychain (Windows Credential Manager / macOS Keychain / Linux libsecret).
+- **API key** (`init --mode api`): an opt-in local proxy aggregates real token cost and applies daily
+  budgets of $100 per local token and $300 in total (configurable), plus the per-request budget. These are
+  not hard caps: new calls are refused with a 429 once a budget is reached, but responses already in flight
+  can go over it. The API key is kept only in the OS keychain (Windows Credential Manager / macOS Keychain
+  / Linux libsecret).
 - **Direct**: if the proxy has a problem, `agentic-router mode direct` connects with the API key directly,
   bypassing the proxy; `agentic-router mode proxy` switches back.
 
@@ -95,7 +96,7 @@ Korean, Japanese and Simplified Chinese. All data stays on the machine.
 ## Privacy
 
 Everything is stored in one local SQLite file; nothing leaves the machine except Claude Code's own
-traffic and, in API-key mode only, the stage-2 judge call to Anthropic. The learning store keeps
+traffic — the router makes no outbound call of its own, in either mode. The learning store keeps
 rule-derived features, outcomes, costs, and numbers such as similarity scores — not embeddings, and not
 prompt text unless you turn on `recordPrompts`. Switching `recordPrompts` off deletes the stored prompt
 text at the next daemon start. Logs and the dashboard mask API keys and tokens. No component reads or
@@ -177,7 +178,22 @@ Some refusals may surprise a worker that is doing honest work. The message says 
 | `printf -v`, `echo ${VAR}` | plain `printf` / `echo $VAR` (non-secret names) |
 | A comment inside a command | drop the comment |
 | `npm install user/repo` | a registry name; ask the lead for anything else |
-| Grep over a directory that holds an un-ignored `.env` | add a glob or type, search a subdirectory, or add the file to `.gitignore` |
+| `git commit` with no message on the command line | `git commit -m "…"` (or `-F <file>`, `-C <commit>`) |
+| `git commit --amend`, `-e`, `--reset-author` | a new commit; the lead or user amends |
+| `git add -p`, `-i`, `-e` | `git add <files>` |
+| `git add -A`, `git add .` or `git add <dir>` with an un-ignored credential file below | add the files by name, or put the file in `.gitignore` |
+| `git branch` beyond `--show-current`; write/run options on `git stash list` (`--output`, `--ext-diff`) | ask the lead |
+| `tail -f`, `tail --follow` | `tail -n <N>` |
+| `npm install -g`, `--prefix`, `--location`; `pnpm add -g`; `pip install --user`, `--target`, `--prefix` | install into the project |
+| A build/test/install command writing into `.git`, CI config, `.claude` or the router policy (e.g. `npx tsc --outDir .git/hooks`) | point the output elsewhere; changes to those files go through the lead |
+| A path under `/proc` or `/dev` (except `/dev/null`, stdin, stdout, stderr) | the file's ordinary path |
+| A brace expansion over 64 results, or a command line over 20,000 characters | split the command |
+| A recursive grep (`grep -r`/`-d recurse`) over a directory with an un-ignored credential file | `rg`, the Grep tool, or name the files |
+| A Bash search whose pattern is exactly a credential file name (`grep ".env" …`, `rg '[.]env' …`) | the Grep tool (its pattern is not read as a path), or a longer pattern such as `process.env` |
+
+Two things that are not refusals but are worth knowing: quotes and backslashes inside a word are read as
+Bash reads them, so `cat .en""v` is treated as `cat .env` and writing a name in pieces changes nothing; and
+a value attached to a short option counts as a path, so `grep -f.env` is refused like `grep -f .env`.
 
 ### Project policy
 
