@@ -33,7 +33,7 @@ for (const role of ROLES) {
     assert.equal(f.name, role);
     assert.equal(f.role, role);
     assert.match(f.description ?? '', /\[subtask:<ID>\]/);
-    assert.match(f.description ?? '', /총괄/);
+    assert.match(f.description ?? '', /Use only when the Agentic Router lead calls it/);
     assert.deepEqual(f.tools, TOOLS[role]);
     for (const t of FORBIDDEN_ROLE_TOOLS) assert.ok(!f.tools.includes(t), `${role} must not have ${t}`);
     // default model/effort = the role's default start step (the Agent call's model/effort wins)
@@ -41,10 +41,39 @@ for (const role of ROLES) {
     assert.deepEqual([f.model, f.effort], [start.alias, start.effort]);
     assert.equal(f.isolation, undefined);   // decision 83: the lead passes isolation per call, only for concurrent writers
     assert.equal(f.maxTurns, role === 'coder' ? 40 : 30);
-    for (const h of ['## 책임', '## 금지', '## 완료 보고 형식']) assert.ok(f.body.includes(h), `${role}: missing ${h}`);
-    for (const item of ['변경 파일:', '실행한 검증:', '범위 변경 요청:', '남은 이슈:']) assert.ok(f.body.includes(`- ${item}`), `${role}: report item ${item}`);
+    for (const h of ['## Work unit', '## Responsibilities', '## Forbidden', '## Report format']) assert.ok(f.body.includes(h), `${role}: missing ${h}`);
+    for (const item of ['Changed files:', 'Checks run:', 'Scope request:', 'Remaining issues:']) assert.ok(f.body.includes(`- ${item}`), `${role}: report item ${item}`);
   });
 }
+
+// Decision 139: model-facing text is English, so the router behaves the same whatever the user's language.
+const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
+const filesUnder = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+  .flatMap(e => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+
+test('decision 139: role files, skills and hooks are English; the report items line up with the skill, the guard and the router', () => {
+  for (const dir of ['agents', 'skills', 'hooks']) {
+    for (const file of filesUnder(path.join(PLUGIN, dir))) {
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
+      const bad = lines.findIndex(l => HANGUL.test(l));
+      assert.equal(bad, -1, `${path.relative(PLUGIN, file)}:${bad + 1} is not English: ${lines[bad]?.slice(0, 80)}`);
+    }
+  }
+  // every place that names the report's scope line names the same item
+  const skill = fs.readFileSync(path.join(PLUGIN, 'skills', 'lead-orchestrator', 'SKILL.md'), 'utf8');
+  const guard = fs.readFileSync(path.join(PLUGIN, 'hooks', 'guard.mjs'), 'utf8');
+  const router = fs.readFileSync(fileURLToPath(new URL('../src/router.ts', import.meta.url)), 'utf8');
+  assert.match(skill, /report's "scope request" line/);
+  assert.match(guard, /add it to your report's "scope request" line/);
+  assert.match(router, /list them under "Scope request" in your report/);
+  // the margin the lead passes on to router_report_result is the word after "Margin:" in the reviewer's or tester's report
+  assert.match(skill, /`margin` exactly as their report says \(`easy` or `normal`\)/);
+  for (const role of ['reviewer', 'tester'] as const) {
+    const body = readRoleFile(path.join(AGENTS, `${role}.md`)).body;
+    assert.match(body, /`Margin: easy`/, role);
+    assert.match(body, /`Margin: normal`/, role);
+  }
+});
 
 test('default model/effort match the role table', () => {
   const got = Object.fromEntries(ROLES.map(r => { const f = readRoleFile(path.join(AGENTS, `${r}.md`)); return [r, `${f.model}/${f.effort}`]; }));

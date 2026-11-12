@@ -1919,6 +1919,6 @@ function blockReason(subtaskId: string, failed: VerifySignal[], shared: boolean)
     `[agentic-router] verification failed for subtask ${subtaskId}:`,
     ...lines,
     ...(shared ? ['These checks ran in the shared work tree (the user\'s checkout). Changes that were already uncommitted when you started are not counted as yours; do not revert or commit them.'] : []),
-    'Fix these, re-run the checks, then finish again. If the work needs files outside your scope, do not edit them: list them under "범위 변경 요청" (scope change request) in your report.',
+    'Fix these, re-run the checks, then finish again. If the work needs files outside your scope, do not edit them: list them under "Scope request" in your report.',
   ].join('\n');
 }
