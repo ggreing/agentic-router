@@ -9,10 +9,11 @@ edits that a much cheaper model would get right. This project is a Claude Code p
 daemon that changes that. For each request it decides whether the main session should just do it, or
 hand the work to a few subagents running on cheaper models while the main session plans and checks.
 
-In our measurements, letting the main session delegate instead of editing itself (for most tasks that
-meant handing the edit to a single Haiku coder) cut the cost of a task by roughly 40%, with the same pass
-rate on everything short of the hardest tasks. The numbers and how
-we got them are in [docs/measurements](docs/measurements/).
+In the last check, with the router running as shipped on a Sonnet main session, a passed task cost 33%
+less than with plain Claude Code, and the same tasks passed. For most tasks that meant the main session
+handed the edit to a single Haiku coder. It's slower, though: each hand-off adds a worker start, and on
+the bigger tasks the team took noticeably longer than one session working alone. The numbers and how we
+got them are in [docs/measurements](docs/measurements/).
 
 The CLI and package are called `agentic-router`.
 
