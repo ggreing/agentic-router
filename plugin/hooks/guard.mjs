@@ -3,8 +3,19 @@
 // Dependency-free single file (marketplace installs have no node_modules, decision 55).
 //
 // Applies ONLY to this plugin's subagents (agent_type "agentic-router:*"); the main session
-// and every other agent pass untouched. Works without the daemon: the daemon writes
-// agents/<agentId>.json and scopes/<key>.json locally, and the guard reads those files.
+// and every other agent pass untouched. The daemon writes agents/<agentId>.json and scopes/<key>.json
+// locally and the guard reads those files, so a check needs no daemon call; without any scope record a
+// router subagent may not write (decision 142).
+//
+// What the answers mean (decision 142):
+//   deny   - recognised as not allowed.
+//   allow  - Read / Grep / Glob inside the repository and off every credential path, and Edit / Write inside a
+//            confirmed scope, in both the written and the link-resolved form of the path. The prompt is skipped.
+//   silent - everything else, and every Bash command that was not denied: the guard reads a command line, it
+//            does not sandbox it, so it never vouches for one. Claude Code's own permission rules then decide.
+// The guard and the workers run as the same OS user. It keeps a worker's tool calls away from the router
+// state folder and from credential files on every path it can see; it cannot stop code the user lets a
+// worker run (a test, a package script) from reading what that user can read.
 //
 // The constants below MUST equal packages/core/src/security.ts and the key helpers in
 // paths.ts; guard.test.ts checks that they do.
@@ -212,9 +223,117 @@ function isUnder(p, dir) {
   });
 }
 
-// ---------------------------------------------------------------- Bash allowlist (decision 90)
-const WRAPPERS = new Set(['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command']);
-const SECRET_VAR_RE = /(?:\$\{?|\$env:|%)[A-Za-z0-9_]*(?:ANTHROPIC|API[_-]?KEY|TOKEN|SECRET)[A-Za-z0-9_]*\}?/i;
+// ---------------------------------------------------------------- path rules shared by every tool (decision 142)
+
+/** `.env.example` and its kin are templates that repositories commit: readable, and writable once granted. */
+const ENV_TEMPLATE_RE = /^\.env\.(?:example|sample|template|dist|defaults?)$/i;
+const ENV_PATTERNS = new Set(['**/.env', '**/.env.*']);
+const HOME_CREDENTIAL_PATHS = CREDENTIAL_PATHS.filter(p => !ENV_PATTERNS.has(p));
+export function isEnvTemplate(p) {
+  return ENV_TEMPLATE_RE.test(toPosix(String(p)).split('/').pop() ?? '');
+}
+/** A credential path, in either canonical form. An env template is one only where another pattern covers it (inside ~/.ssh, say). */
+function credentialHit(abs, userHome) {
+  if (matchesPath(abs, HOME_CREDENTIAL_PATHS, userHome)) return true;
+  return matchesPath(abs, [...ENV_PATTERNS], userHome) && !isEnvTemplate(abs);
+}
+
+/**
+ * Spellings Windows resolves to another file than the text says. They are refused rather than normalised:
+ * a device or extended-length prefix, an NTFS stream (":" after the drive letter), an 8.3 short name
+ * (GITHUB~1), and a segment ending in a dot or a space (".env." opens ".env").
+ */
+export function windowsPathProblem(p, platform = process.platform) {
+  if (platform !== 'win32') return null;
+  const s = String(p);
+  if (/^[\\/]{2}[?.][\\/]/.test(s)) return 'a device or extended-length path (\\\\?\\ or \\\\.\\)';
+  const rest = s.replace(/^[A-Za-z]:/, '');
+  if (rest.includes(':')) return 'an NTFS stream name (":" inside the path)';
+  for (const seg of rest.split(/[\\/]+/)) {
+    if (/^[^\\/]{1,8}~\d{1,3}(?:\.[^\\/.]{0,3})?$/.test(seg)) return `an 8.3 short name (${seg})`;
+    if (seg !== '.' && seg !== '..' && /[. ]$/.test(seg)) return 'a path segment ending in a dot or a space';
+  }
+  return null;
+}
+
+/** True when EVERY canonical form of `p` (as written, and with links resolved) is `dir` or under one of its forms. */
+function allFormsUnder(p, dir) {
+  const bases = canonicalForms(dir).map(b => b.toLowerCase().replace(/\/+$/, ''));
+  return canonicalForms(p).every(form => {
+    const c = form.toLowerCase().replace(/\/+$/, '');
+    return bases.some(b => c === b || c.startsWith(b + '/'));
+  });
+}
+
+/** Names that are a credential store or hold one, as a single path segment (for globs, which cannot be resolved). */
+const SENSITIVE_SEGMENTS = [
+  '.env', '.claude', '.claude.json', '.ssh', '.aws', '.azure', '.docker', '.npmrc', '.netrc', '_netrc', '.git-credentials',
+  '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
+];
+const GLOB_CHARS = /[*?[]/;
+/** A bash glob segment as a RegExp (no "/" inside; a leading dot is matched only by a literal dot, as in bash). */
+function segmentRegExp(seg) {
+  let re = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '*') re += '.*';
+    else if (c === '?') re += '.';
+    else if (c === '[') {
+      const end = seg.indexOf(']', i + 2);
+      if (end < 0) { re += '\\['; continue; }
+      re += `[${seg.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+      i = end;
+    } else re += c.replace(/[.+^${}()|\\\]]/g, '\\$&');
+  }
+  try { return new RegExp(`^${re}$`, 'i'); } catch { return /^$/; }
+}
+/** Why a path or glob text names a credential by one of its segments, or null. Used where nothing can be resolved. */
+function sensitiveSegment(text) {
+  for (const seg of toPosix(String(text)).split('/')) {
+    if (!seg || seg === '.' || seg === '..' || seg === '**' || /^\*+$/.test(seg)) continue;   // a bare * names nothing
+    const lower = seg.toLowerCase();
+    if (!GLOB_CHARS.test(seg)) {
+      if (SENSITIVE_SEGMENTS.includes(lower) || (lower.startsWith('.env.') && !ENV_TEMPLATE_RE.test(lower))) return `the credential name ${seg}`;
+      continue;
+    }
+    // A glob reaches a dotfile only when the segment itself starts with a dot (bash) - or anywhere, for the
+    // Grep and Glob tools, whose matcher does not have that rule. So a dot-leading glob is refused outright,
+    // and any other glob is tested against the names above.
+    if (seg.startsWith('.')) return `a glob over dotfiles (${seg})`;
+    const re = segmentRegExp(seg);
+    if (SENSITIVE_SEGMENTS.some(n => re.test(n))) return `a glob that matches a credential name (${seg})`;
+  }
+  return null;
+}
+/** `{a,b}` alternatives of a word, one level, bounded. */
+function expandBraces(word) {
+  const m = /^(.*?)\{([^{}]*)\}(.*)$/.exec(word);
+  if (!m) return [word];
+  return m[2].split(',').slice(0, 32).flatMap(alt => expandBraces(`${m[1]}${alt}${m[3]}`)).slice(0, 64);
+}
+
+// ---------------------------------------------------------------- Bash checks (decisions 90, 142)
+//
+// What this can and cannot do. A command line is checked by reading it, not by running it in a sandbox, so
+// the check is a deny-list with a small grammar: anything the lexer cannot follow is refused, every argument
+// is looked at as a possible path, and options that run a program or write a file are refused. A command that
+// passes is NOT declared safe: the guard stays silent and Claude Code's own permission rules decide (decision
+// 142; the guard never answers "allow" for Bash). Commands on the allowlist that run code the worker may have
+// written (test runners, package scripts, installs) are exactly that: allowed to be asked about, never vouched for.
+const WRAPPERS = new Set(['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.']);
+const SECRET_VAR_RE = /(?:\$\{?!?|\$env:|%)[A-Za-z0-9_]*(?:ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN)[A-Za-z0-9_]*\}?/i;
+
+/** Options refused on top of ROUTER_BASH_DENY_OPTIONS (which mirrors core): they read hidden or ignored files, or set a variable. */
+export const GUARD_EXTRA_DENY_OPTIONS = {
+  'rg': ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.'],
+  'printf': ['-v'],
+  'git grep': ['--no-index', '--untracked', '--no-exclude-standard'],
+  'git diff': ['--no-index'],
+  'npm install': ['--registry'], 'npm i': ['--registry'], 'npm ci': ['--registry'],
+  'pnpm install': ['--registry'], 'pnpm add': ['--registry'], 'yarn install': ['--registry'], 'yarn add': ['--registry'],
+  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
+  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
+};
 
 function stripOuterQuotes(w) { return w.replace(/^["']/, '').replace(/["']$/, ''); }
 function baseName(w) {
@@ -227,6 +346,9 @@ function expandTilde(p, userHome) { return /^~(?=[\\/]|$)/.test(p) ? toPosix(use
  * A quote-aware shell lexer: splits a command line into simple commands (token arrays), honoring
  * single/double quotes so operators INSIDE quotes are literal. Flags constructs we refuse to run.
  * Allowed redirections (2>&1, >/dev/null, 2>/dev/null, >NUL) are consumed and dropped.
+ * It must never read more as "inside a quote" than bash does: $'…' and $"…" (other quoting rules), a
+ * word-initial # (a comment to bash) and a backslash-newline are refused, and \" inside double quotes is
+ * followed as bash follows it.
  */
 function lexBash(cmd) {
   const commands = [];
@@ -236,21 +358,28 @@ function lexBash(cmd) {
   const n = cmd.length;
   for (let i = 0; i < n;) {
     const c = cmd[i];
-    if (c === "'") { cur += c; i++; while (i < n && cmd[i] !== "'") { cur += cmd[i++]; } if (i < n) cur += cmd[i++]; continue; }
+    if (c === '$' && (cmd[i + 1] === "'" || cmd[i + 1] === '"')) { refuse ??= 'a $\'…\' or $"…" string'; cur += c; i++; continue; }
+    if (c === '#' && cur === '') { refuse ??= 'a # comment'; cur += c; i++; continue; }
+    if (c === "'") { cur += c; i++; while (i < n && cmd[i] !== "'") { cur += cmd[i++]; } if (i < n) cur += cmd[i++]; else refuse ??= 'an unterminated quote'; continue; }
     if (c === '"') {
       cur += c; i++;
       while (i < n && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < n) { cur += cmd[i] + cmd[i + 1]; i += 2; continue; }   // \" does not end the string
         if (cmd[i] === '`') refuse ??= 'a backtick command substitution in double quotes';
         else if (cmd[i] === '$' && cmd[i + 1] === '(') refuse ??= 'a $() command substitution in double quotes';
         else if (cmd[i] === '$' && cmd[i + 1] === '{') refuse ??= 'a ${} expansion in double quotes';
         cur += cmd[i++];
       }
-      if (i < n) cur += cmd[i++];
+      if (i < n) cur += cmd[i++]; else refuse ??= 'an unterminated quote';
       continue;
     }
-    if (c === '\\') { cur += c; if (i + 1 < n) cur += cmd[i + 1]; i += 2; continue; }   // escape: keep both chars
+    if (c === '\\') {
+      if (cmd[i + 1] === '\n' || cmd[i + 1] === '\r') refuse ??= 'a backslash line continuation';
+      cur += c; if (i + 1 < n) cur += cmd[i + 1]; i += 2; continue;   // escape: keep both chars
+    }
     if (c === '`') { refuse ??= 'a backtick command substitution'; cur += c; i++; continue; }
     if (c === '$' && cmd[i + 1] === '(') { refuse ??= 'a $() command substitution'; cur += '$('; i += 2; continue; }
+    if (c === '$' && cmd[i + 1] === '{') { refuse ??= 'a ${} expansion'; cur += '${'; i += 2; continue; }
     if ((c === '<' || c === '>') && cmd[i + 1] === '(') { refuse ??= 'a process substitution'; cur += c; i++; continue; }
     if (c === '(' || c === ')') { refuse ??= 'a subshell / grouping parenthesis'; cur += c; i++; continue; }
     if (/[0-9]/.test(c) && (cmd[i + 1] === '>' || cmd[i + 1] === '<')) {
@@ -273,7 +402,7 @@ function lexBash(cmd) {
   return { commands, refuse };
 }
 
-/** Does one allowlist entry's words prefix-match the command's words? */
+/** Does one allowlist entry's words prefix-match the command's words? The command name must be bare (no path). */
 function entryMatches(words, entry) {
   const ew = entry.split(/\s+/);
   if (baseName(words[0]) !== baseName(ew[0])) return false;
@@ -288,8 +417,8 @@ function entryMatches(words, entry) {
 function pathLikeArg(raw) {
   const s = stripOuterQuotes(raw);
   if (/\s/.test(s)) return false;                           // messages / patterns have spaces
-  return s.includes('/') || /^~/.test(raw) || /^[A-Za-z]:/.test(s)
-    || /^\$\{?(HOME|USERPROFILE)\}?/i.test(raw) || /^\$env:/i.test(raw) || /^%[A-Za-z0-9_]+%/.test(raw) || raw.startsWith("$'");
+  return s.includes('/') || /^~/.test(raw) || /^[A-Za-z]:/.test(s) || /^\.{1,2}(?:$|[\\/])/.test(s)
+    || /^\$\{?(HOME|USERPROFILE)\}?/i.test(raw) || /^\$env:/i.test(raw) || /^%[A-Za-z0-9_]+%/.test(raw);
 }
 /** A path argument containing a construct we cannot resolve the way bash would -> refuse (fail-closed). */
 function unsafePathArg(raw) {
@@ -303,12 +432,14 @@ function unsafePathArg(raw) {
   return null;
 }
 function isCredentialPath(abs, userHome) {
-  if (/\/proc\/[^/\s]+\/environ/.test(abs)) return true;
-  return matchesPath(abs, CREDENTIAL_PATHS, userHome) || overlapsCredential(abs, userHome);
+  if (/\/proc\/[^/\s]+\/(?:task\/[^/\s]+\/)?environ/.test(abs)) return true;
+  return credentialHit(abs, userHome) || overlapsCredential(abs, userHome);
 }
 /** Resolves a shell path argument against the virtual cwd the way bash would (drive-normalised posix). */
 function resolvePathArg(raw, vcwd, userHome) {
-  const e = expandTilde(stripOuterQuotes(raw), userHome);
+  let e = expandTilde(stripOuterQuotes(raw), userHome);
+  // Windows opens ".env." and ".env " as ".env": drop trailing dots and spaces of each segment before matching
+  if (process.platform === 'win32') e = e.split(/([\\/]+)/).map(seg => (/^[\\/]+$/.test(seg) || seg === '.' || seg === '..' ? seg : seg.replace(/[. ]+$/, ''))).join('');
   const abs = path.isAbsolute(e) || /^[A-Za-z]:/.test(e) || /^[\\/]/.test(e) ? e : path.resolve(vcwd, e);
   return canonicalForms(abs)[0];
 }
@@ -319,7 +450,7 @@ export function bashTouchesOutsideRepo(command, { userHome = os.homedir(), cwd =
     if (words.length === 0) continue;
     if (baseName(words[0]) === 'cd') {
       const t = words[1];
-      if (t && pathLikeArg(t) && !unsafePathArg(t)) vcwd = resolvePathArg(t, vcwd, userHome);
+      if (t && !unsafePathArg(t)) vcwd = resolvePathArg(t, vcwd, userHome);
       continue;
     }
     for (let i = 1; i < words.length; i++) {
@@ -331,9 +462,54 @@ export function bashTouchesOutsideRepo(command, { userHome = os.homedir(), cwd =
   return false;
 }
 
+/** Commands whose arguments are files to read: a variable in one of them cannot be checked. */
+const READER_COMMANDS = new Set(['cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'diff', 'sort', 'uniq', 'cut', 'tr', 'ls', 'dir', 'test']);
+const CREDENTIAL_FILE_RE = /^(?:\.env(?:\..+)?|\.npmrc|\.netrc|_netrc|\.git-credentials|\.pgpass|\.pypirc)$/i;
+const WALK_SKIP = new Set(['node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'target', '__pycache__']);
+/** Whether a directory holds a credential file a recursive read would open (bounded walk: 4 levels, 3000 entries). */
+function dirHoldsCredentialFile(dir) {
+  let seen = 0;
+  const walk = (d, depth) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      if (++seen > 3000) return false;
+      if (CREDENTIAL_FILE_RE.test(e.name) && !ENV_TEMPLATE_RE.test(e.name)) return true;
+      if (e.isDirectory() && depth < 4 && !WALK_SKIP.has(e.name) && walk(path.join(d, e.name), depth + 1)) return true;
+    }
+    return false;
+  };
+  return walk(dir, 0);
+}
+
+const NPM_NAME_RE = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.^~<>=*|-]+)?$/i;
+const PIP_NAME_RE = /^[A-Za-z0-9][\w.-]*(?:\[[\w,.-]+\])?(?:[<>=!~]=?[\w.*,<>=!~]+)?$/;
+/** An install may name registry packages only: a URL, a git spec, a tarball or a host/path shorthand fetches from anywhere. */
+function installArgProblem(tool, arg) {
+  const s = stripOuterQuotes(arg);
+  if (/:\/\/|^git[+@]|^github:|^gitlab:|^bitbucket:|^file:|^https?:/i.test(s)) return `a package source that is not a registry name (${s.slice(0, 60)})`;
+  if (tool === 'pip') return PIP_NAME_RE.test(s) || /^\.{1,2}(?:$|[\\/])/.test(s) || /\.(?:txt|toml|cfg)$/i.test(s) ? null : `a package source that is not a registry name (${s.slice(0, 60)})`;
+  return NPM_NAME_RE.test(s) || /^\.{1,2}(?:$|[\\/])/.test(s) ? null : `a package source that is not a registry name (${s.slice(0, 60)})`;
+}
+
+/** Whether a word is one of the refused options, written out, abbreviated (--out for --output) or bundled (-uo for -o). */
+function deniedOption(tok, denied) {
+  if (!tok.startsWith('-') || tok === '-' || tok === '--') return false;
+  if (tok.startsWith('--')) {
+    const name = tok.split('=')[0];
+    return denied.some(opt => opt.startsWith('--') && (name === opt || (name.length > 2 && opt.startsWith(name))));
+  }
+  return denied.some(opt => {
+    if (opt.startsWith('--')) return false;
+    if (opt.length === 2) return tok.slice(1).includes(opt[1]);          // a single-letter flag anywhere in a bundle
+    return tok === opt || tok.startsWith(opt);                            // find's -exec and the like
+  });
+}
+
 /**
- * Returns a deny reason for a router subagent's Bash command, or null to allow.
- * opts: { userHome, routerHome, bashAllow, cwd } (bashAllow = project policy.json extension; cwd = hook cwd).
+ * Returns a deny reason for a router subagent's Bash command, or null when nothing recognised as bad was
+ * found (which is not a statement that the command is safe).
+ * opts: { userHome, routerHome, bashAllow, cwd, root, denyExec } (bashAllow = the accepted project policy's extension).
  */
 export function classifyBash(command, opts = {}) {
   const userHome = opts.userHome ?? os.homedir();
@@ -343,52 +519,96 @@ export function classifyBash(command, opts = {}) {
 
   const { commands, refuse } = lexBash(String(command));
   if (refuse) return `${DENY_NOT_ALLOWED} (it contains ${refuse})`;
+  if (SECRET_VAR_RE.test(String(command))) return 'this command references a secret environment variable, which is not allowed.';
+
+  /** One argument (or the value of --opt=value) looked at as a possible path, in the directory the command runs in. */
+  const checkArg = (cmd0, raw, vcwd) => {
+    for (const word of expandBraces(stripOuterQuotes(raw))) {
+      if (word === '') continue;
+      if (/\$/.test(word)) {
+        if (pathLikeArg(word) || READER_COMMANDS.has(cmd0)) return 'this command has a file argument with a variable reference ($), which cannot be checked; it is not allowed.';
+        continue;
+      }
+      const inner = raw.replace(/^(['"])/, '').replace(/(['"])$/, '');
+      if (/['"]/.test(inner) && pathLikeArg(inner.replace(/['"]/g, ''))) return 'this command has a path argument with a quote inside the word, which cannot be checked safely; it is not allowed.';
+      if (/^~[^/\\]/.test(word)) return 'this command has a path argument with a ~user reference, which cannot be checked safely; it is not allowed.';
+      // `git show HEAD:.env` and the like: the part after the colon is a path in the repository
+      const candidates = cmd0 === 'git' && /^[^:\\/]+:(?![\\/]{2})./.test(word) && !/^[A-Za-z]:[\\/]/.test(word) ? [word, word.slice(word.indexOf(':') + 1)] : [word];
+      for (const cand of candidates) {
+        const named = sensitiveSegment(cand);
+        if (named && (GLOB_CHARS.test(cand) || candidates.length > 1)) return `this command names ${named}, which is not allowed.`;
+        if (GLOB_CHARS.test(cand)) continue;                 // a glob without a credential name: nothing to resolve
+        if (/[\\/]/.test(cand) || /^\./.test(cand)) {
+          const w = windowsPathProblem(cmd0 === 'git' ? cand.replace(/^[^:\\/]+:(?![\\/])/, '') : cand);
+          if (w && !/^[a-z][a-z0-9+.-]*:\/\//i.test(cand)) return `this command has a path argument with ${w}, which is not allowed.`;
+        }
+        if (/\\/.test(cand) && (/^~/.test(cand) || cand.includes('/'))) return 'this command has a path argument with a backslash escape in a POSIX-style path, which cannot be checked safely; it is not allowed.';
+        const abs = resolvePathArg(cand, vcwd, userHome);
+        if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
+        if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
+        if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
+          return 'this command touches the router proxy binaries, which is not allowed.';
+      }
+    }
+    return null;
+  };
 
   let vcwd = baseCwd;                                       // virtual cwd, advanced by `cd` within the chain
   for (const words of commands) {
     if (words.length === 0) continue;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) return DENY_NOT_ALLOWED;   // leading VAR=value
+    if (/[\\/]/.test(stripOuterQuotes(words[0]))) return `${DENY_NOT_ALLOWED} (the command is given by a path; only bare command names are checked)`;
     const cmd0 = baseName(words[0]);
     if (WRAPPERS.has(cmd0)) return `${DENY_NOT_ALLOWED} (it starts with the wrapper "${cmd0}")`;
 
     if (cmd0 === 'cd') {
-      const target = words[1];
-      if (target && pathLikeArg(target)) {
-        const u = unsafePathArg(target);
-        if (u) return `this command has a cd target with ${u}, which cannot be checked safely; it is not allowed.`;
-        vcwd = resolvePathArg(target, vcwd, userHome);
-      }
-      continue;                                             // `cd` itself is on the allowlist implicitly
+      // The directory is followed, so every later argument is resolved where the command will really run.
+      if (words.length > 2) return 'this command has a cd with more than one argument, which cannot be checked safely; it is not allowed.';
+      const target = words[1] === undefined ? '~' : words[1];
+      const t = stripOuterQuotes(target);
+      if (t === '-' || /[$`*?[{]/.test(t) || /^~[^/\\]/.test(t) || /['"]/.test(t)) return 'this command has a cd target that cannot be checked safely; it is not allowed.';
+      const w = windowsPathProblem(t);
+      if (w) return `this command has a cd target with ${w}, which is not allowed.`;
+      vcwd = resolvePathArg(t, vcwd, userHome);
+      if (credentialHit(vcwd, userHome) || credentialDirs(userHome).some(d => vcwd.toLowerCase() === d || vcwd.toLowerCase().startsWith(d + '/')))
+        return 'this command changes into a credential directory, which is not allowed.';
+      if (isUnder(vcwd, stateHome)) return 'this command changes into the router state folder (~/.agentic-router), which is not allowed.';
+      continue;
     }
 
+    let entry;
     if (cmd0 === 'set') {
       if (!(words.length >= 2 && /^[-+]/.test(stripOuterQuotes(words[1])))) return DENY_NOT_ALLOWED;   // bare `set` dumps env
-    } else if (!allow.some(e => entryMatches(words, e))) {
+    } else if (!(entry = allow.find(e => entryMatches(words, e)))) {
       return DENY_NOT_ALLOWED;
     }
 
-    if (SECRET_VAR_RE.test(words.join(' '))) return 'this command references a secret environment variable, which is not allowed.';
+    const sub = stripOuterQuotes(words[1] || '').toLowerCase();
+    // `npm run env` (and yarn / pnpm) prints the whole environment
+    if (['npm', 'pnpm', 'yarn'].includes(cmd0) && ['run', 'run-script'].includes(sub) && stripOuterQuotes(words[2] || '').toLowerCase() === 'env')
+      return 'this command prints the environment (run env), which is not allowed.';
+
+    // every argument, and the value of every --opt=value, as a possible path
     for (let i = 1; i < words.length; i++) {
       const raw = words[i];
-      if (!pathLikeArg(raw)) continue;
-      const u = unsafePathArg(raw);
-      if (u) return `this command has a path argument with ${u}, which cannot be checked safely; it is not allowed.`;
-      const abs = resolvePathArg(raw, vcwd, userHome);
-      if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
-      if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
-      if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
-        return 'this command touches the router proxy binaries, which is not allowed.';
+      const bare = stripOuterQuotes(raw);
+      const value = bare.startsWith('-') ? (bare.includes('=') ? bare.slice(bare.indexOf('=') + 1) : null) : raw;
+      if (value === null || value === '') continue;
+      const reason = checkArg(cmd0, value, vcwd);
+      if (reason) return reason;
     }
-    if (cmd0 === 'git' && words.includes('-c')) return 'git -c is not allowed (it can run arbitrary config or hooks).';
+    if (cmd0 === 'git' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return t === '-c' || /^-c[^=\s]+=/.test(t); })) return 'git -c is not allowed (it can run arbitrary config or hooks).';
+    if (cmd0 === 'git' && words.slice(1).some(w => /^--(?:exec-path|git-dir|work-tree|namespace)(?:=|$)/.test(stripOuterQuotes(w)))) return 'git --git-dir / --work-tree / --exec-path are not allowed.';
 
-    // dangerous options on otherwise-allowed commands (run a program or write a file)
-    const sub = stripOuterQuotes(words[1] || '').toLowerCase();
-    const denied = ROUTER_BASH_DENY_OPTIONS[`${cmd0} ${sub}`] || ROUTER_BASH_DENY_OPTIONS[cmd0];
-    if (denied) {
+    // dangerous options on otherwise-allowed commands (run a program, write a file, or read hidden files)
+    const key = `${cmd0} ${sub}`;
+    const denied = [...(ROUTER_BASH_DENY_OPTIONS[key] || ROUTER_BASH_DENY_OPTIONS[cmd0] || []), ...(GUARD_EXTRA_DENY_OPTIONS[key] || GUARD_EXTRA_DENY_OPTIONS[cmd0] || [])];
+    if (denied.length) {
       for (let i = 1; i < words.length; i++) {
         const tok = stripOuterQuotes(words[i]);
-        if (denied.some(opt => tok === opt || (opt.startsWith('--') ? tok.startsWith(opt + '=') : tok.startsWith(opt))))
-          return `this command uses the option ${tok} (${cmd0}${sub ? ' ' + sub : ''}), which runs a program or writes a file and is not allowed.`;
+        if (tok === '--') break;                              // what follows is not an option
+        if (deniedOption(tok, denied))
+          return `this command uses the option ${tok} (${cmd0}${sub ? ' ' + sub : ''}), which runs a program, writes a file or reads files it should not, and is not allowed.`;
       }
     }
     // commands that write to a second positional argument (e.g. `uniq IN OUT` writes OUT)
@@ -396,14 +616,44 @@ export function classifyBash(command, opts = {}) {
       const positionals = words.slice(1).filter(w => !w.startsWith('-'));
       if (positionals.length >= 2) return 'this command writes to an output file argument, which is not allowed.';
     }
+    // a recursive grep opens every file below its start, dotfiles included
+    if (cmd0 === 'grep' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return /^--(?:rec|dereference-rec|directories=recurse)/.test(t) || (/^-[A-Za-z]+$/.test(t) && /[rR]/.test(t)); })) {
+      const dirs = words.slice(2).map(w => stripOuterQuotes(w)).filter(w => !w.startsWith('-') && !GLOB_CHARS.test(w)).map(w => resolvePathArg(w, vcwd, userHome))
+        .filter(p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+      if ((dirs.length ? dirs : [vcwd]).some(dirHoldsCredentialFile))
+        return 'this recursive grep would read a credential file (.env, .npmrc, …) under its start directory; use rg or the Grep tool, which skip hidden files, or name the files.';
+    }
+    // installs: registry names only
+    const install = PACKAGE_INSTALL_PREFIXES.find(p => entry && entry.trim().toLowerCase() === p.trim().toLowerCase());
+    if (install) {
+      const tool = /pip|uv|poetry/.test(install) ? 'pip' : 'npm';
+      const skip = install.trim().split(/\s+/).length;
+      for (let i = skip; i < words.length; i++) {
+        const tok = stripOuterQuotes(words[i]);
+        if (tok.startsWith('-')) {
+          if (/=.*(?::\/\/|^git[+@])/i.test(tok)) return `this install uses a package source that is not a registry name (${tok.slice(0, 60)}), which is not allowed.`;
+          continue;
+        }
+        if (i > 0 && /^(?:-r|--requirement|-c|--constraint|-e|--editable|--prefix|-C)$/.test(stripOuterQuotes(words[i - 1]))) continue;   // a file or directory, already checked as a path
+        const problem = installArgProblem(tool, tok);
+        if (problem) return `this install uses ${problem}, which is not allowed.`;
+      }
+    }
   }
   return null;
 }
 
-/** First words of each simple command runs a package script (npm/pnpm/yarn test|run). */
-function runsPackageScript(command) {
-  return lexBash(String(command)).commands.some(w =>
-    w.length > 0 && ['npm', 'pnpm', 'yarn'].includes(baseName(w[0])) && ['test', 'run'].includes(stripOuterQuotes(w[1] || '').toLowerCase()));
+/** The directories in which a command runs a package script or an install (npm / pnpm / yarn), following `cd`. */
+function packageScriptDirs(command, cwd, userHome) {
+  const dirs = [];
+  let vcwd = cwd;
+  for (const w of lexBash(String(command)).commands) {
+    if (!w.length) continue;
+    const c = baseName(w[0]);
+    if (c === 'cd') { const t = stripOuterQuotes(w[1] ?? '~'); if (!/[$`*?[{'"]/.test(t) && t !== '-') vcwd = resolvePathArg(t, vcwd, userHome); continue; }
+    if (['npm', 'pnpm', 'yarn'].includes(c) && ['test', 'run', 'run-script', 'install', 'i', 'ci', 'add', 't'].includes(stripOuterQuotes(w[1] || '').toLowerCase())) dirs.push(vcwd);
+  }
+  return dirs;
 }
 
 // ---------------------------------------------------------------- write-scope decision (pure)
@@ -443,7 +693,8 @@ export function isNeverGrantable(rel) {
 }
 
 export function decideWrite(a) {
-  // A user-granted scope (decision 129) opens a protected or out-of-scope path — never .git/.agentic-router.
+  // A user-granted scope (decision 129) opens a protected or out-of-scope path - never .git/.agentic-router.
+  // evaluate() calls this for the path as written and for the path with links resolved; both must pass.
   const granted = Array.isArray(a.protectedGranted) && a.protectedGranted.length > 0;
   const grantCovers = (rel) => granted && !isNeverGrantable(rel) && matchesAny(rel, a.protectedGranted, a.userHome ?? os.homedir());
   if (!a.outsideRepo && isProtectedPath(a.rel, a.extraProtected || [])) {
@@ -485,19 +736,20 @@ export function resolveSubtaskId(hookInput, home) {
   return tagFromTranscript(hookInput);
 }
 function normalizeScope(s, confirmed) {
+  if (!s || typeof s !== 'object' || !Array.isArray(s.allowed)) throw new Error('scope record without an allowed list');   // -> fail-closed deny
   return {
-    allowed: Array.isArray(s.allowed) ? s.allowed : null,
-    unscoped: s.unscoped === true || !Array.isArray(s.allowed),
+    allowed: s.allowed,
+    unscoped: s.unscoped === true,
     extraProtected: Array.isArray(s.protected) ? s.protected : [],
     protectedGranted: Array.isArray(s.protectedGranted) ? s.protectedGranted : [],   // decision 129 grants
-    confirmed,                       // true when a real scope record/file was read (vs fail-open)
+    confirmed,                       // true when a real scope record/file was read
   };
 }
-/** scopes/<scopeKey(session,subtask)>.json: present => confirmed; missing => fail-open; corrupt => throw. */
+/** scopes/<scopeKey(session,subtask)>.json: present => confirmed; missing => unconfirmed (writes are then denied); corrupt => throw. */
 function scopeFromFile(sessionId, subtaskId, home) {
   let text;
   try { text = fs.readFileSync(path.join(home, 'scopes', `${scopeKey(sessionId, subtaskId)}.json`), 'utf8'); }
-  catch { return { allowed: null, unscoped: true, extraProtected: [], protectedGranted: [], confirmed: false }; }   // missing: fail-open
+  catch { return { allowed: null, unscoped: true, extraProtected: [], protectedGranted: [], confirmed: false }; }   // missing: no record
   return normalizeScope(JSON.parse(text), true);                           // corrupt: throw -> fail-closed deny
 }
 /**
@@ -532,20 +784,95 @@ function gitRoot(cwd) {
   } catch { /* git missing or not a repo */ }
   return cwd;
 }
-/** Project Bash allowlist extension from <root>/.agentic-router/policy.json (a protected path). */
-function projectBashAllow(root) {
-  try {
-    const j = JSON.parse(fs.readFileSync(path.join(root, '.agentic-router', 'policy.json'), 'utf8'));
-    return Array.isArray(j.bashAllow) ? j.bashAllow.filter(x => typeof x === 'string') : [];
-  } catch { return []; }
+
+// ---------------------------------------------------------------- project policy, honoured only once accepted (decision 142)
+//
+// <repo>/.agentic-router/policy.json can widen the Bash allowlist (bashAllow) and name environment variables
+// to forward to verify (verifyEnv). A repository the user cloned must not be able to do that for itself, so
+// the file counts only after the user accepted it: its hash is recorded in the router home, per repository,
+// and a changed file is ignored until it is accepted again. Workers cannot write either file (the policy
+// folder and the router home are both off-limits to them).
+export const POLICY_FILE = path.join('.agentic-router', 'policy.json');
+export const POLICY_ACCEPT_FILE = 'policy-accepted.json';
+
+function policyKey(root) {
+  const forms = canonicalForms(root);
+  const real = forms[forms.length - 1];
+  return process.platform === 'linux' ? real : real.toLowerCase();
 }
-/** True when package.json's "scripts" differ from HEAD (audit #5). */
-function packageScriptsChanged(root) {
+function readAccepted(stateHome) {
   try {
-    const show = spawnSync('git', ['-C', root, 'show', 'HEAD:package.json'], { encoding: 'utf8', timeout: 2000 });
-    if (show.status !== 0) return false;
+    const j = JSON.parse(fs.readFileSync(path.join(stateHome, POLICY_ACCEPT_FILE), 'utf8'));
+    return j && typeof j === 'object' && j.roots && typeof j.roots === 'object' ? j.roots : {};
+  } catch { return {}; }
+}
+/**
+ * The project policy of a repository and whether the user accepted this exact content.
+ * { present, valid, hash, accepted, acceptedHash, policy: { bashAllow, verifyEnv } } - `policy` is the file's
+ * content whether accepted or not (for doctor to show); use readAcceptedPolicy to act on it.
+ */
+export function policyStatus(root, stateHome = routerHome()) {
+  let text;
+  try { text = fs.readFileSync(path.join(root, POLICY_FILE)); } catch { return { present: false, valid: false, hash: null, accepted: false, acceptedHash: null, policy: null }; }
+  const hash = createHash('sha256').update(text).digest('hex');
+  const acceptedHash = readAccepted(stateHome)[policyKey(root)]?.hash ?? null;
+  let policy = null;
+  try {
+    const j = JSON.parse(text.toString('utf8'));
+    if (j && typeof j === 'object' && !Array.isArray(j)) {
+      const list = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.length <= 200).slice(0, 100) : []);
+      policy = { bashAllow: list(j.bashAllow), verifyEnv: list(j.verifyEnv) };
+    }
+  } catch { /* not JSON: present but not valid */ }
+  return { present: true, valid: policy !== null, hash, accepted: policy !== null && acceptedHash === hash, acceptedHash, policy };
+}
+/** The project policy when the user accepted its current content; null otherwise (absent, invalid, new or changed). */
+export function readAcceptedPolicy(root, stateHome = routerHome()) {
+  const s = policyStatus(root, stateHome);
+  return s.accepted ? s.policy : null;
+}
+/** Records the user's acceptance of the policy file as it is now. For the CLI, after it showed the user the content. */
+export function acceptPolicy(root, stateHome = routerHome(), now = new Date()) {
+  const s = policyStatus(root, stateHome);
+  if (!s.present || !s.valid) return s;
+  const roots = readAccepted(stateHome);
+  roots[policyKey(root)] = { hash: s.hash, acceptedAt: now.toISOString() };
+  fs.mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const file = path.join(stateHome, POLICY_ACCEPT_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, roots }, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+  return policyStatus(root, stateHome);
+}
+/** The accepted verifyEnv names of the project that contains `dir` (for the relay); [] unless the policy is accepted. */
+export function acceptedVerifyEnvNames(dir = process.env.CLAUDE_PROJECT_DIR || process.cwd(), stateHome = routerHome()) {
+  return readAcceptedPolicy(gitRoot(dir), stateHome)?.verifyEnv ?? [];
+}
+/** The repository root the policy is keyed by (git top-level of `dir`, else `dir`). For the CLI and doctor. */
+export function policyRoot(dir) { return gitRoot(dir); }
+/** Takes an acceptance back (the policy is ignored again). */
+export function revokePolicy(root, stateHome = routerHome()) {
+  const roots = readAccepted(stateHome);
+  if (!(policyKey(root) in roots)) return false;
+  delete roots[policyKey(root)];
+  const file = path.join(stateHome, POLICY_ACCEPT_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, roots }, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+  return true;
+}
+
+/** True when the "scripts" of the package.json in `dir` differ from HEAD (audit #5), or the file is new. */
+function packageScriptsChanged(root, dir = root) {
+  try {
+    const file = path.join(dir, 'package.json');
+    if (!fs.existsSync(file)) return false;
+    const rel = toPosix(path.relative(root, file));
+    if (rel.startsWith('..')) return false;
+    const wt = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const show = spawnSync('git', ['-C', root, 'show', `HEAD:${rel}`], { encoding: 'utf8', timeout: 2000 });
+    if (show.status !== 0) return Object.keys(wt.scripts ?? {}).length > 0 && fs.existsSync(path.join(root, '.git'));   // not in HEAD: a new file with scripts
     const headScripts = JSON.stringify((JSON.parse(show.stdout) || {}).scripts ?? {});
-    const wt = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     return headScripts !== JSON.stringify(wt.scripts ?? {});
   } catch { return false; }
 }
@@ -555,6 +882,29 @@ function targetPaths(input) {
   const out = [];
   for (const k of ['file_path', 'path', 'notebook_path']) if (typeof input[k] === 'string') out.push(input[k]);
   if (Array.isArray(input.edits)) for (const e of input.edits) if (e && typeof e.file_path === 'string') out.push(e.file_path);
+  return out;
+}
+
+/** Files a subtask without a [scope: ...] line may still not write: they change how the agent or the repository's hooks run. */
+export const UNSCOPED_PROTECTED_PATHS = [
+  '.mcp.json', '**/.mcp.json', '.husky/**', '**/.husky/**', 'CLAUDE.md', '**/CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.local.md',
+  '.git', '**/.git', '.gitmodules', '.gitattributes', '**/.gitattributes', '.pre-commit-config.yaml',
+];
+
+/** A repo-relative path for each canonical form of `p`: as written, and with links resolved. */
+function relForms(root, p) {
+  const roots = canonicalForms(root);
+  const forms = canonicalForms(p);
+  const pairs = [[roots[0], forms[0]], [roots[roots.length - 1], forms[forms.length - 1]]];
+  const seen = new Set();
+  const out = [];
+  for (const [r, f] of pairs) {
+    const relRaw = path.relative(r, f);
+    const rel = toPosix(relRaw);
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    out.push({ rel, outsideRepo: rel === '' ? false : (rel.startsWith('..') || path.isAbsolute(relRaw) || /^[A-Za-z]:/.test(rel)) });
+  }
   return out;
 }
 
@@ -582,51 +932,71 @@ export function evaluate(hookInput, opts = {}) {
 
   if (tool === 'Bash') {
     const command = input.command || '';
-    const reason = classifyBash(command, { userHome, routerHome: stateHome, bashAllow: projectBashAllow(root), cwd, denyExec: [proxyBinDir] });
+    const policy = readAcceptedPolicy(root, stateHome);       // decision 142: a project policy counts only once the user accepted it
+    const reason = classifyBash(command, { userHome, routerHome: stateHome, bashAllow: policy?.bashAllow ?? [], cwd, root, denyExec: [proxyBinDir] });
     if (reason) return { deny: `[router] ${reason}` };
-    if (runsPackageScript(command) && packageScriptsChanged(root))
-      return { deny: '[router] package.json scripts changed from HEAD; the lead or user must confirm before running npm/pnpm/yarn scripts.' };
-    // D1 detail (decision 96): only skip the prompt when the command stays inside the repo; a path arg
-    // outside the repo is not denied, but we stay silent so Claude Code's out-of-folder confirmation runs.
-    if (bashTouchesOutsideRepo(command, { userHome, cwd, root })) return null;
-    return { allow: '[router] checked: Bash allowlist, args, credentials' };   // D1: verified -> skip the prompt
+    const scriptDirs = packageScriptDirs(command, cwd, userHome);
+    if (scriptDirs.length && [root, ...scriptDirs].some(d => packageScriptsChanged(root, d)))
+      return { deny: '[router] package.json scripts changed from HEAD; the lead or user must confirm before running npm/pnpm/yarn scripts or installs.' };
+    // Decision 142: the guard never answers "allow" for Bash. Nothing recognised as bad was found, which is
+    // not the same as safe: Claude Code's own permission rules decide whether the command runs or the user is asked.
+    return null;
   }
 
   if (READ_TOOLS.has(tool)) {
+    const targets = targetPaths(input);
+    for (const p of targets) {
+      const w = windowsPathProblem(p);
+      if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
+    }
     if (tool === 'Grep' || tool === 'Glob') {
       const searchRoot = typeof input.path === 'string' ? input.path : (typeof input.file_path === 'string' ? input.file_path : null);
       if (searchRoot && overlapsCredential(searchRoot, userHome))
         return { deny: `[router] blocked: a ${tool} rooted at ${toPosix(searchRoot)} would reach a credential path.` };
+      // a search aimed at credential files by its glob (Grep `glob`, Glob `pattern`), whatever the root
+      for (const g of [input.glob, tool === 'Glob' ? input.pattern : undefined]) {
+        if (typeof g !== 'string') continue;
+        const named = expandBraces(g).map(sensitiveSegment).find(Boolean);
+        if (named) return { deny: `[router] blocked: this ${tool} uses ${named}; credential files may not be searched or listed.` };
+      }
     }
-    const targets = targetPaths(input);
     for (const p of targets)
-      if (matchesPath(p, CREDENTIAL_PATHS, userHome))
+      if (credentialHit(p, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be read.` };
     // The router state folder holds the local token and the proxy token (decision 130); off-limits to subagents.
     for (const p of targets)
       if (isUnder(p, stateHome))
         return { deny: `[router] blocked: ${toPosix(p)} is inside the router state folder (incl. proxy-token) and may not be read.` };
-    // D1 detail: allow (skip the prompt) only when every target is inside the repo; an out-of-repo read
-    // (even a non-credential one, e.g. ~/Documents) is left to Claude Code's normal confirmation.
-    return targets.every(p => isUnder(p, root)) ? { allow: '[router] checked: in-repo, not a credential path' } : null;
+    // D1 detail: allow (skip the prompt) only when every target is inside the repo in every form (a link that
+    // leaves the repository is not "inside"); an out-of-repo read is left to Claude Code's normal confirmation.
+    return targets.every(p => allFormsUnder(p, root)) ? { allow: '[router] checked: in-repo, not a credential path' } : null;
   }
 
   if (WRITE_TOOLS.has(tool)) {
+    const targets = targetPaths(input);
+    if (!targets.length) return { deny: '[router] blocked: this write names no file the router can check.' };
     const scope = loadScope(hookInput, stateHome);
-    for (const p of targetPaths(input)) {
-      if (matchesPath(p, CREDENTIAL_PATHS, userHome))
+    // Fail-closed (decision 142): without a scope record nothing may be written. The record is there before
+    // the subagent's first call when the daemon runs; without the daemon a router worker cannot write.
+    if (!scope.confirmed)
+      return { deny: '[router] blocked: the router has no scope record for this subagent, so no file may be written. Is the router daemon running (agentic-router status)? Report this instead of retrying.' };
+    // `.git` as a FILE (a worktree or submodule pointer) redirects git; the mirrored list only has `.git/**`
+    const extraProtected = [...scope.extraProtected, '.git', '**/.git', ...(scope.unscoped ? UNSCOPED_PROTECTED_PATHS : [])];
+    for (const p of targets) {
+      const w = windowsPathProblem(p);
+      if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
+      if (credentialHit(p, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be written.` };
       if (isUnder(p, stateHome))
         return { deny: `[router] blocked: ${toPosix(p)} is inside the router state folder and may not be written.` };
-      const relRaw = path.relative(canonicalForms(root)[0], canonicalForms(p)[0]);
-      const rel = toPosix(relRaw);
-      const outsideRepo = rel === '' ? false : (rel.startsWith('..') || path.isAbsolute(relRaw) || /^[A-Za-z]:/.test(rel));
-      const reason = decideWrite({ rel, outsideRepo, allowed: scope.allowed, unscoped: scope.unscoped, extraProtected: scope.extraProtected, protectedGranted: scope.protectedGranted, userHome });
-      if (reason) return { deny: `[router] ${reason}` };
+      // Both forms must pass: the path as written, and the path with links resolved (a link inside the scope
+      // that points at a protected directory, or out of the repository, is where the write really lands).
+      for (const { rel, outsideRepo } of relForms(root, p)) {
+        const reason = decideWrite({ rel, outsideRepo, allowed: scope.allowed, unscoped: scope.unscoped, extraProtected, protectedGranted: scope.protectedGranted, userHome });
+        if (reason) return { deny: `[router] ${reason}` };
+      }
     }
-    // D1: allow (skip the prompt) only when the scope is CONFIRMED; on the fail-open path (no scope
-    // record/file) stay silent so Claude Code's normal permission flow asks the user.
-    return scope.confirmed ? { allow: '[router] checked: within the write scope' } : null;
+    return { allow: '[router] checked: within the write scope' };   // D1: a confirmed scope, every form inside it
   }
 
   return null;   // other tools pass

@@ -114,13 +114,12 @@ test('project policy.json extends the allowlist', () => {
   assert.equal(guard.classifyBash('deno test', { bashAllow: ['deno test'] }), null);
 });
 
-// D1 (decision 96): verified router-worker calls return allow; unknown scope / out-of-repo stays silent
-test('D1: passing in-repo calls return permissionDecision allow; out-of-repo reads stay silent', () => {
+// D1 (decision 96, revised by 142): in-repo reads return allow; Bash never does; out-of-repo stays silent
+test('D1: in-repo reads return permissionDecision allow; Bash is never allowed, only denied or left to the user', () => {
   const repo = initRepo();
   try {
     const okBash = guard.evaluate({ agent_type: CODER, tool_name: 'Bash', cwd: repo, tool_input: { command: 'npm test' } }, { userHome: HOME });
-    assert.ok(okBash!.allow);
-    assert.match(okBash!.allow, /\[router\] checked:/);
+    assert.equal(okBash, null, 'a Bash command that is not denied gets no decision (decision 142)');
     // in-repo read -> allow
     const inRepo = guard.evaluate({ agent_type: CODER, tool_name: 'Read', cwd: repo, tool_input: { file_path: path.join(repo, 'src', 'a.ts') } }, { userHome: HOME });
     assert.ok(inRepo!.allow, 'in-repo read -> allow');
@@ -132,7 +131,7 @@ test('D1: passing in-repo calls return permissionDecision allow; out-of-repo rea
     assert.equal(outBash, null, 'out-of-repo cat -> no decision');
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
-test('D1: an in-scope write ALLOWs only when the scope is confirmed; fail-open stays silent', () => {
+test('D1: an in-scope write ALLOWs only when the scope is confirmed; without a scope record it is denied', () => {
   const root = initRepo();
   const stateHome = tmp('ar-state-');
   try {
@@ -141,9 +140,9 @@ test('D1: an in-scope write ALLOWs only when the scope is confirmed; fail-open s
     fs.writeFileSync(path.join(stateHome, 'agents', 'a1.json'), JSON.stringify({ sessionId, subtaskId: 'A', scope: { allowed: ['src/**'], protected: [] } }));
     const confirmed = guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, session_id: sessionId, agent_id: agentId, tool_input: { file_path: path.join(root, 'src', 'a.ts') } }, { userHome: HOME, routerHome: stateHome });
     assert.ok(confirmed!.allow, 'confirmed scope + in scope -> allow');
-    // no agents/scopes record for this subtask -> fail-open -> silent (null), so Claude Code asks the user
-    const silent = guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, session_id: 'other', agent_id: 'none', tool_input: { file_path: path.join(root, 'src', 'a.ts') } }, { userHome: HOME, routerHome: stateHome });
-    assert.equal(silent, null, 'unknown scope -> no decision');
+    // no agents/scopes record for this subtask -> denied (fail-closed, decision 142)
+    const none = guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, session_id: 'other', agent_id: 'none', tool_input: { file_path: path.join(root, 'src', 'a.ts') } }, { userHome: HOME, routerHome: stateHome });
+    assert.match(none!.deny, /no scope record/, 'unknown scope -> deny');
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); }
 });
 test('D7 (decision 102): a router worker PowerShell call is always denied', () => {
@@ -190,7 +189,7 @@ test('dangerous options and write-target positionals on allowed commands are den
 });
 test('refusal messages name the offending construct', () => {
   assert.match(guard.classifyBash('echo $(whoami)')!, /command substitution/);
-  assert.match(guard.classifyBash('cat ~/.ss?/id_rsa', { userHome: os.homedir() })!, /glob character/);
+  assert.match(guard.classifyBash('cat ~/.ss?/id_rsa', { userHome: os.homedir() })!, /glob over dotfiles/);
   assert.match(guard.classifyBash('(ls)')!, /parenthesis/);
 });
 
@@ -256,16 +255,20 @@ test('REGRESSION: the real stdin entry point denies the audited credential reads
 // ---------------------------------------------------------------- writes: protected, escape, router self-protection
 test('unscoped writes allow the repo but block protected paths, escapes, and the router state folder', () => {
   const root = initRepo();
+  const stateHome = tmp('ar-state-');
   try {
-    const w = (p: string) => guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, tool_input: { file_path: p } }, { userHome: HOME });
-    assert.equal(w(path.join(root, 'src', 'a.ts')), null);
+    // an unscoped subtask: its record says "whole repository" (no [scope: ...] line)
+    fs.mkdirSync(path.join(stateHome, 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(stateHome, 'agents', 'u1.json'), JSON.stringify({ sessionId: 's', subtaskId: 'U', scope: { allowed: ['**'], protected: guard.PROTECTED_WRITE_PATHS, unscoped: true } }));
+    const w = (p: string) => guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, session_id: 's', agent_id: 'u1', tool_input: { file_path: p } }, { userHome: HOME, routerHome: stateHome });
+    assert.ok(w(path.join(root, 'src', 'a.ts'))!.allow);
     assert.ok(w(path.join(root, '.github', 'workflows', 'ci.yml'))!.deny);
     assert.ok(w(path.join(root, '.claude', 'settings.json'))!.deny);
     assert.ok(w(path.join(root, '.git', 'hooks', 'pre-commit'))!.deny);
     assert.ok(w(path.join(root, '.agentic-router', 'policy.json'))!.deny, 'project router config is protected');
     assert.ok(w(path.join(root, '..', 'other', 'a.ts'))!.deny, 'escape');
-    assert.ok(guard.evaluate({ agent_type: CODER, tool_name: 'Write', cwd: root, tool_input: { file_path: path.join(guard.routerHome(), 'scopes', 'x.json') } })!.deny, 'router state folder');
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    assert.match(w(path.join(stateHome, 'scopes', 'x.json'))!.deny, /router state folder/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); }
 });
 
 // ---------------------------------------------------------------- scope enforcement, keyed from the git root (audit #15)
@@ -375,7 +378,7 @@ test('running a package script after editing package.json scripts is blocked unt
 });
 
 // ---------------------------------------------------------------- corrupt vs missing scope, runGuard, odd payloads
-test('a router subagent whose scope file is corrupt JSON is denied (fail-closed); missing is fail-open', () => {
+test('a router subagent whose scope file is corrupt JSON, or missing, is denied (fail-closed)', () => {
   const root = initRepo();
   const stateHome = tmp('ar-state-');
   try {
@@ -386,9 +389,9 @@ test('a router subagent whose scope file is corrupt JSON is denied (fail-closed)
     fs.writeFileSync(path.join(stateHome, 'scopes', `${guard.scopeKey(sessionId, 'A')}.json`), '{ not json');
     const input = { agent_type: CODER, tool_name: 'Write', cwd: root, session_id: sessionId, agent_id: agentId, tool_input: { file_path: path.join(root, 'src', 'a.ts') } };
     assert.throws(() => guard.evaluate(input, { userHome: HOME, routerHome: stateHome }), 'corrupt scope throws -> runGuard fail-closed');
-    // missing scope file (different subtask): fail-open
+    // missing scope file (different subtask): no record, no write
     const open = { ...input, agent_id: 'none', session_id: 'sess-4' };
-    assert.equal(guard.evaluate(open, { userHome: HOME, routerHome: stateHome }), null);
+    assert.match(guard.evaluate(open, { userHome: HOME, routerHome: stateHome })!.deny, /no scope record/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); }
 });
 
