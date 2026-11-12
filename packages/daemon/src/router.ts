@@ -907,6 +907,7 @@ export class Router {
       ...(this.#verify.shell ? { shell: this.#verify.shell } : {}),
       scope: {
         allowed: sub.writeScope, protected: scopeFileBody([], false).protected, unscoped: sub.unscoped,
+        ...(sub.protectedGranted.length ? { protectedGranted: sub.protectedGranted } : {}),   // decision 129
         snapshot: agent.snapshot, ...(shared.length ? { sharedAllowed: [...new Set(shared)] } : {}),
       },
     };

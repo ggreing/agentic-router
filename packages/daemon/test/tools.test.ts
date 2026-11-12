@@ -433,8 +433,11 @@ test('router_request_scope: a protected path is granted after a user turn and st
   // already granted: no second user turn
   assert.equal((await s.tool('router_request_scope', { subtaskId: 'A', add: ['.env.example'] })).ok, true);
 
-  // a new attempt of the same id keeps the grant; its ordinary scope comes from the new [scope: ...] line
+  // the stop check takes the grant: an edit of the granted file passes (without it: "protected paths changed")
+  write(repo, '.env.example', 'KEY=\n');
   assert.deepEqual(await s.post(s.stop('a1')), {});
+  assert.deepEqual(rows(d, "SELECT status, verdict FROM subtasks WHERE id = 'A'"), [{ status: 'passed', verdict: 'meet' }]);
+  // a new attempt of the same id keeps the grant; its ordinary scope comes from the new [scope: ...] line
   assert.deepEqual(await s.post(s.call('A', 'coder', 'haiku', 'low', 'app/**')), {});
   const scopeFile = path.join(d.home, 'scopes', fs.readdirSync(path.join(d.home, 'scopes')).find(f => !f.includes('U'))!);
   assert.deepEqual([read(scopeFile).allowed, read(scopeFile).protectedGranted], [['app/**'], ['.env.example']]);

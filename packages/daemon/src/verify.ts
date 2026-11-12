@@ -38,6 +38,12 @@ export const SCOPE_IGNORE = ['.claude/worktrees/**'];
 export interface ScopeSpec {
   allowed: string[];
   protected: string[];
+  /**
+   * Decision 129: protected paths this subtask may edit (granted by router_request_scope after a user
+   * turn). A change to one is neither a protected-path change nor out of scope. Matched by the file
+   * system's case rule, like the scope; git metadata and attributes are never covered.
+   */
+  protectedGranted?: string[];
   unscoped: boolean;
   /** Work-tree state when the subagent started; changes already present then are not attributed to it. */
   snapshot?: Snapshot | null;
@@ -355,6 +361,9 @@ async function scopeCheck(cwd: string, spec: ScopeSpec): Promise<ScopeResult> {
   if (!root) return { signal: { kind: 'scope', ok: true, detail: 'skipped: not a git work tree' } };
   const shared = snap?.isolated === false || (spec.sharedAllowed?.length ?? 0) > 0;
   const sharedNote = ' (git directory is shared with the main work tree and other worktrees: may come from another session)';
+  // decision 129: a protected path granted to this subtask counts as inside its scope
+  const granted = (f: string) => matchesScope(f, spec.protectedGranted ?? []);
+  const isProtected = (f: string) => matchesAny(f, spec.protected) && !granted(f);
   const artifacts = snap?.artifacts ?? {};
 
   // 1. git metadata, read from disk
@@ -387,8 +396,8 @@ async function scopeCheck(cwd: string, spec: ScopeSpec): Promise<ScopeResult> {
     const candidates = files.filter(f => !matchesAny(f, SCOPE_IGNORE));
     // No start snapshot (the subagent's start state was never recorded): with no baseline, this subagent's
     // changes cannot be told from the user's uncommitted work, so nothing fails; what differs is reported.
-    const outsideAll = candidates.filter(f => !matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
-    const prot = candidates.filter(f => matchesAny(f, spec.protected));
+    const outsideAll = candidates.filter(f => !granted(f) && !matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
+    const prot = candidates.filter(isProtected);
     const parts = [`no start snapshot (baseline unknown): ${candidates.length} uncommitted change(s) against HEAD`];
     if (outsideAll.length) parts.push(`outside the allowed scope [${spec.allowed.join(', ')}]: ${list(outsideAll)}`);
     if (prot.length) parts.push(`protected paths: ${list(prot)}`);
@@ -416,14 +425,14 @@ async function scopeCheck(cwd: string, spec: ScopeSpec): Promise<ScopeResult> {
   const untouched = candidates.filter(f => f in before && sameContent(before[f], state[f]));
   const eol = untouched.filter(f => eolOnly(before[f], state[f]));
   let mine = candidates.filter(f => !untouched.includes(f) && !(f in artifacts && sameContent(artifacts[f], state[f])));
-  const outOfScope = (f: string) => matchesAny(f, spec.protected) || (!matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
+  const outOfScope = (f: string) => isProtected(f) || (!granted(f) && !matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
   const eolVsHead = await eolOnlyVsRef(root, snap.head, mine.filter(f => !(f in before) && state[f] !== '-' && outOfScope(f)));
   if (eolVsHead.length) {
     eol.push(...eolVsHead);
     mine = mine.filter(f => !eolVsHead.includes(f));
   }
-  const protectedHits = mine.filter(f => matchesAny(f, spec.protected));
-  const outside = mine.filter(f => !protectedHits.includes(f) && !matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
+  const protectedHits = mine.filter(isProtected);
+  const outside = mine.filter(f => !protectedHits.includes(f) && !granted(f) && !matchesScope(f, spec.allowed) && !matchesScope(f, spec.sharedAllowed ?? []));
 
   // Shared work tree (audit #9): an out-of-scope change counts only if this subagent's edit tools touched
   // it. Decision 95: the user's own uncommitted work that is now reverted (same as HEAD again) or deleted
