@@ -43,37 +43,63 @@ const toolUse = (name, input) => ({ type: 'tool_use', id: `toolu_e2e_${String(++
  * One scenario's script. `steps`: [{ id, tool, input }]. `dispatch`: the Agent tool input.
  * state.outcomes[id] = { isError, text } once the coder's next request brings the tool result.
  */
+/** Subtask ids of the coders, one per batch of steps. */
+const BATCH_TAGS = 'ABCDEFGH';
+
+/**
+ * A coder has a turn limit (40 in the role file), and a step's result is only seen on the coder's NEXT turn.
+ * So one coder gets at most `scn.perCoder` steps, and the lead dispatches another coder for the rest.
+ */
+function dispatchNext(scn, state, req, hint) {
+  const with_ = hint ?? state.dispatchedWith ?? { model: scn.dispatch.model, effort: scn.dispatch.effort };
+  if (!hint) {                                             // a new batch (a repeat after a refusal keeps its batch)
+    state.batch++;
+    state.batchEnd = Math.min(scn.steps.length, state.next + (scn.perCoder ?? scn.steps.length));
+    state.batchTurns = 0;
+    state.missing = 0;
+  }
+  state.dispatches++;
+  state.dispatchedWith = with_;
+  const tag = BATCH_TAGS[Math.min(state.batch, BATCH_TAGS.length - 1)];
+  const prompt = String(scn.dispatch.prompt ?? '').replace(/^\[subtask:[^\]]*\]/, `[subtask:${tag}]`);
+  return { act: `${hint ? 're-dispatch' : 'dispatch'} ${tag} ${with_.model ?? ''}/${with_.effort ?? ''}`, block: toolUse(req.agentTool, { ...scn.dispatch, ...with_, prompt }) };
+}
+
 export function nextAction(scn, state, req) {
   if (req.kind === 'side') return { act: 'side-text', block: text('ok') };
   if (req.kind === 'main') {
+    const more = () => state.batchTurns > 0 && state.next < scn.steps.length && state.batch + 1 < BATCH_TAGS.length && !!req.agentTool;
     if (req.results.length) {
       state.dispatchResults.push(...req.results);
       // The daemon names the step it planned when the call's model or effort does not fit: take it and call once more.
       const t = req.results[0].text;
       const model = /model="([^"]+)"/.exec(t)?.[1], effort = /effort="([^"]+)"/.exec(t)?.[1];
-      if (state.coderTurns === 0 && state.dispatches < 3 && req.agentTool && t.includes('[agentic-router]') && model && effort) {
-        state.dispatches++;
-        state.dispatchedWith = { model, effort };
-        return { act: `re-dispatch ${model}/${effort}`, block: toolUse(req.agentTool, { ...scn.dispatch, model, effort }) };
+      if (state.batchTurns === 0 && state.dispatches < 12 && req.agentTool && t.includes('[agentic-router]') && model && effort && !state.retried[state.batch]) {
+        state.retried[state.batch] = true;
+        return dispatchNext(scn, state, req, { model, effort });
       }
+      if (more()) return dispatchNext(scn, state, req);    // the coder finished its batch: the next one
       return { act: 'main-final', block: text('E2E_MAIN_DONE') };
     }
     state.mainTurns++;
-    if (state.dispatches > 0) { state.mainNotes.push(req.lastText.slice(0, 300)); return { act: 'main-final(after the dispatch)', block: text('E2E_MAIN_DONE') }; }
+    if (state.dispatches > 0) {
+      state.mainNotes.push(req.lastText.slice(0, 300));
+      if (more()) return dispatchNext(scn, state, req);    // an Agent call that ran in the background: its notification
+      return { act: 'main-final(after the dispatch)', block: text('E2E_MAIN_DONE') };
+    }
     if (!req.agentTool) return { act: 'no-agent-tool', block: text('E2E_NO_AGENT_TOOL') };
-    state.dispatches++;
-    state.dispatchedWith = { model: scn.dispatch.model, effort: scn.dispatch.effort };
-    return { act: 'dispatch', block: toolUse(req.agentTool, scn.dispatch) };
+    return dispatchNext(scn, state, req);
   }
   // the coder
   state.coderTurns++;
+  state.batchTurns++;
   if (state.pending) {
     const got = req.allResults.find(r => r.id === state.toolUseIds[state.pending]) ?? (req.results.length === 1 ? req.results[0] : null);
     if (got) { state.outcomes[state.pending] = { isError: got.isError, text: got.text }; state.missing = 0; }
     else { state.outcomes[state.pending] = { isError: null, text: `(no tool result came back for this step; last message: ${req.lastShape})` }; state.missing++; }
     state.pending = null;
-  } else if (state.next >= scn.steps.length && state.coderTurns > 1) state.feedback.push(req.lastText.slice(0, 500));   // a stop hook sent the coder back
-  if (state.next < scn.steps.length && state.missing < 3) {
+  } else if (state.next >= state.batchEnd && state.batchTurns > 1) state.feedback.push(req.lastText.slice(0, 500));   // a stop hook sent the coder back
+  if (state.next < state.batchEnd && state.missing < 3) {
     const s = scn.steps[state.next++];
     state.pending = s.id;
     const block = toolUse(s.tool, s.input);
@@ -83,7 +109,7 @@ export function nextAction(scn, state, req) {
   return { act: 'coder-final', block: text('## Result\nScripted checks finished.\n## Remaining issues\nNone.') };
 }
 
-export const newState = () => ({ missing: 0, mainNotes: [], dispatches: 0, dispatchedWith: null, mainTurns: 0, coderTurns: 0, next: 0, pending: null, outcomes: {}, toolUseIds: {}, dispatchResults: [], feedback: [] });
+export const newState = () => ({ batch: -1, batchEnd: 0, batchTurns: 0, retried: {}, missing: 0, mainNotes: [], dispatches: 0, dispatchedWith: null, mainTurns: 0, coderTurns: 0, next: 0, pending: null, outcomes: {}, toolUseIds: {}, dispatchResults: [], feedback: [] });
 
 /** The facts the script needs from a /v1/messages body. */
 export function facts(body, headers) {

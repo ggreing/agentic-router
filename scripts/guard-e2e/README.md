@@ -25,8 +25,10 @@ Results are written to `scripts/guard-e2e/results/` (ignored by git): `summary.j
 
 ## What it checks
 
-The scripted lead dispatches one coder with `[scope: src/**]`. The coder then issues the tool calls listed
-in `steps()` in `run.mjs`, one per turn. Each step carries a comment naming the class of bypass it covers.
+The scripted lead dispatches a coder with `[scope: src/**]`. The coder issues the tool calls listed in
+`steps()` in `run.mjs`, one per turn; each step carries a comment naming the class of bypass it covers.
+A coder has a turn limit (40 in the role file) and a step's result is read on the turn after it, so one
+coder gets at most 20 steps and the lead dispatches the next coder (subtask A, B, …) for the rest.
 
 | Expectation | Meaning |
 |---|---|

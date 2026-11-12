@@ -10,8 +10,9 @@
 // The router daemon runs in a temp AGENTIC_ROUTER_HOME and is stopped at the end. The repository the
 // subagent works in is a temp fixture. Your own ~/.claude and ~/.agentic-router are not touched.
 //
-// The fake plays the model: the lead dispatches one coder with [scope: src/**], and the coder issues the
-// tool calls listed in steps() below, one per turn. Each result is compared with what the guard should do.
+// The fake plays the model: the lead dispatches a coder with [scope: src/**], and the coder issues the
+// tool calls listed in steps() below, one per turn; after 20 steps the lead dispatches the next coder.
+// Each result is compared with what the guard should do.
 //
 //   node scripts/guard-e2e/run.mjs                    both scenarios; writes scripts/guard-e2e/results/summary.json
 //   node scripts/guard-e2e/run.mjs --only=plain       one scenario (plain | allowed)
@@ -40,6 +41,8 @@ if (!fs.existsSync(path.join(REPO, 'plugin', 'hooks', 'guard.mjs'))) { console.e
 const RESULTS = path.join(HERE, 'results');
 const TIMEOUT_MS = Number(arg('timeout') ?? 240) * 1000;
 const CODER = 'agentic-router:coder';
+/** Steps one scripted coder issues. The coder role has a turn limit (40), and a result is read on the turn after its step. */
+const STEPS_PER_CODER = 20;
 
 // ------------------------------------------------------------------ environment
 
@@ -242,7 +245,7 @@ async function runScenario(s, ctx) {
   const logDir = path.join(RESULTS, `logs-${s.name}`);
   fs.mkdirSync(logDir, { recursive: true });
   const list = steps(fx, ctx.home, !!s.allowed);
-  const scn = { name: s.name, steps: list.map(({ id, tool, input }) => ({ id, tool, input })),
+  const scn = { name: s.name, steps: list.map(({ id, tool, input }) => ({ id, tool, input })), perCoder: STEPS_PER_CODER,
     dispatch: { subagent_type: CODER, description: 'scripted guard checks', model: 'haiku', effort: 'low', run_in_background: false, prompt: '[subtask:A]\n[scope: src/**]\nRun the scripted checks and report.' } };
   ctx.fake.setScenario(scn);
   const args = ['-p', '--plugin-dir', path.join(REPO, 'plugin'), '--plugin-dir', path.join(HERE, 'probe'), '--model', 'sonnet', '--max-turns', '8', '--output-format', 'json',
@@ -270,7 +273,7 @@ async function runScenario(s, ctx) {
   const subPre = pre.filter(p => p.agent_id);
   const res = {
     scenario: s.name, allowedTools: s.allowedTools, exitCode: r.exitCode ?? null, timedOut: r.timedOut ?? false, durationMs: r.durationMs, spawnError: r.spawnError, output,
-    dispatch: { calls: st.dispatches, mainNotes: st.mainNotes, missingResults: st.missing, with: st.dispatchedWith, results: st.dispatchResults, coderTurns: st.coderTurns, coderTools: st.coderTools ?? null, stopFeedback: st.feedback },
+    dispatch: { calls: st.dispatches, coders: st.batch + 1, mainNotes: st.mainNotes, missingResults: st.missing, with: st.dispatchedWith, results: st.dispatchResults, coderTurns: st.coderTurns, coderTools: st.coderTools ?? null, stopFeedback: st.feedback },
     hookInput: {
       preToolUseKeys: [...new Set(subPre.flatMap(p => p.keys))].sort(), agentTypes: [...new Set(subPre.map(p => p.agent_type))], permissionModes: [...new Set(subPre.map(p => p.permission_mode))],
       allHaveSessionId: subPre.length > 0 && subPre.every(p => p.session_id), allHaveCwd: subPre.length > 0 && subPre.every(p => p.cwd), anyTranscriptPath: subPre.some(p => p.hasTranscriptPath),
@@ -309,25 +312,39 @@ async function selftest() {
   assert(fs.existsSync(path.join(d.home, 'config.json')), 'daemon: started in the temp home');
   const list = steps(fx, d.home, false);
   // the script, walked without a network: main dispatches, the coder gets every step once, then finishes
-  const scn = { name: 't', steps: list.map(({ id, tool, input }) => ({ id, tool, input })), dispatch: { subagent_type: CODER, prompt: '[subtask:A]\n[scope: src/**]\nx' } };
+  const scn = { name: 't', steps: list.map(({ id, tool, input }) => ({ id, tool, input })), perCoder: STEPS_PER_CODER, dispatch: { subagent_type: CODER, prompt: '[subtask:A]\n[scope: src/**]\nx' } };
   const st = newState();
   const main = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: 'go' }] }, {}));
   assert(main.block.name === 'Agent' && main.block.input.subagent_type === CODER, 'script: the lead dispatches the router coder');
   const again = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', is_error: true, content: 'PreToolUse:Agent hook error: [agentic-router] subtask A: pass model and effort on the Agent call. The coder runs at step s2 (model="sonnet", effort="medium") for this L2 request.' }] }] }, {}));
   assert(again.block.name === 'Agent' && again.block.input.model === 'sonnet' && again.block.input.effort === 'medium', 'script: a refused dispatch is repeated with the step the daemon names');
   let last = { role: 'user', content: 'go' }, n = 0;
+  const tags = [again.block.input.prompt.split('\n')[0]];
+  let perCoderMax = 0, inThisCoder = 0;
   for (;;) {
     const a = nextAction(scn, st, facts({ tools: [{ name: 'Bash' }], messages: [last] }, { 'x-claude-code-agent-id': 'a1' }));
-    if (a.block.type !== 'tool_use') break;
+    if (a.block.type !== 'tool_use') {
+      // the coder ended: its Agent call returns to the lead, which dispatches the next coder while steps remain
+      perCoderMax = Math.max(perCoderMax, inThisCoder); inThisCoder = 0;
+      const lead = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'the coder finished' }] }] }, {}));
+      if (lead.block.type !== 'tool_use') break;
+      tags.push(lead.block.input.prompt.split('\n')[0]);
+      last = { role: 'user', content: 'go' };
+      continue;
+    }
+    inThisCoder++;
     n++;
     // as Claude Code may send it: the result is not the last block of the last message
     last = { role: 'user', content: [{ type: 'tool_result', tool_use_id: a.block.id, is_error: true, content: '[router] denied (selftest)' }, { type: 'text', text: 'reminder' }] };
   }
   assert(n === list.length && Object.keys(st.outcomes).length === list.length, `script: all ${list.length} steps issued, each with its result`);
+  assert(perCoderMax <= STEPS_PER_CODER && perCoderMax + 1 < 40, `script: no coder gets more than ${STEPS_PER_CODER} steps (the coder role has 40 turns); coders: ${tags.join(' ')}`);
+  assert(new Set(tags).size === tags.length && tags.length === Math.ceil(list.length / STEPS_PER_CODER), 'script: one subtask id per coder');
   assert(classify(st.outcomes[list[0].id]) === 'guard-deny', 'classify: a [router] result is a guard deny');
   const note = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: '<task-notification>done</task-notification>' }] }, {}));
-  assert(note.block.type === 'text' && st.dispatches === 2, 'script: a later lead turn (the task notification) ends the run without another dispatch');
+  assert(note.block.type === 'text', 'script: a lead turn after all steps are done ends the run without another dispatch');
   const st2 = newState();
+  nextAction(scn, st2, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: 'go' }] }, {}));   // the lead's dispatch opens the first batch
   nextAction(scn, st2, facts({ tools: [{ name: 'Bash' }], messages: [{ role: 'user', content: 'go' }] }, { 'x-claude-code-agent-id': 'a2' }));
   const lost = nextAction(scn, st2, facts({ tools: [{ name: 'Bash' }], messages: [{ role: 'user', content: 'go' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] }, { 'x-claude-code-agent-id': 'a2' }));
   assert(lost.block.type === 'tool_use' && /no tool result/.test(st2.outcomes[list[0].id].text), 'script: a step without a result is recorded and the next step is still issued');
