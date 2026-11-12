@@ -22,6 +22,7 @@
 //   CLAUDE_BIN=<path>                                 the claude executable (default: "claude" on PATH)
 // The exit code is 1 when a step did not end as expected.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -290,6 +291,71 @@ async function runScenario(s, ctx) {
 }
 const safeList = d => { try { return fs.readdirSync(d); } catch { return []; } };
 
+// ------------------------------------------------------------------ squatter (decision 156)
+
+const SQUAT_MARKER = 'E2E-SQUAT-MARKER-prose';
+/** A listener that records every byte it is sent and answers everything "200 ok", as a program squatting on the daemon's port would. */
+function recordingListener(port) {
+  const wire = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      wire.push(`${req.method} ${req.url}\n${JSON.stringify(req.headers)}\n${Buffer.concat(chunks).toString('utf8')}`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true,"version":"9.9.9"}');
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve({ wire, close: () => new Promise(r => { server.closeAllConnections(); server.close(() => r()); }) }));
+  });
+}
+/** What reached the listener, judged: nothing sensitive may be in it. */
+function judgeWire(wire, token) {
+  const all = wire.join('\n---\n');
+  return {
+    requests: wire.length, requestLines: [...new Set(wire.map(w => w.split('\n')[0]))],
+    tokenSeen: !!token && all.includes(token), markerSeen: all.includes(SQUAT_MARKER), authorizationHeaderSeen: /"authorization"/i.test(all),
+  };
+}
+const listenRetry = async port => { for (let i = 0; ; i++) { try { return await recordingListener(port); } catch (e) { if (i >= 40) throw e; await sleep(250); } } };
+
+/**
+ * The daemon is stopped and a recording listener takes its port, as another local user's process could.
+ * A real Claude Code then runs one prompt with the plugin: its hooks and its status line call "the daemon".
+ * Nothing sensitive may reach the listener, the session must still work, and the events must wait in the spool.
+ */
+async function runSquatter(ctx, d) {
+  const cfg = JSON.parse(fs.readFileSync(path.join(ctx.home, 'config.json'), 'utf8'));
+  const token = fs.readFileSync(path.join(ctx.home, 'token'), 'utf8').trim();
+  console.log('  ' + d.cli('stop').trim().split('\n')[0]);
+  const spoolBefore = safeList(path.join(ctx.home, 'spool')).length;
+  const squat = await listenRetry(cfg.daemonPort);
+  const fx = fixtureRepo(ctx.tmp, 'repo-squatter');
+  ctx.fake.setScenario({ name: 'squatter', steps: [], dispatch: {}, noDispatch: true });
+  const env = cleanEnv(process.env, {
+    CLAUDE_CONFIG_DIR: ctx.configDir, ANTHROPIC_BASE_URL: `http://127.0.0.1:${ctx.fake.port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1',
+    ENABLE_TOOL_SEARCH: 'false', AGENTIC_ROUTER_HOME: ctx.home,
+  });
+  const r = await runClaude({ args: ['-p', '--plugin-dir', path.join(REPO, 'plugin'), '--model', 'sonnet', '--max-turns', '2', '--output-format', 'json'],
+    stdin: `Say hello. ${SQUAT_MARKER}`, cwd: fx.dir, env });
+  await sleep(800);
+  await squat.close();
+  const seen = judgeWire(squat.wire, token);
+  let result = null;
+  try { result = JSON.parse(r.stdout).result ?? null; } catch { /* not JSON */ }
+  const res = {
+    scenario: 'squatter', exitCode: r.exitCode ?? null, timedOut: r.timedOut ?? false, durationMs: r.durationMs, spawnError: r.spawnError, result,
+    listener: seen, spooledEvents: safeList(path.join(ctx.home, 'spool')).length - spoolBefore,
+    ok: !r.spawnError && seen.requests > 0 && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen && result === 'E2E_MAIN_DONE',
+    stderrTail: (r.stderr || '').slice(-600),
+  };
+  fs.writeFileSync(path.join(RESULTS, 'run-squatter.json'), JSON.stringify(res, null, 2) + '\n');
+  console.log('  ' + d.cli('start').trim().split('\n')[0]);   // the daemon comes back and replays the spool
+  return res;
+}
+
 // ------------------------------------------------------------------ daemon
 
 function daemon(tmp) {
@@ -360,6 +426,25 @@ async function selftest() {
   assert(decision(list.find(s => s.id === 'write-in-scope')) === 'allow', 'guard as a process: an in-scope write is allowed');
   console.log('    ' + d.cli('stop').trim().split('\n')[0]);
   await sleep(500);
+  // the squatter run without Claude Code: the plugin's relay and status line against a recording listener on the daemon's port
+  const cfg = JSON.parse(fs.readFileSync(path.join(d.home, 'config.json'), 'utf8'));
+  const token = fs.readFileSync(path.join(d.home, 'token'), 'utf8').trim();
+  const squat = await listenRetry(cfg.daemonPort);
+  // asynchronous: the listener lives in this process and must be able to answer while the program runs
+  const plug = (file, args, input) => new Promise(resolve => {
+    const c = spawn(process.execPath, [path.join(REPO, 'plugin', file), ...args], { env: cleanEnv(process.env, { AGENTIC_ROUTER_HOME: d.home }), stdio: ['pipe', 'pipe', 'ignore'] });
+    let out = '';
+    c.stdout.on('data', x => { out += x; });
+    c.on('close', () => resolve(out));
+    c.stdin.end(input);
+  });
+  const hookOut = await plug('hooks/relay.mjs', ['UserPromptSubmit'], JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: fx.dir, prompt: `hello ${SQUAT_MARKER}` }));
+  const lineOut = await plug('statusline.mjs', [], JSON.stringify({ session_id: 's', model: { id: 'claude-sonnet-5-5' } }));
+  await squat.close();
+  const seen = judgeWire(squat.wire, token);
+  assert(hookOut === '{}' && /OFF/.test(lineOut), 'squatter: the hook passes and the status line says OFF');
+  assert(seen.requests >= 2 && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen, `squatter: ${seen.requests} requests reached the listener, none with the token, the prompt or an Authorization header`);
+  assert(safeList(path.join(d.home, 'spool')).length === 1, 'squatter: the event waits in the spool');
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* a handle may still be open on Windows */ }
   console.log('selftest passed');
 }
@@ -371,7 +456,8 @@ async function main() {
   if (flag('selftest')) return selftest();
   const only = arg('only')?.split(',').map(s => s.trim()).filter(Boolean);
   const list = SCENARIOS.filter(s => !only || only.includes(s.name));
-  if (!list.length) throw new Error(`no scenario matches; names: ${SCENARIOS.map(s => s.name).join(', ')}`);
+  if (!list.length && !only?.includes('squatter')) throw new Error(`no scenario matches; names: ${SCENARIOS.map(s => s.name).join(', ')}, squatter`);
+  let squat;
   fs.rmSync(RESULTS, { recursive: true, force: true });
   fs.mkdirSync(RESULTS, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-guard-e2e-'));
@@ -393,6 +479,11 @@ async function main() {
       if (r.spawnError) break;
       if (safeList(configDir).some(f => /credential/i.test(f))) { console.log('a credential file appeared in the config dir; stopping'); break; }
     }
+    if (!only || only.includes('squatter')) {
+      console.log('- squatter ...');
+      squat = await runSquatter(ctx, d);
+      console.log(`  ${squat.spawnError ? `could not start: ${squat.spawnError}` : `exit ${squat.exitCode} in ${squat.durationMs} ms`}`);
+    }
   } finally {
     await fake.close();
     try { console.log(d.cli('stop').trim()); } catch (e) { console.log(`daemon stop failed: ${String(e && e.message).slice(0, 200)}`); }
@@ -400,7 +491,7 @@ async function main() {
       generatedAt: new Date().toISOString(),
       claudeVersion: (() => { try { return spawnSync(process.env.CLAUDE_BIN || 'claude', ['--version'], { encoding: 'utf8', windowsHide: true, shell: WIN }).stdout.trim(); } catch { return null; } })(),
       platform: process.platform, safety: { credentialsSeen: [...new Set(fake.entries.map(e => e.credential))], pathsRequested: [...new Set(fake.entries.map(e => `${e.method} ${e.path}`))] },
-      runs,
+      runs, ...(squat ? { squatter: squat } : {}),
     };
     fs.writeFileSync(path.join(RESULTS, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
     fs.writeFileSync(path.join(RESULTS, 'requests.jsonl'), fake.entries.map(e => JSON.stringify(e)).join('\n') + '\n');
@@ -410,6 +501,13 @@ async function main() {
       failedSteps += r.dispatch.coderTurns ? r.failed.length : 1;
       if (!r.dispatch.coderTurns) console.log(`  the coder never ran. Agent result: ${JSON.stringify(r.dispatch.results).slice(0, 400)}`);
       for (const x of r.steps ?? []) console.log(`  ${x.ok ? 'ok  ' : 'FAIL'} ${x.id.padEnd(22)} expect ${x.expect.padEnd(4)} got ${x.outcome.padEnd(17)} ${x.text.replace(/\s+/g, ' ').slice(0, 90)}`);
+    }
+    if (squat) {
+      const l = squat.listener;
+      console.log(`\nsquatter  (the daemon stopped, a recording listener on its port)`);
+      console.log(`  ${squat.ok ? 'ok  ' : 'FAIL'} ${l.requests} request(s) reached the listener: ${l.requestLines.join(', ') || 'none'}`);
+      console.log(`       token seen: ${l.tokenSeen}; prompt seen: ${l.markerSeen}; Authorization header seen: ${l.authorizationHeaderSeen}; events spooled: ${squat.spooledEvents}; session result: ${squat.result}`);
+      if (!squat.ok) failedSteps++;
     }
   }
 }

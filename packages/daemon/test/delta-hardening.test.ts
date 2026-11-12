@@ -14,7 +14,8 @@ import { homeLayout } from '../src/home.ts';
 import { Ledger } from '../src/ledger.ts';
 import { eventPayload } from '../src/payload.ts';
 import { testCounts } from '../src/verify.ts';
-import { makeHome, makeRepo, postHook, rmrf, rows, startTestDaemon, tmpDir, type HookInput } from './helpers.ts';
+import { TOKEN, makeHome, makeRepo, postHook, rmrf, rows, startTestDaemon, tmpDir, type HookInput } from './helpers.ts';
+import { sealedFake } from '../../core/test/sealed-fake.ts';
 
 type Rec = Record<string, any>;   // eslint-disable-line @typescript-eslint/no-explicit-any
 interface Relay {
@@ -115,9 +116,8 @@ test('decision 149: a lead edit is posted, spooled and stored by path only, even
   assert.ok(!spooled.includes(FILE_BODY) && spooled.includes('src/a.ts'), spooled);
   // what the relay posts: a stub daemon records the body
   const bodies: string[] = [];
-  const stub = http.createServer((req, res) => {
-    let b = ''; req.on('data', c => { b += String(c); }); req.on('end', () => { bodies.push(b); res.setHeader('content-type', 'application/json'); res.end('{}'); });
-  });
+  // (the daemon side of a sealed call, decision 156, with the test home's token)
+  const stub = http.createServer(sealedFake(TOKEN, r => { bodies.push(r.body ?? ''); return { body: '{}' }; }));
   await new Promise<void>(r => stub.listen(0, '127.0.0.1', r));
   const home = makeHome({ daemonPort: (stub.address() as { port: number }).port, recordPrompts: true });
   try {

@@ -1,7 +1,13 @@
 // Local HTTP API (node:http). Bound to 127.0.0.1 only.
 // - Every request: Host must be 127.0.0.1:<port> or localhost:<port>; any Origin header is refused
 //   (no browser may talk to the daemon).
-// - Everything but /health needs `Authorization: Bearer <token>`, compared in constant time.
+// - The router's own clients (hooks, status line, MCP server, CLI) do not send the token (decision 156): they
+//   POST a sealed envelope to /router/v1/sealed (core seal.ts). The daemon opens it with the token as the
+//   shared secret, makes the request it carries to itself, and seals the answer. A program that took this
+//   port while the daemon was down can therefore read neither the token nor the hook data.
+// - "Authorization: Bearer <token>" is still accepted for one release (config bearerApi, default on) for
+//   clients of an older version and for the proxy, compared in constant time; with bearerApi off only sealed
+//   calls get in.
 // - POST /shutdown answers { ok: true } first, then asks the daemon to stop (CLI `stop`).
 // - POST bodies: application/json only, at most 1 MB.
 // - The hook response is what relay.mjs prints unchanged: text/plain for pre_compact, JSON otherwise.
@@ -18,9 +24,10 @@
 // - /dashboard/* and /router/v1/metrics/* belong to the dashboard module (decision 132), which runs first and
 //   has its own rules (same-origin browser pages with a session cookie). Every other route still refuses any
 //   Origin header.
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { NonceWindow, SEALED_PATH, SealError, openRequest, sealResponse } from '@agentic-router/core';
 import type { ClientAdapter } from './adapter.ts';
 import { createDashboard, type Dashboard } from './dashboard.ts';
 import { exportLines, isoTime, liveSessions, purge, purgeFiles, type DataHome } from './data.ts';
@@ -31,6 +38,10 @@ import type { ProxyUsage } from './proxyusage.ts';
 import type { Router } from './router.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
+/** A sealed envelope is base64 around the request it carries, so it may be this much larger. */
+export const MAX_SEALED_BYTES = Math.ceil(MAX_BODY_BYTES * 4 / 3) + 4096;
+/** The longest a sealed call may take inside the daemon: a SubagentStop waits for the verify run. */
+const SEALED_INNER_TIMEOUT_MS = 10 * 60_000;
 export const API = {
   hook: '/router/v1/hooks/claude-code',
   status: '/router/v1/status',
@@ -68,6 +79,8 @@ export interface ServerDeps {
   data?: { recordPrompts: boolean; secrets: () => string[] };
   /** The router home's folders, for purge --all (spool, scopes, agents, logs). */
   home?: DataHome;
+  /** Decision 156: accept calls that carry the token as a Bearer header (older clients, the proxy). Default true. */
+  acceptBearer?: boolean;
 }
 
 class HttpError extends Error {
@@ -81,12 +94,27 @@ class HttpError extends Error {
 const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
 
 export function createHttpServer(d: ServerDeps): http.Server {
-  const tokenDigest = digest(d.token);
+  // The token a Bearer header must carry. With bearerApi off it is a value nobody outside this process knows,
+  // used only for the request a sealed call makes to the daemon itself (below).
+  const bearer = d.acceptBearer === false ? randomBytes(32).toString('base64url') : d.token;
+  const tokenDigest = digest(bearer);
   const maxBody = d.maxBodyBytes ?? MAX_BODY_BYTES;
+  const seen = new NonceWindow();
 
   const now = d.now ?? (() => new Date());
   let dashboard: Dashboard | undefined;
   const server = http.createServer((req, res) => {
+    if ((req.url ?? '').split('?')[0] === SEALED_PATH) {
+      sealed(req, res).catch(e => {
+        // every failure looks the same from outside: nothing about the secret, the time window or a replay
+        if (!(e instanceof SealError) && !(e instanceof HttpError)) d.logger.error('sealed request failed', { error: errorText(e) });
+        else if (e instanceof SealError && (e.code === 'replay' || e.code === 'stale')) d.logger.warn('sealed request refused', { why: e.code });
+        const status = e instanceof HttpError ? e.status : 401;
+        send(res, status, { error: status === 401 ? 'unauthorized' : e.message }, status === 413 ? { connection: 'close' } : {});
+        if (status === 413) res.on('finish', () => req.destroy());
+      });
+      return;
+    }
     try {
       if (dashboard?.handle(req, res)) return;
     } catch (e) {
@@ -104,7 +132,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
   server.headersTimeout = 10_000;
   if (d.ledger) {
     dashboard = createDashboard({
-      ledger: d.ledger, token: d.token, distDir: d.dashboardDir ?? DEFAULT_DASHBOARD_DIST,
+      ledger: d.ledger, token: bearer, distDir: d.dashboardDir ?? DEFAULT_DASHBOARD_DIST,
       port: () => { const a = server.address(); return a && typeof a !== 'string' ? a.port : null; },
       statusView: sessionId => d.router.status(sessionId),
       recordPrompts: d.data?.recordPrompts === true,   // decision 142: a stored prompt shows only while the option is on
@@ -122,6 +150,43 @@ export function createHttpServer(d: ServerDeps): http.Server {
     const m = /^Bearer\s+(\S+)\s*$/.exec(header ?? '');
     return !!m && timingSafeEqual(digest(m[1]!), tokenDigest);
   };
+
+  /**
+   * A sealed call (decision 156): open the envelope, make the request it carries to this same server, seal the
+   * answer. The inner request goes over the daemon's own listening socket, which nobody else can hold while
+   * the daemon runs, and so every route, the dashboard's included, behaves exactly as for a direct call.
+   */
+  async function sealed(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!hostOk(req.headers.host)) throw new HttpError(403, 'host not allowed');
+    if (req.headers.origin !== undefined) throw new HttpError(403, 'cross-origin requests are not allowed');
+    if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
+    const text = await readText(req, MAX_SEALED_BYTES);
+    const { inner, nonce } = openRequest(d.token, text, { now: now().getTime(), seen });
+    if (inner.p.split('?')[0] === SEALED_PATH || !/^(GET|POST)$/.test(inner.m)) throw new SealError('format');
+    const a = server.address();
+    if (!a || typeof a === 'string') throw new HttpError(503, 'not listening');
+    const answer = await new Promise<{ s: number; ct: string; b: string }>((resolve, reject) => {
+      const body = inner.b;
+      const r = http.request({
+        host: '127.0.0.1', port: a.port, method: inner.m, path: inner.p, agent: false, timeout: SEALED_INNER_TIMEOUT_MS,
+        headers: {
+          host: `127.0.0.1:${a.port}`, authorization: `Bearer ${bearer}`,
+          ...(body !== undefined ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}),
+        },
+      }, inRes => {
+        const chunks: Buffer[] = [];
+        inRes.on('data', c => chunks.push(c as Buffer));
+        inRes.on('error', reject);
+        inRes.on('end', () => resolve({ s: inRes.statusCode ?? 0, ct: String(inRes.headers['content-type'] ?? ''), b: Buffer.concat(chunks).toString('utf8') }));
+      });
+      r.on('timeout', () => r.destroy(new Error('timeout')));
+      r.on('error', reject);
+      r.end(body);
+    });
+    const out = sealResponse(d.token, nonce, answer, { now: now().getTime() });
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(out), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    res.end(out);
+  }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hostOk(req.headers.host)) throw new HttpError(403, 'host not allowed');
@@ -260,6 +325,19 @@ function sendText(res: http.ServerResponse, status: number, text: string): void 
     'x-content-type-options': 'nosniff',
   });
   res.end(text);
+}
+
+async function readText(req: http.IncomingMessage, max: number): Promise<string> {
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > max) throw new HttpError(413, `body larger than ${max} bytes`);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) throw new HttpError(413, `body larger than ${max} bytes`);
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function readJson(req: http.IncomingMessage, max: number): Promise<Record<string, unknown>> {

@@ -3,7 +3,7 @@
 import { holdoutRate } from '@agentic-router/core';
 import type { StatusView } from '@agentic-router/daemon';
 import type { Check } from './doctor.ts';
-import { localRequest } from './daemonctl.ts';
+import { daemonRequest } from './daemonctl.ts';
 import type { CliConfig } from './setup.ts';
 
 export const ROUTING_RESET_PATH = '/router/v1/routing/reset';
@@ -57,7 +57,7 @@ export interface ResetDeps {
 /** `agentic-router routing reset`: every released level is delegated again; the request records stay. */
 export async function routingReset(d: ResetDeps): Promise<number> {
   const out = d.out ?? (line => console.log(line));
-  const r = await (d.post ?? ((port, token) => localRequest(port, 'POST', ROUTING_RESET_PATH, { token, timeoutMs: 3000 })))(d.port, d.token);
+  const r = await (d.post ?? ((port, token) => daemonRequest(port, 'POST', ROUTING_RESET_PATH, { token, timeoutMs: 3000 })))(d.port, d.token);
   if (!r) { out('The daemon is not running: start it with `agentic-router start` and run this again.'); return 1; }
   if (r.status === 404) { out('This daemon has no auto-release: restart it with `agentic-router stop` and `agentic-router start` after updating.'); return 1; }
   let cleared: number | undefined;

@@ -15,6 +15,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+// decision 156: the token is a shared secret, never sent; every call to the daemon is sealed with it
+import { sealedCall } from '../hooks/seal.mjs';
 
 const ENDPOINT = '/router/v1/tools/call';
 const CALL_TIMEOUT_MS = 10_000;
@@ -60,33 +62,11 @@ function loadTools() {
 }
 
 // ---------------------------------------------------------------- daemon POST
-function post({ port, token, body, timeoutMs }) {
-  return new Promise((resolve, reject) => {
-    import('node:http').then(({ request }) => {
-      const req = request({
-        host: '127.0.0.1', port, path: ENDPOINT, method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'content-length': Buffer.byteLength(body),
-          authorization: `Bearer ${token}`,
-          host: `127.0.0.1:${port}`,
-        },
-        timeout: timeoutMs,
-      }, res => {
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', d => { data += d; });
-        res.on('end', () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) resolve(data);
-          else reject(new Error(`daemon status ${res.statusCode}`));
-        });
-      });
-      req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    }).catch(reject);
-  });
+// Sealed (decision 156): no token on the wire, and no answer is accepted from a program that does not hold it.
+async function post({ port, token, body, timeoutMs }) {
+  const res = await sealedCall({ port, secret: token, method: 'POST', path: ENDPOINT, body, timeoutMs });
+  if (res.status >= 200 && res.status < 300) return res.body;
+  throw new Error(`daemon status ${res.status}`);
 }
 
 // ---------------------------------------------------------------- MCP result helpers

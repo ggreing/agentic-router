@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { shouldSendLimits, maybeSendLimits, LIMITS_MIN_INTERVAL_MS } from '../../../plugin/statusline.mjs';
+import { sealedFake } from '../../core/test/sealed-fake.ts';
 
 const RL = { five_hour: { used_percentage: 23.5, resets_at: 1738425600 }, seven_day: { used_percentage: 41.2, resets_at: 1738857600 } };
 
@@ -21,10 +22,8 @@ test('shouldSendLimits: no stamp sends; same value within the interval skips; ch
 
 function fakeDaemon(): Promise<{ port: number; posts: Array<{ path: string; body: Record<string, unknown> }>; close: () => Promise<void> }> {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const server = http.createServer((req, res) => {
-    let data = ''; req.on('data', d => { data += d; });
-    req.on('end', () => { try { posts.push({ path: req.url ?? '', body: JSON.parse(data) }); } catch { /* ignore */ } res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); });
-  });
+  // the daemon side of a sealed call (decision 156); the tests below use the token 't'
+  const server = http.createServer(sealedFake('t', r => { try { posts.push({ path: r.path, body: JSON.parse(r.body ?? '') }); } catch { /* ignore */ } return { body: '{}' }; }));
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({
     port: (server.address() as { port: number }).port, posts, close: () => new Promise<void>(r => server.close(() => r())),
   })));

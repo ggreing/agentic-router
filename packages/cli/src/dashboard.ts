@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
-import { localRequest } from './daemonctl.ts';
+import { daemonRequest } from './daemonctl.ts';
 import { readConfig } from './setup.ts';
 
 export const REGISTER_PATH = '/dashboard/register-code';
@@ -70,7 +70,8 @@ export interface DashboardDeps {
   noOpen?: boolean;
 }
 
-const defaultRegister = (port: number, token: string) => localRequest(port, 'POST', REGISTER_PATH, { token, timeoutMs: 3000 });
+// sealed (decision 156): the token is not sent, and a code is taken only from the daemon that holds it
+const defaultRegister = (port: number, token: string) => daemonRequest(port, 'POST', REGISTER_PATH, { token, timeoutMs: 3000 });
 
 /** Exit code 0 when the dashboard was opened or its URL printed. */
 export async function openDashboard(d: DashboardDeps): Promise<number> {

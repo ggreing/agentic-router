@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
 import { proxyEntry } from './apimode.ts';
-import { daemonEntry, health, localRequest } from './daemonctl.ts';
+import { daemonEntry, daemonRequest, health, localRequest } from './daemonctl.ts';
 import { readConfig, writeJsonAtomic } from './setup.ts';
 
 export const BACKOFF_MS = [1000, 2000, 5000, 30_000];
@@ -189,7 +189,7 @@ export function childSpecs(home = routerHome(), env: NodeJS.ProcessEnv = process
     stop: async () => {
       if (!cfg) return;
       const token = fs.readFileSync(paths.token(), 'utf8').trim();
-      await localRequest(cfg.daemonPort, 'POST', '/router/v1/shutdown', { token, body: '{}', timeoutMs: 3000 });
+      await daemonRequest(cfg.daemonPort, 'POST', '/router/v1/shutdown', { token, body: '{}', timeoutMs: 3000 });
     },
   }];
   if (cfg?.apiMode === 'proxy' && cfg.proxyPort) {
@@ -245,10 +245,10 @@ export function readSuperviseStatus(home = routerHome()): SuperviseStatus | null
 }
 
 /** The proxy's health route (local token), for status and doctor. */
-export async function proxyHealth(port: number, token: string, timeoutMs = 800): Promise<{ ok: boolean; upstream?: string; inflight?: number } | null> {
+export async function proxyHealth(port: number, token: string, timeoutMs = 800): Promise<{ ok: boolean; upstream?: string; via?: string | null; inflight?: number } | null> {
   const r = await localRequest(port, 'GET', '/proxy/v1/health', { token, timeoutMs });
   if (!r || r.status !== 200) return null;
-  try { return JSON.parse(r.body) as { ok: boolean; upstream?: string; inflight?: number }; } catch { return null; }
+  try { return JSON.parse(r.body) as { ok: boolean; upstream?: string; via?: string | null; inflight?: number }; } catch { return null; }
 }
 
 export { health };

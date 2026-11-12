@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as core from '@agentic-router/core';
 import * as relayMod from '../../../plugin/hooks/relay.mjs';
+import { sealedFake, type WireRecord } from '../../core/test/sealed-fake.ts';
 
 function tmpHome() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ar-relay-')); }
 function spoolFiles(home: string): string[] {
@@ -72,18 +73,13 @@ test('unparseable stdin passes through with no spool', async () => {
 
 test('a daemon response is written to stdout verbatim and nothing is spooled', async () => {
   const home = tmpHome();
-  const received: { auth?: string; body?: string; host?: string } = {};
-  const server = http.createServer((req, res) => {
-    let b = '';
-    req.on('data', d => { b += d; });
-    req.on('end', () => {
-      received.auth = req.headers.authorization;
-      received.host = req.headers.host;
-      received.body = b;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end('{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"L2"}}');
-    });
-  });
+  const received: { body?: string; path?: string; method?: string } = {};
+  const wire: WireRecord[] = [];
+  // the daemon side of a sealed call (decision 156): opens the envelope with the token as the shared secret
+  const server = http.createServer(sealedFake('tok-123', r => {
+    Object.assign(received, r);
+    return { body: '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"L2"}}' };
+  }, wire));
   try {
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
     const port = (server.address() as import('node:net').AddressInfo).port;
@@ -91,14 +87,17 @@ test('a daemon response is written to stdout verbatim and nothing is spooled', a
     fs.writeFileSync(path.join(home, 'token'), 'tok-123\n');
 
     const out: string[] = [];
-    const input = { hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' };
+    const input = { hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi MARKER-IN-THE-PROMPT' };
     await relayMod.relay(JSON.stringify(input), { home, write: s => out.push(s) });
 
     assert.equal(out.length, 1);
     assert.equal(JSON.parse(out[0]!).hookSpecificOutput.additionalContext, 'L2');
-    assert.equal(received.auth, 'Bearer tok-123');
-    assert.equal(received.host, `127.0.0.1:${port}`);
-    assert.equal(JSON.parse(received.body!).prompt, 'hi');
+    assert.deepEqual([received.method, received.path], ['POST', '/router/v1/hooks/claude-code']);
+    assert.equal(JSON.parse(received.body!).prompt, 'hi MARKER-IN-THE-PROMPT');
+    // on the wire: one sealed request, no Authorization header, neither the token nor the prompt in the clear
+    assert.equal(wire.length, 1);
+    assert.deepEqual([wire[0]!.method, wire[0]!.url, wire[0]!.headers.authorization, wire[0]!.headers.host], ['POST', '/router/v1/sealed', undefined, `127.0.0.1:${port}`]);
+    assert.ok(!JSON.stringify(wire[0]).includes('tok-123') && !JSON.stringify(wire[0]).includes('MARKER-IN-THE-PROMPT'));
     assert.equal(spoolFiles(home).length, 0, 'success => no spool');
   } finally {
     server.close();
@@ -131,7 +130,7 @@ const RELAY_PATH = fileURLToPath(new URL('../../../plugin/hooks/relay.mjs', impo
 async function bodyReceived(event: string, input: object, env: Record<string, string> = {}): Promise<Record<string, unknown>> {
   const home = tmpHome();
   let received: Record<string, unknown> = {};
-  const server = http.createServer((req, res) => { let b = ''; req.on('data', d => { b += d; }); req.on('end', () => { try { received = JSON.parse(b); } catch { /* ignore */ } res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); }); });
+  const server = http.createServer(sealedFake('tok', r => { try { received = JSON.parse(r.body ?? ''); } catch { /* ignore */ } return { body: '{}' }; }));
   try {
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
     const port = (server.address() as import('node:net').AddressInfo).port;

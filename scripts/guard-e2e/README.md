@@ -46,6 +46,12 @@ Two scenarios:
 `summary.json` also records the keys of the real hook input, so a change in what Claude Code sends to
 hooks shows up here before it shows up as a wrong guard decision.
 
+A third run, **squatter** (`--only=squatter` runs it alone), checks the hooks rather than the guard. The
+daemon is stopped and a listener that records every byte takes its port, as another local user's process
+could while the daemon is down. Claude Code then runs one prompt with the plugin. It passes when requests
+did reach the listener, none of them carried the router's token, the prompt or an `Authorization` header,
+the session still answered, and the events wait in the spool. The daemon is started again afterwards.
+
 ## When to run it
 
 After any change to `plugin/hooks/guard.mjs`, `plugin/hooks/hooks.json`, the scope records the daemon

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
 import type { Ledger, PurgeResult } from '@agentic-router/daemon';
-import { daemonProcessAlive, health, localRequest } from './daemonctl.ts';
+import { daemonIdentity, daemonProcessAlive, daemonRequest } from './daemonctl.ts';
 import { readConfig } from './setup.ts';
 
 export const EXPORT_PATH = '/router/v1/data/export';
@@ -39,10 +39,10 @@ export function realDataDeps(o: { confirm(q: string): Promise<boolean>; isTTY: b
     async daemon() {
       const cfg = readConfig();
       const token = read(paths.token());
-      if (!cfg || !token || !await health(cfg.daemonPort)) return null;
+      if (!cfg || !token || (await daemonIdentity(cfg.daemonPort, token)).who !== 'ours') return null;   // decision 156: only the daemon that holds the token
       return {
-        get: p => localRequest(cfg.daemonPort, 'GET', p, { token, timeoutMs: 60_000 }),
-        post: (p, body) => localRequest(cfg.daemonPort, 'POST', p, { token, body: JSON.stringify(body), timeoutMs: 120_000 }),
+        get: p => daemonRequest(cfg.daemonPort, 'GET', p, { token, timeoutMs: 60_000 }),
+        post: (p, body) => daemonRequest(cfg.daemonPort, 'POST', p, { token, body: JSON.stringify(body), timeoutMs: 120_000 }),
       };
     },
     daemonStuck: () => daemonProcessAlive(),

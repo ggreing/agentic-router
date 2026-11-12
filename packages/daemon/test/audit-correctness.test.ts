@@ -138,7 +138,9 @@ test('#12: the spool folder is replayed until it stays empty (files written duri
   try {
     const spool = path.join(home, 'spool');
     fs.mkdirSync(spool, { recursive: true });
-    const line = (sid: string) => JSON.stringify({ receivedAt: '2026-11-11T09:00:00.000Z', input: { session_id: sid, hook_event_name: 'SessionStart', cwd: home, source: 'startup' } }) + '\n';
+    // received a minute ago: a fixed date here would age past the 24-hour replay limit (decision 100) and be dropped
+    const receivedAt = new Date(Date.now() - 60_000).toISOString();
+    const line = (sid: string) => JSON.stringify({ receivedAt, input: { session_id: sid, hook_event_name: 'SessionStart', cwd: home, source: 'startup' } }) + '\n';
     fs.writeFileSync(path.join(spool, '1.jsonl'), line('s-first'));
     // a relay writing while the daemon replays: simulated by an adapter that drops a new file during the first replay
     let wrote = false;

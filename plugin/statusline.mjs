@@ -13,7 +13,8 @@
 // a configuration that wraps this script itself cannot recurse.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
+// decision 156: the token is a shared secret, never sent; every call to the daemon is sealed with it
+import { sealedCall } from './hooks/seal.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,19 +56,9 @@ export function shouldSendLimits(stamp, rateLimits, now, minIntervalMs = LIMITS_
   return now - (Number(stamp.at) || 0) >= minIntervalMs;
 }
 
-function postLimits({ port, token, sessionId, rateLimits, model, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ sessionId, rateLimits, ...(model ? { model } : {}), at: new Date().toISOString() });
-    const req = http.request({
-      host: '127.0.0.1', port, path: LIMITS_ENDPOINT, method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: `Bearer ${token}`, host: `127.0.0.1:${port}` },
-      timeout: timeoutMs,
-    }, res => { res.resume(); res.on('end', resolve); res.on('error', reject); });
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+async function postLimits({ port, token, sessionId, rateLimits, model, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
+  const body = JSON.stringify({ sessionId, rateLimits, ...(model ? { model } : {}), at: new Date().toISOString() });
+  await sealedCall({ port, secret: token, method: 'POST', path: LIMITS_ENDPOINT, body, timeoutMs });
 }
 
 /** Reads the per-session stamp, decides via shouldSendLimits, posts if due, and updates the stamp. Never throws. */
@@ -112,24 +103,14 @@ function readText(file) {
 }
 
 /** The daemon's status view, or null when it does not answer properly within the time limit. */
-export function fetchStatus({ port, token, sessionId, timeoutMs = DAEMON_TIMEOUT_MS }) {
-  return new Promise(resolve => {
-    if (!Number.isInteger(port) || port <= 0 || !token) return resolve(null);
-    let done = false;
-    const finish = v => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
-    const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-    const req = http.get({ host: '127.0.0.1', port, path: `/router/v1/status${query}`, headers: { authorization: `Bearer ${token}` } }, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        if (res.statusCode !== 200) return finish(null);
-        try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { finish(null); }
-      });
-      res.on('error', () => finish(null));
-    });
-    const timer = setTimeout(() => { req.destroy(); finish(null); }, timeoutMs);
-    req.on('error', () => finish(null));
-  });
+export async function fetchStatus({ port, token, sessionId, timeoutMs = DAEMON_TIMEOUT_MS }) {
+  if (!Number.isInteger(port) || port <= 0 || !token) return null;
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  try {
+    // sealed: the answer is shown only when it comes from the daemon that holds the token
+    const res = await sealedCall({ port, secret: token, method: 'GET', path: `/router/v1/status${query}`, timeoutMs });
+    return res.status === 200 ? JSON.parse(res.body) : null;
+  } catch { return null; }
 }
 
 /** Runs the wrapped status line command with the same stdin; '' on failure, timeout or no command. */

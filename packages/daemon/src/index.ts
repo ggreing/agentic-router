@@ -97,6 +97,7 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
     const srv = createHttpServer({
       router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, home, ...(opts.now ? { now: opts.now } : {}),
+      acceptBearer: config.bearerApi !== 'off',      // decision 156
       // data export (spec 4.4): stored prompts only with recordPrompts; the proxy token is masked like the daemon's
       data: { recordPrompts: config.recordPrompts === true, secrets: () => { try { return [fs.readFileSync(path.join(home.root, 'proxy-token'), 'utf8').trim()]; } catch { return []; } } },
       onShutdown: () => void close().catch(() => {}),

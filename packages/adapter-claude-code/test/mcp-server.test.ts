@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sealedFake } from '../../core/test/sealed-fake.ts';
 
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'mcp', 'server.mjs');
 const TOOLS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'mcp', 'tools.json');
@@ -16,19 +17,14 @@ type Json = Record<string, unknown>;
 function fakeDaemon(): Promise<{ port: number; set: (h: (body: Json) => { status?: number; json: unknown }) => void; close: () => Promise<void>; lastBody: () => Json | null }> {
   let handler: (body: Json) => { status?: number; json: unknown } = () => ({ json: { content: [{ type: 'text', text: '{}' }], isError: false } });
   let last: Json | null = null;
-  const server = http.createServer((req, res) => {
-    let data = '';
-    req.on('data', d => { data += d; });
-    req.on('end', () => {
-      let body: Json = {};
-      try { body = JSON.parse(data) as Json; } catch { /* ignore */ }
-      last = body;
-      const out = handler(body);
-      const text = JSON.stringify(out.json);
-      res.writeHead(out.status ?? 200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
-      res.end(text);
-    });
-  });
+  // the daemon side of a sealed call (decision 156), with the token of the test home as the shared secret
+  const server = http.createServer(sealedFake('test-token-abcdef0123456789', r => {
+    let body: Json = {};
+    try { body = JSON.parse(r.body ?? '') as Json; } catch { /* ignore */ }
+    last = body;
+    const out = handler(body);
+    return { status: out.status ?? 200, body: JSON.stringify(out.json) };
+  }));
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
     const port = (server.address() as { port: number }).port;
     resolve({

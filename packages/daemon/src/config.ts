@@ -66,6 +66,9 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
     out.eventRetentionDays = DEFAULT_EVENT_RETENTION_DAYS;
     warnings.push(`config.eventRetentionDays ${JSON.stringify(o.eventRetentionDays)} is not a whole number of days from 0 to ${MAX_EVENT_RETENTION_DAYS}: ${DEFAULT_EVENT_RETENTION_DAYS} is used`);
   }
+  // Decision 156: calls that carry the token itself (clients of an older version); the router's own clients seal their messages
+  if (o.bearerApi === 'on' || o.bearerApi === 'off') out.bearerApi = o.bearerApi;
+  else if (o.bearerApi !== undefined) warnings.push('config.bearerApi ignored: not "on" or "off"');
   // Decision 130: in API-key proxy mode the proxy's usage rows are the cost source (transcripts a cross-check)
   if (o.apiMode === 'proxy' || o.apiMode === 'direct') out.apiMode = o.apiMode;
   else if (o.apiMode !== undefined) warnings.push(`config.apiMode ignored: ${JSON.stringify(o.apiMode)} is not "proxy" or "direct"`);

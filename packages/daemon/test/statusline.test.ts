@@ -7,7 +7,9 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatStatus } from '../../../plugin/statusline.mjs';
-import { makeHome, postHook, request, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
+import http from 'node:http';
+import { sealedFake } from '../../core/test/sealed-fake.ts';
+import { TOKEN, makeHome, postHook, request, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
 
 const SCRIPT = fileURLToPath(new URL('../../../plugin/statusline.mjs', import.meta.url));
 const L2_PROMPT = 'Add a pagination module and refactor the API layer across multiple files';
@@ -152,19 +154,13 @@ test('decision 144: the status line\'s model.id reaches the daemon, so the sessi
   // also without rate_limits. Caught by a stub that records the body on arrival: the status line's own 500 ms
   // post timeout is no part of this check (an in-process daemon under a loaded full suite can be slower).
   const posted = await new Promise<Record<string, unknown>>(resolve => {
-    const stub = net.createServer(s => {
-      let buf = '';
-      s.on('data', c => {
-        buf += c;
-        const at = buf.indexOf('\r\n\r\n');
-        if (!buf.startsWith('POST /router/v1/limits') || at < 0) return;
-        const len = Number(/content-length: (\d+)/i.exec(buf)?.[1] ?? '0');
-        if (buf.length - at - 4 < len) return;
-        resolve(JSON.parse(buf.slice(at + 4, at + 4 + len)) as Record<string, unknown>);
-        s.end('HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}');
-        stub.close();
-      });
-    });
+    // the daemon side of a sealed call (decision 156); the status line also asks for the status, answered 404 here
+    const stub = http.createServer(sealedFake(TOKEN, r => {
+      if (r.method !== 'POST' || r.path !== '/router/v1/limits') return { status: 404, body: '{}' };
+      resolve(JSON.parse(r.body ?? '{}') as Record<string, unknown>);
+      setImmediate(() => { stub.close(); stub.closeAllConnections(); });
+      return { body: '{}' };
+    }));
     stub.listen(0, '127.0.0.1', () => {
       const home = makeHome({ daemonPort: (stub.address() as net.AddressInfo).port });
       void run(home, { session_id: 'seen', model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet' } }).finally(() => rmrf(home));

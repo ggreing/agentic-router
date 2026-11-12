@@ -68,6 +68,7 @@ function dispatchNext(scn, state, req, hint) {
 export function nextAction(scn, state, req) {
   if (req.kind === 'side') return { act: 'side-text', block: text('ok') };
   if (req.kind === 'main') {
+    if (scn.noDispatch) return { act: 'main-final(no dispatch)', block: text('E2E_MAIN_DONE') };   // the squatter run: the lead only answers
     const more = () => state.batchTurns > 0 && state.next < scn.steps.length && state.batch + 1 < BATCH_TAGS.length && !!req.agentTool;
     if (req.results.length) {
       state.dispatchResults.push(...req.results);

@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { paths, routerHome } from '@agentic-router/core';
+import { paths, routerHome, sealedCall } from '@agentic-router/core';
+import { portOwner } from './portowner.ts';
 import { isFree, readConfig } from './setup.ts';
 import { proxyHealth, readSuperviseStatus, superviseFiles } from './supervise.ts';
 
@@ -34,6 +35,38 @@ export function localRequest(port: number, method: 'GET' | 'POST', urlPath: stri
     req.end();
   });
 }
+
+/**
+ * A call to the daemon (decision 156). The token is the shared secret the message is sealed with; it is
+ * never sent. Answers like localRequest, with the daemon's own status and body, and null when nothing
+ * answered OR when what answered is not the daemon that holds the token (another program on the port, or a
+ * daemon of a version without the sealed route). There is no fallback to a call that sends the token.
+ */
+export async function daemonRequest(port: number, method: 'GET' | 'POST', urlPath: string, opts: { token: string; body?: string; timeoutMs?: number }): Promise<{ status: number; body: string } | null> {
+  try {
+    const r = await sealedCall({ port, secret: opts.token, method, path: urlPath, ...(opts.body !== undefined ? { body: opts.body } : {}), timeoutMs: opts.timeoutMs ?? 1500 });
+    return { status: r.status, body: r.body };
+  } catch { return null; }
+}
+
+/**
+ * Who is on the daemon's port: 'ours' (it answered a sealed call, so it holds the token), 'other' (something
+ * answers HTTP there but could not: another program, another user's process, or a daemon of an older
+ * version), or 'down' (nothing answers).
+ */
+export async function daemonIdentity(port: number, token: string, timeoutMs = 800): Promise<{ who: 'ours'; version?: string } | { who: 'other' | 'down' }> {
+  if (token) {
+    const r = await daemonRequest(port, 'GET', '/router/v1/health', { token, timeoutMs });
+    if (r && r.status === 200) { try { return { who: 'ours', version: (JSON.parse(r.body) as { version?: string }).version }; } catch { return { who: 'ours' }; } }
+  }
+  // not ours, or not there at all: does anything accept a connection?
+  return { who: await isFree(port) ? 'down' : 'other' };
+}
+const readToken = (): string => { try { return fs.readFileSync(paths.token(), 'utf8').trim(); } catch { return ''; } };
+/** What to tell the user when the daemon's port is held by something that is not the daemon. */
+export const otherOnPort = (port: number): string =>
+  `port ${port} is answered by a program that does not hold this router's token: another program or another user's process took the port, `
+  + 'or a daemon of an older version is still running. Nothing was sent to it. Stop it, or pick a new port with `agentic-router init --new-port`.';
 
 export async function health(port: number, timeoutMs = 800): Promise<{ ok: boolean; version?: string } | null> {
   const r = await localRequest(port, 'GET', '/router/v1/health', { timeoutMs });
@@ -116,7 +149,8 @@ export async function start(): Promise<string> {
   if (!cfg) return 'not initialised: run `agentic-router init` first';
   const sup = runningSupervisor();
   if (sup) return `already running (supervisor pid ${sup}, daemon on 127.0.0.1:${cfg.daemonPort}${cfg.apiMode === 'proxy' ? `, proxy on 127.0.0.1:${cfg.proxyPort}` : ''})`;
-  if (await health(cfg.daemonPort)) return `already running on 127.0.0.1:${cfg.daemonPort} without a supervisor: run stop, then start, to have it restarted when it exits`;
+  const there = await daemonIdentity(cfg.daemonPort, readToken());
+  if (there.who === 'ours') return `already running on 127.0.0.1:${cfg.daemonPort} without a supervisor: run stop, then start, to have it restarted when it exits`;
   // One start at a time: a second concurrent `start` would race for the port and the PID file.
   try { fs.writeFileSync(startLock(), String(process.pid), { flag: 'wx' }); }
   catch {
@@ -125,8 +159,10 @@ export async function start(): Promise<string> {
     fs.writeFileSync(startLock(), String(process.pid));     // stale lock from a crashed start
   }
   try {
-    if (!await isFree(cfg.daemonPort))
-      return `port ${cfg.daemonPort} is in use by another program. Pick a new port with \`agentic-router init --new-port\`, then start again.`;
+    if (!await isFree(cfg.daemonPort)) {
+      const owner = await portOwner(cfg.daemonPort);          // decision 156 (c): a hint only, never a check
+      return `port ${cfg.daemonPort} is in use by another program${owner ? ` (${owner})` : ''}. Pick a new port with \`agentic-router init --new-port\`, then start again.`;
+    }
     const proxy = cfg.apiMode === 'proxy' && cfg.proxyPort ? cfg.proxyPort : undefined;
     if (proxy && !await isFree(proxy)) return `proxy port ${proxy} is in use by another program`;
     const child = spawn(process.execPath, [cliEntry(), 'supervise'], {
@@ -144,7 +180,7 @@ export async function start(): Promise<string> {
     const deadline = Date.now() + START_WAIT_MS;
     let daemonExit: { code: number | null } | undefined;
     while (!(daemonUp && proxyUp) && Date.now() < deadline) {
-      daemonUp ||= !!(await health(cfg.daemonPort, 300))?.ok;
+      daemonUp ||= (await daemonIdentity(cfg.daemonPort, readToken(), 300)).who === 'ours';
       if (proxy && !proxyUp) proxyUp = !!(await proxyHealth(proxy, proxyToken(), 300))?.ok;
       if (exited !== undefined) break;
       const st = readSuperviseStatus();
@@ -194,10 +230,10 @@ async function stopDaemonOnly(): Promise<string> {
   if (cfg && fs.existsSync(paths.token())) {
     try {
       const token = fs.readFileSync(paths.token(), 'utf8').trim();
-      const r = await localRequest(cfg.daemonPort, 'POST', '/router/v1/shutdown', { token, body: '{}', timeoutMs: 3000 });
+      const r = await daemonRequest(cfg.daemonPort, 'POST', '/router/v1/shutdown', { token, body: '{}', timeoutMs: 3000 });
       if (r && r.status >= 200 && r.status < 300) {
         // The daemon stops verify runs and flushes the ledger (up to ~2 s); wait for the process to exit.
-        for (let i = 0; i < 30 && await health(cfg.daemonPort, 200); i++) await sleep(100);
+        for (let i = 0; i < 30 && (await daemonIdentity(cfg.daemonPort, token, 200)).who === 'ours'; i++) await sleep(100);
         const gone = await waitGone(pid, 10000);
         if (gone) { fs.rmSync(pidFile(), { force: true }); return 'stopped (graceful)'; }
         return `shutdown requested, but pid ${pid} is still running after 10 s; run stop again to force it`;
@@ -219,12 +255,15 @@ async function stopDaemonOnly(): Promise<string> {
 export async function status(): Promise<string> {
   const cfg = readConfig();
   if (!cfg) return 'not initialised';
-  const h = await health(cfg.daemonPort);
-  if (!h) return `Router OFF (daemon not responding on 127.0.0.1:${cfg.daemonPort}); Claude Code keeps working without routing`;
+  const token = readToken();
+  const h = await daemonIdentity(cfg.daemonPort, token);
+  if (h.who !== 'ours') {
+    return h.who === 'other' ? `Router OFF: ${otherOnPort(cfg.daemonPort)} Claude Code keeps working without routing`
+      : `Router OFF (daemon not responding on 127.0.0.1:${cfg.daemonPort}); Claude Code keeps working without routing`;
+  }
   let detail = '';
   try {
-    const token = fs.readFileSync(paths.token(), 'utf8').trim();
-    const r = await localRequest(cfg.daemonPort, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
+    const r = await daemonRequest(cfg.daemonPort, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
     if (r && r.status === 200) detail = '\n' + JSON.stringify(JSON.parse(r.body), null, 2);
   } catch { /* status endpoint optional */ }
   const lines = [`Router ON (127.0.0.1:${cfg.daemonPort}, version ${h.version ?? '?'})`];
