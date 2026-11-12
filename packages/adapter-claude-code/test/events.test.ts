@@ -159,6 +159,15 @@ test('pre_tool_use can carry both deny and additionalContext', () => {
   assert.equal(out.hookSpecificOutput!.additionalContext, 'c');
 });
 
+test('pre_tool_use allow renders permissionDecision allow; deny wins; other events drop it (decision 127)', () => {
+  assert.deepEqual(renderHookOutput('pre_tool_use', { allow: {} }),
+    { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } });
+  assert.equal(renderHookOutput('pre_tool_use', { allow: { reason: 'router tool' } }).hookSpecificOutput!.permissionDecisionReason, 'router tool');
+  const both = renderHookOutput('pre_tool_use', { allow: {}, deny: { reason: 'subagent' } });
+  assert.equal(both.hookSpecificOutput!.permissionDecision, 'deny');
+  assert.deepEqual(renderHookOutput('post_tool_use', { allow: {} }), {});
+});
+
 test('subagent_stop / stop block renders top-level decision+reason', () => {
   for (const t of ['subagent_stop', 'stop'] as const) {
     const out = renderHookOutput(t, { block: { reason: 'verify failed' } });

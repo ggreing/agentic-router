@@ -2,6 +2,7 @@
 // What each decision field maps to (Claude Code hooks reference):
 //   decision.context     -> hookSpecificOutput.additionalContext (events that accept it)
 //   decision.deny        -> PreToolUse hookSpecificOutput.permissionDecision="deny" + permissionDecisionReason
+//   decision.allow       -> PreToolUse hookSpecificOutput.permissionDecision="allow" (skips the prompt; user deny/ask rules still apply); deny wins
 //   decision.block       -> SubagentStop/Stop top-level decision="block" + reason (keeps the agent working)
 //   decision.userMessage -> top-level systemMessage (a short notice shown to the user)
 import type { RouterDecision, RouterEventType } from '@agentic-router/core';
@@ -46,6 +47,10 @@ export function renderHookOutput(eventType: RouterEventType, decision: RouterDec
   if (decision.deny && eventType === 'pre_tool_use') {
     hookOut.permissionDecision = 'deny';
     hookOut.permissionDecisionReason = decision.deny.reason;
+    useHookOut = true;
+  } else if (decision.allow && eventType === 'pre_tool_use') {
+    hookOut.permissionDecision = 'allow';
+    if (decision.allow.reason) hookOut.permissionDecisionReason = decision.allow.reason;
     useHookOut = true;
   }
 

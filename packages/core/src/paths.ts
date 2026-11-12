@@ -58,4 +58,9 @@ export interface RouterConfig {
   forceLevel?: Level;        // benchmarks / debugging only (decision 107): plan every new request at this level
   recordPrompts?: boolean;   // decision 109: store redacted prompt text in request records (opt-in; default false)
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
+  proxy?: {                  // API-key mode proxy (decisions 130-131)
+    upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com
+    tokenDailyCapUsd?: number;   // per local token per day; default 100
+    dailyCapUsd?: number;        // all tokens per day; default 300
+  };
 }

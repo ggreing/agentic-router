@@ -101,6 +101,7 @@ export interface RouterDecision {
   context?: string;               // added to the model's context; never replaces the prompt
   userMessage?: string;           // short notice for the user (status, HITL)
   deny?: { reason: string };      // pre_tool_use: refuse the call; the reason is shown to the model
+  allow?: { reason?: string };    // pre_tool_use: allow without a permission prompt (decision 127: checked router MCP tool calls); deny wins
   block?: { reason: string };     // subagent_stop / stop: keep the agent working; the reason is shown to the model
 }
 
