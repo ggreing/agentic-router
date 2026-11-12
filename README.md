@@ -28,8 +28,8 @@ case search over embeddings is deferred for now.
 
 ## Delegation and the ladder
 
-Whether a level is delegated depends on the lead (main-session) model: an Opus-class or Sonnet lead
-delegates from **L1** up, a Haiku or unknown lead from **L2** up, and **L0** is always handled directly.
+Whether a level is delegated depends on the lead (main-session) model: an Opus-class, Sonnet, or unknown
+lead delegates from **L1** up, and a Haiku lead from **L2** up; **L0** is always handled directly.
 Delegating pays off because the expensive lead stops doing the edits itself: in the direct-vs-team
 measurements a lead + one Haiku coder was about 40% cheaper than the lead working alone (see
 `docs/measurements/`).
