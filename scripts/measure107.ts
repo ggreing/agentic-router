@@ -2,11 +2,16 @@
 // Output: bench/results/measure107/{runs.jsonl,tasks.jsonl,ledger.jsonl}
 // in the format the triage scorer reads (packages/core/src/triage-eval-cli.ts regret runs.jsonl --tasks tasks.jsonl).
 //
-//   node scripts/measure107.ts --api-key-helper "<keychain cmd>" [--tasks id,id] [--arrangements direct,team-L2,team-L3]
-//        [--lead opus] [--effort high] [--budget 50] [--cap-scale 1] [--dry-run] [--only-plan]
+//   node scripts/measure107.ts --api-key-helper "<keychain cmd>" [--tasks id,id] [--arrangements direct,team-L2,team-L3,auto]
+//        [--lead opus] [--effort high] [--budget 50] [--cap-scale 1] [--out dir] [--dry-run] [--setup-only] [--only-plan]
 //
-// - direct   : plain Claude Code, no plugin (the lead does the work alone)
+// - direct   : plain Claude Code, no plugin (the lead does the work alone) = router OFF
 // - team-L2/3: plugin + daemon with config.forceLevel = L2 / L3 (decision 107 harness switch)
+// - auto     : plugin + daemon as a user runs it (Phase-3 KPI): automatic triage, the lead's own choice of roles,
+//              the default budgets and step rules, no forced level; holdoutRate 0 so no request is held out.
+// --dry-run prints the plan and a cost and time estimate from the earlier measurements of the same lead
+// (bench/results/measure107-sonnet for Sonnet, decision 123; measure107 for Opus, decision 107) and exits:
+// no workspace, no daemon, no API call. --setup-only prepares the workspaces and starts the daemons, no API call.
 // Auth: isolated CLAUDE_CONFIG_DIR + apiKeyHelper via --settings (the key never passes through this script).
 // No --bare in team runs: hooks must run. Transcripts are kept (the daemon reads them for costs).
 import { execFileSync, spawn } from 'node:child_process';
@@ -45,7 +50,10 @@ const HELPER = arg('api-key-helper');
 // --cap-scale shrinks the per-run caps (and so the budget-stop threshold) for a cheaper lead model
 const CAP_SCALE = Number(arg('cap-scale', '1'));
 const CAP: Record<string, number> = Object.fromEntries(Object.entries({ L1: 2, L2: 5, L3: 10 }).map(([k, v]) => [k, v * CAP_SCALE]));
-type Arrangement = 'direct' | 'team-L2' | 'team-L3';
+type Arrangement = 'direct' | 'team-L2' | 'team-L3' | 'auto';
+const KNOWN: Arrangement[] = ['direct', 'team-L2', 'team-L3', 'auto'];
+const unknownArr = arrangements.filter(a => !KNOWN.includes(a));
+if (unknownArr.length) { console.error(`unknown arrangements: ${unknownArr.join(', ')} (known: ${KNOWN.join(', ')})`); process.exit(2); }
 
 fs.mkdirSync(OUT, { recursive: true });
 const ledgerFile = path.join(OUT, 'ledger.jsonl');
@@ -63,11 +71,12 @@ const order: Array<[Task, Arrangement]> = [];
 for (const t of tasks) for (const a of arrangements.filter(a => a !== 'team-L3')) order.push([t, a]);
 if (arrangements.includes('team-L3')) for (const lv of ['L3', 'L2', 'L1']) for (const t of tasks.filter(t => t.level === lv)) order.push([t, 'team-L3']);
 
-fs.writeFileSync(path.join(OUT, 'tasks.jsonl'), '');      // rewritten with prompts as workspaces are prepared
-console.log(`plan: ${order.length} runs, lead ${LEAD}/${EFFORT}, budget $${BUDGET} (spent so far $${spent().toFixed(2)})`);
+console.log(`plan: ${order.length} runs, lead ${LEAD}/${EFFORT}, budget $${BUDGET} (spent so far $${spent().toFixed(2)}), out ${OUT}`);
 for (const [t, a] of order) console.log(`  ${t.id.padEnd(32)} ${t.level} ${a.padEnd(8)} cap $${CAP[t.level]}${doneKeys.has(`${t.id}|${a}`) ? '  (done)' : ''}`);
 if (flag('only-plan')) process.exit(0);
-if (!HELPER && !flag('dry-run')) { console.error('pass --api-key-helper "<command>" (keychain helper)'); process.exit(2); }
+if (flag('dry-run')) { printEstimate(); process.exit(0); }
+fs.writeFileSync(path.join(OUT, 'tasks.jsonl'), '');      // rewritten with prompts as workspaces are prepared
+if (!HELPER && !flag('setup-only')) { console.error('pass --api-key-helper "<command>" (keychain helper)'); process.exit(2); }
 
 const cli = (home: string, ...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'packages/cli/src/index.ts'), ...a],
   { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, encoding: 'utf8' });
@@ -131,9 +140,47 @@ function routerFacts(home: string) {
     subtasks: subs.map(s => ({ role: s.role, step: s.step, verdict: s.verdict, status: s.status, attempts: s.attempts,
       costUsd: sum(costs.filter(c => c.agent_id === s.agent_id && c.source !== 'agent_result')) })),
     replanned: reqs.some(r => r.replanned_from),
-    requests: reqs.map(r => ({ level: r.level, preset: r.preset, outcome: r.outcome, forced_from: r.forced_from, replanned_from: r.replanned_from })),
+    requests: reqs.map(r => ({ level: r.level, preset: r.preset, outcome: r.outcome, forced_from: r.forced_from, replanned_from: r.replanned_from, lead_class: r.lead_class, lead_edits: r.lead_edits })),
     records: records.length,
+    // Phase-3 KPI fields, from the run's first request (a bench task is one request)
+    levelChosen: reqs[0]?.level ?? null,
+    triageSource: (() => { try { return JSON.parse(String(reqs[0]?.triage)).source ?? null; } catch { return null; } })(),
+    leadClass: reqs[0]?.lead_class ?? null,
+    outcome: reqs[0]?.outcome ?? null,                                   // delegated | direct | no_delegation | lead_takeover
+    leadEdits: Number(reqs[0]?.lead_edits ?? 0),                         // decision 145: the lead's own edits after delegating
+    noChanges: subs.filter(s => s.verdict === 'no_changes').length,      // decision 145: writers that changed nothing
   };
+}
+
+/**
+ * --dry-run: each planned cell priced from the earlier measurement with the same lead model (Sonnet: decision
+ * 123; Opus: decision 107). `auto` has no earlier run of its own: it is priced as team-L2, the closest measured
+ * arrangement (auto plans an L1 request with one coder, so for L1 that is an upper bound). A cell without a
+ * measurement takes the level's average for its arrangement.
+ */
+function printEstimate(): void {
+  const priorFile = path.join(ROOT, 'bench', 'results', LEAD === 'opus' ? 'measure107' : 'measure107-sonnet', 'runs.jsonl');
+  const prior = fs.existsSync(priorFile) ? fs.readFileSync(priorFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as { taskId: string; arrangement: string; level: string; costUsd: number; wallSeconds: number }) : [];
+  const basisOf = (a: Arrangement) => (a === 'auto' ? 'team-L2' : a);
+  const levelAvg = (level: string, a: string) => {
+    const rs = prior.filter(r => r.level === level && r.arrangement === a);
+    return rs.length ? { usd: rs.reduce((s, r) => s + Number(r.costUsd), 0) / rs.length, sec: rs.reduce((s, r) => s + Number(r.wallSeconds), 0) / rs.length } : { usd: CAP[level]! / 4, sec: 300 };
+  };
+  const totals: Record<string, { usd: number; sec: number; n: number }> = {};
+  console.log(`\nestimate from ${path.relative(ROOT, priorFile)} (lead ${LEAD}${LEAD === 'opus' || LEAD === 'sonnet' ? '' : ': no measurement of this lead, Sonnet numbers used'}):`);
+  for (const [t, a] of order) {
+    if (doneKeys.has(`${t.id}|${a}`)) continue;
+    const basis = basisOf(a);
+    const hit = prior.find(r => r.taskId === t.id && r.arrangement === basis);
+    const e = hit ? { usd: Number(hit.costUsd), sec: Number(hit.wallSeconds) } : levelAvg(t.level, basis);
+    const tot = (totals[a] ??= { usd: 0, sec: 0, n: 0 });
+    tot.usd += e.usd; tot.sec += e.sec; tot.n++;
+    console.log(`  ${t.id.padEnd(32)} ${t.level} ${a.padEnd(8)} ~$${e.usd.toFixed(2).padStart(5)} ~${String(Math.round(e.sec)).padStart(4)} s  (${hit ? `measured ${basis}` : `${t.level} average of ${basis}`})`);
+  }
+  const all = Object.values(totals).reduce((s, x) => ({ usd: s.usd + x.usd, sec: s.sec + x.sec, n: s.n + x.n }), { usd: 0, sec: 0, n: 0 });
+  for (const [a, x] of Object.entries(totals)) console.log(`  ${a.padEnd(8)} ${String(x.n).padStart(2)} runs  ~$${x.usd.toFixed(2)}  ~${(x.sec / 60).toFixed(0)} min`);
+  console.log(`  total    ${String(all.n).padStart(2)} runs  ~$${all.usd.toFixed(2)}  ~${(all.sec / 60).toFixed(0)} min run time (sequential, plus grading)`);
+  console.log(`  suggested --budget ${Math.ceil(all.usd * 1.5)} (one run per cell varies; the per-run caps stop a runaway: ${Object.entries(CAP).map(([k, v]) => `${k} $${v}`).join(', ')})`);
 }
 
 const manifest = loadPublicManifest();
@@ -155,14 +202,20 @@ for (const [task, a] of order) {
     cli(home, 'init', '--yes', '--claude-settings', path.join(root, 'cs.json'), '--project', root);
     const cfgFile = path.join(home, 'config.json');
     const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
-    cfg.forceLevel = a === 'team-L2' ? 'L2' : 'L3';
-    cfg.budgetsUsd = { L0: cap, L1: cap, L2: cap, L3: cap };
+    if (a === 'auto') {
+      // as a user runs it: no forced level, the default budgets, steps and auto-release mode; only no holdout,
+      // so every request is routed by its own triage
+      cfg.holdoutRate = 0;
+    } else {
+      cfg.forceLevel = a === 'team-L2' ? 'L2' : 'L3';
+      cfg.budgetsUsd = { L0: cap, L1: cap, L2: cap, L3: cap };
+    }
     fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
     fs.mkdirSync(path.join(ws.repo, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(ws.repo, '.claude', 'settings.local.json'), JSON.stringify({ worktree: { baseRef: 'head' } }, null, 2));
     console.log(cli(home, 'start').trim());
   }
-  if (flag('dry-run')) { console.log(`dry-run ${key} in ${ws.repo}`); if (home) cli(home, 'stop'); continue; }
+  if (flag('setup-only')) { console.log(`setup-only ${key} in ${ws.repo}`); if (home) cli(home, 'stop'); continue; }
   console.log(`run ${key} (cap $${cap.toFixed(2)})`);
   const r = await runClaude(ws.repo, ws.configDir, ws.prompt, a, cap, task.limits.timeoutSec, home);
   const costUsd = Number(r.out?.total_cost_usd ?? 0);
@@ -178,10 +231,13 @@ for (const [task, a] of order) {
     taskId: task.id, arrangement: a, level: task.level, leadModel: LEAD, leadEffort: EFFORT, rep: 1,
     passed: graded.pass, grade: graded.detail, costUsd, wallSeconds: Math.round(r.ms / 1000),
     costLeadUsd: a === 'direct' ? costUsd : (facts as any).costLeadUsd, costSubagentsUsd: a === 'direct' ? 0 : (facts as any).costSubagentsUsd,
-    leadCalls: r.out?.num_turns ?? null, models, ...stats, ...facts,
+    leadCalls: r.out?.num_turns ?? null, models, ...stats, ...(a === 'direct' ? { outcome: 'router-off', levelChosen: null } : {}), ...facts,
     timedOut: r.timedOut, error: r.out?.is_error ? String(r.out?.subtype ?? r.out?.result ?? '').slice(0, 300) : (r.out ? undefined : r.stderr.slice(-300)),
   };
   fs.appendFileSync(runsFile, JSON.stringify(rec) + '\n');
-  console.log(`  -> ${graded.pass ? 'PASS' : 'FAIL'} ${graded.detail} $${costUsd.toFixed(3)} ${rec.wallSeconds}s; spent $${spent().toFixed(2)} / $${BUDGET}`);
+  const f = facts as { levelChosen?: string | null; outcome?: string | null; leadEdits?: number; noChanges?: number };
+  const routed = a === 'direct' ? '' : ` ${f.levelChosen ?? '?'} ${f.outcome ?? '?'}${f.leadEdits ? ` lead-edits=${f.leadEdits}` : ''}${f.noChanges ? ` no-changes=${f.noChanges}` : ''}`
+    + ` lead $${Number(rec.costLeadUsd ?? 0).toFixed(3)} / workers $${Number(rec.costSubagentsUsd ?? 0).toFixed(3)}`;
+  console.log(`  -> ${graded.pass ? 'PASS' : 'FAIL'} ${graded.detail} $${costUsd.toFixed(3)} ${rec.wallSeconds}s${routed}; spent $${spent().toFixed(2)} / $${BUDGET}`);
 }
 console.log(`done. spent $${spent().toFixed(2)} of $${BUDGET}. runs: ${runsFile}`);
