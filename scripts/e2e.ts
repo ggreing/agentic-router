@@ -39,15 +39,42 @@ function repoFrom(fixture: string, name: string): string {
   return dir;
 }
 
+// The hardened guard (decision 142) is SILENT for ordinary Bash: it no longer vouches "allow" for test/build
+// commands, so under headless -p (which cannot prompt) Claude Code's OWN permission layer must allow them or
+// the worker's `npm test` is denied. These are exactly the allow patterns a user would put in settings.json to
+// run the router headlessly. They are the OUTER gate only — the router guard still enforces the real boundary
+// on top: network, credential-store and registry-override forms stay denied even here, and a guard deny always
+// wins over an allow below. The guard e2e confirmed live that `Bash(npm test)` / `Bash(npm run *)` let a worker
+// run while a guard deny still wins.
+export const ALLOW_TOOLS = [
+  'Agent',                                   // the lead delegates to subagents
+  'mcp__plugin_agentic-router_router__*',    // router MCP tools: the lead MAY call them (R5 observes; never forced)
+  // build / test / typecheck — what a worker runs to verify; dashboard R7 build is `npm run build`
+  'Bash(npm test)', 'Bash(npm run *)', 'Bash(node *)', 'Bash(npx tsc *)', 'Bash(tsc *)',
+  // dependency install: the one allowed network use (the guard denies --registry and index-url redirects)
+  'Bash(npm ci)', 'Bash(npm install)', 'Bash(npm install *)', 'Bash(npm i *)', 'Bash(npm ls)', 'Bash(npm pkg get *)',
+  // git: read + local commit (the guard denies push / config / hooks / `-c`)
+  'Bash(git *)',
+  // read-only shell helpers the workers chain under -p (round 2: `cd … && git grep …; cat package.json` was
+  // denied without these); network and credential commands stay denied by the guard regardless
+  'Bash(cd *)', 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(grep *)', 'Bash(echo *)', 'Bash(wc *)', 'Bash(pwd)',
+];
+
+/** Prints the allow policy and why — the same patterns a user would put in settings.json. */
+function printAllowPolicy(emit: (s: string) => void): void {
+  const bash = ALLOW_TOOLS.filter(t => t.startsWith('Bash('));
+  emit('\nallowedTools for claude -p — the hardened guard (decision 142) is silent for ordinary Bash, so under');
+  emit('headless -p Claude Code\'s own permission layer must allow build/test/git or the worker is denied. This');
+  emit('is what a user would put in settings.json; the router guard still denies network, credential-store and');
+  emit('registry-override forms on top, and a guard deny always wins over these allows:');
+  emit(`  Bash: ${bash.join(' ')}`);
+  emit('  plus Agent (delegation) and mcp__plugin_agentic-router_router__* (router MCP tools the lead may call).');
+}
+
 function claude(cwd: string, prompt: string, timeoutSec = 900, direct = false, resume?: string): Promise<{ code: number | null; out: any; ms: number }> {
   const a = ['-p', ...(direct ? [] : ['--plugin-dir', path.join(ROOT, 'plugin')]), '--model', MODEL, '--output-format', 'json',
     '--permission-mode', 'acceptEdits', '--max-budget-usd', '3',
-    // -p cannot prompt, so read-only shell helpers the workers commonly chain (cd/ls/cat/...) are
-    // allowed too; round 2 showed `cd … && git grep …; cat package.json` denied otherwise. Network
-    // and credential commands stay with the router guard. The router MCP tools are allowed so a lead
-    // CAN call them (round 5 observes whether it does, given deferred tool search); it is never forced to.
-    '--allowedTools', 'Agent', 'mcp__plugin_agentic-router_router__*', 'Bash(npm *)', 'Bash(node *)', 'Bash(git *)', 'Bash(cd *)', 'Bash(ls *)', 'Bash(cat *)',
-    'Bash(head *)', 'Bash(tail *)', 'Bash(grep *)', 'Bash(echo *)', 'Bash(wc *)', 'Bash(pwd)', 'Bash(npx tsc *)'];
+    '--allowedTools', ...ALLOW_TOOLS];
   if (resume) a.push('--resume', resume);                        // continue the same session (acceptance follow-ups)
   if (AUTH === 'api-key') a.splice(1, 0, '--bare', '--settings', JSON.stringify({ apiKeyHelper: args['api-key-helper'] }));
   else a.splice(1, 0, '--setting-sources', 'project,local');     // keep the user's own plugins and hooks out
@@ -193,12 +220,14 @@ if (DRY) {
     console.log(`   expect: ${s.expect}`);
   }
   console.log(`\nR7 dashboard check (no claude): ${wantDash ? 'register a code via `agentic-router dashboard --no-open`, exchange it for a cookie, GET summary + requests, assert the runs appear and no prompt text leaks' : 'skipped (--no-dashboard)'}`);
+  printAllowPolicy(console.log);
   console.log(`\nestimated subscription usage: ${callTotal} claude -p calls, roughly ${turnLo}-${turnHi} agent turns total (lead + subagents; depends on how the lead delegates). Each run caps at --max-budget-usd 3.`);
   console.log('no claude was run (dry run).');
   process.exit(0);
 }
 
 if (ROUND5) {
+  printAllowPolicy(log);
   cli('init', '--yes', '--claude-settings', path.join(TMP, 'claude-settings.json'), '--project', TMP);
   log(cli('start').trim());
   const port = (() => { try { return Number(JSON.parse(fs.readFileSync(path.join(HOME, 'config.json'), 'utf8')).daemonPort); } catch { return 0; } })();

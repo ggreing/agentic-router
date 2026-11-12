@@ -119,10 +119,10 @@ async function apiCommand(cmd: string, args: string[], f: Record<string, string 
     if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: agentic-router mode <subscription|api|direct|proxy> [--yes]'); return 2; }
     return setMode(args[0], f, d);
   }
-  if (cmd === 'token' && args[0] === 'rotate') return tokenRotate(d);
+  if (cmd === 'token' && args[0] === 'rotate') return tokenRotate(d, { grace: f['no-grace'] !== true });
   if (cmd === 'key' && args[0] === 'set') return keySet(f, d);
   if (cmd === 'proxy' && args[0] === 'allow-upstream') return allowUpstream(args[1], f, d, paths.config());
-  console.log('usage: agentic-router token rotate | key set [--key-stdin] | proxy allow-upstream <https origin> [--use] [--yes]');
+  console.log('usage: agentic-router token rotate [--no-grace] | key set [--key-stdin] | proxy allow-upstream <https origin> [--use] [--yes]');
   return 2;
 }
 
@@ -168,5 +168,5 @@ if (isMain) {
     process.exitCode = positional[0] === 'export' ? await dataExport(f, d) : await dataPurge(f, d);
   }
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate|key set|proxy allow-upstream <origin>>');
+  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate [--no-grace]|key set|proxy allow-upstream <origin>>');
 }

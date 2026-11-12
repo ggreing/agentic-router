@@ -270,3 +270,28 @@ test('spec 2.1: mode subscription and mode api switch back and forth (confirmed)
   assert.equal(await modeApi({}, again.deps), 0);
   assert.match(again.lines.at(-1)!, /^Already in API-key mode/);
 });
+
+test('audit C3: token rotate records the rotation time, so the grace runs from it; --no-grace refuses the old token at once', async () => {
+  const { LocalTokens } = await import('@agentic-router/proxy');
+  const { config } = await ensureLocalState();
+  const f = fake();
+  await configureApi(config, f.deps);
+  const pause = () => new Promise(r => setTimeout(r, 30));   // the proxy reloads the file when its mtime changes
+  // with grace: the proxy, reading the file long after the rotation, still counts the 10 minutes from the rotation
+  const first = fs.readFileSync(proxyTokenFile(), 'utf8').trim();
+  let clock = Date.now();
+  const tokens = new LocalTokens(proxyTokenFile(), { now: () => clock });
+  await pause();
+  assert.equal(tokenRotate(f.deps), 0);
+  clock = Date.now() + 11 * 60_000;                           // the proxy's next read comes 11 minutes later
+  assert.equal(tokens.accept(first), null, 'the grace ran out 10 minutes after the rotation');
+  const second = fs.readFileSync(proxyTokenFile(), 'utf8').trim();
+  assert.ok(tokens.accept(second));
+  // --no-grace: refused at once
+  clock = Date.now();
+  await pause();
+  assert.equal(tokenRotate(f.deps, { grace: false }), 0);
+  assert.match(f.lines.at(-1)!, /--no-grace: the old token is refused at once/);
+  assert.equal(tokens.accept(second), null);
+  assert.ok(tokens.accept(fs.readFileSync(proxyTokenFile(), 'utf8').trim()));
+});

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { routerHome } from '@agentic-router/core';
 import {
-  DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, ROTATION_GRACE_MS, checkUpstream, keyStatus, newToken, storeKey, writeTokenFile, type VaultErrorCode,
+  DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, ROTATION_GRACE_MS, checkUpstream, keyStatus, newToken, storeKey, writeRotationMeta, writeTokenFile, type VaultErrorCode,
 } from '@agentic-router/proxy';
 import { claudeAuthStatus, detectLogin, planApiSettings, planSubscriptionSettings, type ApiMode, type CommandRunner } from './apimode.ts';
 import { runningSupervisor } from './daemonctl.ts';
@@ -173,12 +173,20 @@ export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): 
 }
 
 /** `token rotate`: a new local token; the proxy keeps the old one valid for the grace window. */
-export function tokenRotate(d: Pick<ApiDeps, 'out'>): number {
+/**
+ * `token rotate [--no-grace]`: a new local token. Audit C3: the rotation time is recorded first, so the old
+ * token's grace runs from the rotation, not from when the proxy next reads the file; --no-grace ends it at once.
+ */
+export function tokenRotate(d: Pick<ApiDeps, 'out'>, opts: { grace?: boolean } = {}): number {
   const cfg = readConfig();
   if (!cfg?.apiMode) { d.out('API-key mode is not set up: run agentic-router init --mode api first'); return 2; }
+  const grace = opts.grace !== false;
+  writeRotationMeta(proxyTokenFile(), Date.now(), grace);
   writeTokenFile(proxyTokenFile(), newToken());
   restrictHome();
-  d.out(`local token rotated. The proxy accepts the old one for ${Math.round(ROTATION_GRACE_MS / 60000)} more minutes; Claude Code picks up the new one through its apiKeyHelper (a 401 makes it ask again), so sessions keep working.`);
+  d.out(grace
+    ? `local token rotated. The proxy accepts the old one for ${Math.round(ROTATION_GRACE_MS / 60000)} more minutes; Claude Code picks up the new one through its apiKeyHelper (a 401 makes it ask again), so sessions keep working.`
+    : 'local token rotated with --no-grace: the old token is refused at once. A running session still using it gets a 401 and runs its apiKeyHelper again for the new one.');
   return 0;
 }
 
