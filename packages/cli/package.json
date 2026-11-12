@@ -17,6 +17,6 @@
   "dependencies": {
     "@agentic-router/core": "0.0.0",
     "@agentic-router/daemon": "0.0.0",
-    "@agentic-router/proxy": "*"
+    "@agentic-router/proxy": "0.0.0"
   }
 }

@@ -15,6 +15,6 @@
     "agentic-router-proxy": "./src/main.ts"
   },
   "dependencies": {
-    "@agentic-router/core": "*"
+    "@agentic-router/core": "0.0.0"
   }
 }
