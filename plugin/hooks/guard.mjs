@@ -31,14 +31,12 @@ export const CREDENTIAL_PATHS = [
   '~/.claude/**', '~/.claude.json', '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.azure/**',
   '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.agentic-router/token',
   '~/.config/gh/**', '~/.kube/**', '~/.gnupg/**', '~/.pgpass', '~/.pypirc', '~/.cargo/credentials*',
-  '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json', '**/.env', '**/.env.*',
-];
-/** Further credential stores, kept here (not mirrored in core): the macOS keychains and the Linux desktop keyrings and password stores. */
-export const GUARD_LOCAL_CREDENTIAL_PATHS = [
+  '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json',
+  // the macOS keychains, and the keyrings and password stores of a Linux desktop
   '~/Library/Keychains/**', '~/Library/Cookies/**', '~/Library/Application Support/com.apple.TCC/**',
   '~/.local/share/keyrings/**', '~/.password-store/**', '~/.config/op/**', '~/.config/git/credentials', '~/.config/pip/pip.conf', '~/.config/npm/npmrc',
+  '**/.env', '**/.env.*',
 ];
-const ALL_CREDENTIAL_PATHS = [...CREDENTIAL_PATHS, ...GUARD_LOCAL_CREDENTIAL_PATHS];
 // Both root and nested forms: the session cwd can be above the repository root (audit #4).
 export const PROTECTED_WRITE_PATHS = [
   '**/.env', '**/.env.*', '.claude/**', '**/.claude/**', '.github/workflows/**', '**/.github/workflows/**',
@@ -279,7 +277,7 @@ function matchesPath(candidate, patterns, userHome) {
 /** Fixed (glob-free) base dir of each `~`-rooted credential pattern — for Grep/Glob containment. */
 function credentialDirs(userHome) {
   const out = [];
-  for (const pat of ALL_CREDENTIAL_PATHS) {
+  for (const pat of CREDENTIAL_PATHS) {
     if (!pat.startsWith('~/')) continue;
     const base = pat.replace(/\/\*.*$/, '');                 // strip the first glob segment onward
     for (const h of canonicalForms(userHome)) out.push(toPosix(expandHome(base, h)).toLowerCase().replace(/\/+$/, ''));
@@ -310,7 +308,7 @@ function isUnder(p, dir) {
 /** `.env.example` and its kin are templates that repositories commit: readable, and writable once granted. */
 const ENV_TEMPLATE_RE = /^\.env\.(?:example|sample|template|dist|defaults?)$/i;
 const ENV_PATTERNS = new Set(['**/.env', '**/.env.*']);
-const HOME_CREDENTIAL_PATHS = ALL_CREDENTIAL_PATHS.filter(p => !ENV_PATTERNS.has(p));
+const HOME_CREDENTIAL_PATHS = CREDENTIAL_PATHS.filter(p => !ENV_PATTERNS.has(p));
 export function isEnvTemplate(p) {
   return ENV_TEMPLATE_RE.test(toPosix(String(p)).split('/').pop() ?? '');
 }
@@ -364,11 +362,12 @@ function trustedBases(...dirs) {
   return [...dirs, os.tmpdir()].filter(d => typeof d === 'string' && d !== '');
 }
 
-/** Names that are a credential store or hold one, as a single path segment (for globs, which cannot be resolved). */
-const SENSITIVE_SEGMENTS = [
+/** Names that are a credential store or hold one, as a single path segment (for globs, which cannot be resolved). Must equal core. */
+export const GUARD_SENSITIVE_SEGMENTS = [
   '.env', '.claude', '.claude.json', '.ssh', '.aws', '.azure', '.docker', '.npmrc', '.netrc', '_netrc', '.git-credentials',
   '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
 ];
+const SENSITIVE_SEGMENTS = GUARD_SENSITIVE_SEGMENTS;
 const GLOB_CHARS = /[*?[]/;
 /** A bash glob segment as a RegExp (no "/" inside; a leading dot is matched only by a literal dot, as in bash). */
 function segmentRegExp(seg) {
@@ -434,48 +433,44 @@ const TOO_MANY_BRACES = 'a brace expansion with more alternatives than can be ch
 // 142; the guard never answers "allow" for Bash). Commands on the allowlist that run code the worker may have
 // written (test runners, package scripts, installs) are exactly that: allowed to be asked about, never vouched for.
 const MAX_COMMAND_CHARS = 20_000;
-const WRAPPERS = new Set(['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.']);
+/** Commands that run another command: never allowed as the first word. Must equal core. */
+export const GUARD_WRAPPER_COMMANDS = ['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.'];
+const WRAPPERS = new Set(GUARD_WRAPPER_COMMANDS);
 /** The secret-looking part of a variable name; mirrors core/security.ts (a test asserts equality). */
 export const SECRET_VAR_NAME_PATTERN = 'ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|COOKIE|AUTH|DATABASE_URL|DSN';
 const SECRET_VAR_RE = new RegExp(String.raw`(?:\$\{?!?|\$env:|%)[A-Za-z0-9_]*(?:${SECRET_VAR_NAME_PATTERN})[A-Za-z0-9_]*\}?`, 'i');
 
-/** Options refused on top of ROUTER_BASH_DENY_OPTIONS (which mirrors core): they read hidden or ignored files, or set a variable. */
-export const GUARD_EXTRA_DENY_OPTIONS = {
-  'rg': ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.'],
-  'printf': ['-v'],
-  'git grep': ['--no-index', '--untracked', '--no-exclude-standard'],
-  'git diff': ['--no-index'],
-  'npm install': ['--registry'], 'npm i': ['--registry'], 'npm ci': ['--registry'],
-  'pnpm install': ['--registry'], 'pnpm add': ['--registry'], 'yarn install': ['--registry'], 'yarn add': ['--registry'],
-  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
-  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
-};
-
 /**
- * Further refused options, kept here (not mirrored in core): interactive and editor modes that cannot work
- * without a terminal, a program run by rg, and installs that leave the repository.
+ * Options refused on top of ROUTER_BASH_DENY_OPTIONS: they read hidden or ignored files, run a program, open an
+ * editor or an interactive mode, write outside the result, or take an install to another registry or out of
+ * the repository. Must equal core GUARD_EXTRA_DENY_OPTIONS.
  */
-export const GUARD_LOCAL_DENY_OPTIONS = {
+export const GUARD_EXTRA_DENY_OPTIONS = {
+  'rg': ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.', '--hostname-bin'],
+  'printf': ['-v'],
+  'git grep': ['--no-index', '--untracked', '--no-exclude-standard', '--textconv'],
+  'git diff': ['--no-index'],
+  // interactive and editor modes cannot work without a terminal; --amend rewrites a commit the worker did not make
   'git add': ['-e', '--edit', '-i', '--interactive', '-p', '--patch', '--chmod'],
   'git commit': ['-e', '--edit', '--amend', '-p', '--patch', '--interactive', '--reedit-message', '--reset-author', '--no-post-rewrite'],
-  'git grep': ['--textconv'],
   // `git stash list` passes its options on to git log
   'git stash': ['--output', '--ext-diff', '--textconv'],
-  'rg': ['--hostname-bin'],
   'sort': ['-T', '--temporary-directory'],
   'diff': ['-l', '--paginate'],
   'tail': ['-f', '-F', '--follow', '--retry'],
-  'npm install': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
-  'npm i': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
-  'npm ci': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
-  'pnpm install': ['-g', '--global', '--dir', '-C'], 'pnpm add': ['-g', '--global', '--dir', '-C'],
-  'yarn install': ['--cwd', '--modules-folder', '--global-folder'], 'yarn add': ['--cwd', '--modules-folder', '--global-folder'],
-  'pip install': ['-t', '--target', '--prefix', '--root', '--user'], 'pip3 install': ['-t', '--target', '--prefix', '--root', '--user'],
+  // installs: the registry is fixed, and nothing is installed outside the repository
+  'npm install': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'], 'npm i': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'], 'npm ci': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
+  'pnpm install': ['--registry', '-g', '--global', '--dir', '-C'], 'pnpm add': ['--registry', '-g', '--global', '--dir', '-C'],
+  'yarn install': ['--registry', '--cwd', '--modules-folder', '--global-folder'], 'yarn add': ['--registry', '--cwd', '--modules-folder', '--global-folder'],
+  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host', '-t', '--target', '--prefix', '--root', '--user'],
+  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host', '-t', '--target', '--prefix', '--root', '--user'],
 };
-/** Commands that only read (and git, which has its own option list). Every other allowed command builds, tests or installs, and can write files. */
-const READ_ONLY_COMMANDS = new Set(['cd', 'pwd', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'echo', 'printf', 'diff', 'sort', 'uniq', 'cut', 'tr', 'which', 'where', 'true', 'false', 'test', 'set', 'git']);
-/** Device and process file systems: only these are plain enough to allow. */
-const PLAIN_DEVICES = new Set(['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr']);
+/** Allowed commands that only read (and git, which has its own option list). Every other allowed command builds, tests or installs, and can write files. Must equal core. */
+export const GUARD_READ_ONLY_COMMANDS = ['cd', 'pwd', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'echo', 'printf', 'diff', 'sort', 'uniq', 'cut', 'tr', 'which', 'where', 'true', 'false', 'test', 'set', 'git'];
+const READ_ONLY_COMMANDS = new Set(GUARD_READ_ONLY_COMMANDS);
+/** The only paths under /dev or /proc a command may name. Must equal core. */
+export const GUARD_PLAIN_DEVICES = ['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr'];
+const PLAIN_DEVICES = new Set(GUARD_PLAIN_DEVICES);
 
 function stripOuterQuotes(w) { return w.replace(/^["']/, '').replace(/["']$/, ''); }
 function baseName(w) {
@@ -863,7 +858,7 @@ export function classifyBash(command, opts = {}) {
 
     // dangerous options on otherwise-allowed commands (run a program, write a file, or read hidden files)
     const key = `${cmd0} ${sub}`;
-    const denied = [...(ROUTER_BASH_DENY_OPTIONS[key] || ROUTER_BASH_DENY_OPTIONS[cmd0] || []), ...(GUARD_EXTRA_DENY_OPTIONS[key] || GUARD_EXTRA_DENY_OPTIONS[cmd0] || []), ...(GUARD_LOCAL_DENY_OPTIONS[key] || GUARD_LOCAL_DENY_OPTIONS[cmd0] || [])];
+    const denied = [...(ROUTER_BASH_DENY_OPTIONS[key] || ROUTER_BASH_DENY_OPTIONS[cmd0] || []), ...(GUARD_EXTRA_DENY_OPTIONS[key] || GUARD_EXTRA_DENY_OPTIONS[cmd0] || [])];
     if (denied.length) {
       for (let i = 1; i < words.length; i++) {
         const tok = stripOuterQuotes(words[i]);

@@ -7,6 +7,9 @@ export const CREDENTIAL_PATHS = [
   '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.agentic-router/token',
   '~/.config/gh/**', '~/.kube/**', '~/.gnupg/**', '~/.pgpass', '~/.pypirc', '~/.cargo/credentials*',
   '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json',
+  // the macOS keychains, and the keyrings and password stores of a Linux desktop
+  '~/Library/Keychains/**', '~/Library/Cookies/**', '~/Library/Application Support/com.apple.TCC/**',
+  '~/.local/share/keyrings/**', '~/.password-store/**', '~/.config/op/**', '~/.config/git/credentials', '~/.config/pip/pip.conf', '~/.config/npm/npmrc',
   '**/.env', '**/.env.*',
 ];
 
@@ -105,20 +108,43 @@ export const ROUTER_BASH_DENY_OPTIONS: Record<string, string[]> = {
 };
 
 /**
- * Options refused on top of ROUTER_BASH_DENY_OPTIONS: they read hidden or ignored files, or redirect a
- * package install to another registry (decision 142). Shared with the guard (mirrored copy + equality test)
- * so the daemon's stop check applies the same rule.
+ * Options refused on top of ROUTER_BASH_DENY_OPTIONS (decision 142 and the checks after it): they read hidden
+ * or ignored files, run a program, open an editor or an interactive mode, write outside the result, redirect a
+ * package install to another registry or install outside the repository. The guard holds a mirrored copy
+ * (it cannot import this package); a test asserts that the two are equal.
  */
 export const GUARD_EXTRA_DENY_OPTIONS: Record<string, string[]> = {
-  rg: ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.'],
+  rg: ['--hidden', '--no-ignore', '--no-ignore-vcs', '--no-ignore-dot', '--no-ignore-parent', '--no-ignore-global', '--no-ignore-exclude', '--no-ignore-files', '--unrestricted', '-u', '-.', '--hostname-bin'],
   printf: ['-v'],
-  'git grep': ['--no-index', '--untracked', '--no-exclude-standard'],
+  'git grep': ['--no-index', '--untracked', '--no-exclude-standard', '--textconv'],
   'git diff': ['--no-index'],
-  'npm install': ['--registry'], 'npm i': ['--registry'], 'npm ci': ['--registry'],
-  'pnpm install': ['--registry'], 'pnpm add': ['--registry'], 'yarn install': ['--registry'], 'yarn add': ['--registry'],
-  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
-  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
+  // interactive and editor modes cannot work without a terminal; --amend rewrites a commit the worker did not make
+  'git add': ['-e', '--edit', '-i', '--interactive', '-p', '--patch', '--chmod'],
+  'git commit': ['-e', '--edit', '--amend', '-p', '--patch', '--interactive', '--reedit-message', '--reset-author', '--no-post-rewrite'],
+  // `git stash list` passes its options on to git log
+  'git stash': ['--output', '--ext-diff', '--textconv'],
+  sort: ['-T', '--temporary-directory'],
+  diff: ['-l', '--paginate'],
+  tail: ['-f', '-F', '--follow', '--retry'],
+  // installs: the registry is fixed, and nothing is installed outside the repository
+  'npm install': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'], 'npm i': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'], 'npm ci': ['--registry', '-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
+  'pnpm install': ['--registry', '-g', '--global', '--dir', '-C'], 'pnpm add': ['--registry', '-g', '--global', '--dir', '-C'],
+  'yarn install': ['--registry', '--cwd', '--modules-folder', '--global-folder'], 'yarn add': ['--registry', '--cwd', '--modules-folder', '--global-folder'],
+  'pip install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host', '-t', '--target', '--prefix', '--root', '--user'],
+  'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host', '-t', '--target', '--prefix', '--root', '--user'],
 };
+
+/** Names that are a credential store or hold one, as a single path segment: for globs, which cannot be resolved to a path. Mirrored in the guard. */
+export const GUARD_SENSITIVE_SEGMENTS = [
+  '.env', '.claude', '.claude.json', '.ssh', '.aws', '.azure', '.docker', '.npmrc', '.netrc', '_netrc', '.git-credentials',
+  '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
+];
+/** Allowed commands that only read (and git, which has its own option list). Every other allowed command builds, tests or installs, and can write files. Mirrored in the guard. */
+export const GUARD_READ_ONLY_COMMANDS = ['cd', 'pwd', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'echo', 'printf', 'diff', 'sort', 'uniq', 'cut', 'tr', 'which', 'where', 'true', 'false', 'test', 'set', 'git'];
+/** Commands that run another command: never allowed as the first word. Mirrored in the guard. */
+export const GUARD_WRAPPER_COMMANDS = ['sudo', 'doas', 'env', 'xargs', 'time', 'nohup', 'command', 'builtin', 'exec', 'eval', 'source', '.'];
+/** The only paths under /dev or /proc a worker's command may name. Mirrored in the guard. */
+export const GUARD_PLAIN_DEVICES = ['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr'];
 
 /**
  * The name fragments that mark a shell variable reference as secret-bearing ($FOO_API_KEY, %DB_PASSWORD%,

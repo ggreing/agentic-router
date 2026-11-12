@@ -32,6 +32,14 @@ test('guard policy constants equal core/security.ts', () => {
   assert.deepEqual(guard.ROUTER_BASH_DENY_OPTIONS, core.ROUTER_BASH_DENY_OPTIONS);
   assert.deepEqual(guard.UNSCOPED_PROTECTED_PATHS, core.UNSCOPED_PROTECTED_PATHS);
   assert.deepEqual(guard.GUARD_EXTRA_DENY_OPTIONS, core.GUARD_EXTRA_DENY_OPTIONS);
+  assert.deepEqual(guard.GUARD_SENSITIVE_SEGMENTS, core.GUARD_SENSITIVE_SEGMENTS);
+  assert.deepEqual(guard.GUARD_READ_ONLY_COMMANDS, core.GUARD_READ_ONLY_COMMANDS);
+  assert.deepEqual(guard.GUARD_WRAPPER_COMMANDS, core.GUARD_WRAPPER_COMMANDS);
+  assert.deepEqual(guard.GUARD_PLAIN_DEVICES, core.GUARD_PLAIN_DEVICES);
+  // no policy list lives in the guard alone: every exported upper-case list or map there has its source in core
+  const coreNames = new Set(Object.keys(core));
+  const guardOnly = Object.entries(guard).filter(([k, v]) => /^[A-Z][A-Z0-9_]+$/.test(k) && (Array.isArray(v) || (typeof v === 'object' && v !== null)) && !coreNames.has(k)).map(([k]) => k);
+  assert.deepEqual(guardOnly, []);
   assert.equal(guard.SECRET_VAR_NAME_PATTERN, core.SECRET_VAR_NAME_PATTERN);
   assert.equal(guard.ROUTER_TOOL_PREFIX, core.ROUTER_TOOL_PREFIX);
   assert.deepEqual(guard.ROUTER_TOOL_NAMES, [...core.ROUTER_TOOL_NAMES]);

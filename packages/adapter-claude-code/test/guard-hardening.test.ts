@@ -764,7 +764,7 @@ test('macOS: the data-volume spelling of a path, and the keychain', () => {
   assert.equal(guard.dataVolumePath('/System/Volumes/Data', 'darwin'), '/');
   assert.equal(guard.dataVolumePath('/System/Volumes/Database/x', 'darwin'), '/System/Volumes/Database/x');
   assert.equal(guard.dataVolumePath('/System/Volumes/Data/Users/me', 'linux'), '/System/Volumes/Data/Users/me', 'only on macOS');
-  assert.ok(guard.GUARD_LOCAL_CREDENTIAL_PATHS.includes('~/Library/Keychains/**'));
+  assert.ok(guard.CREDENTIAL_PATHS.includes('~/Library/Keychains/**'));
   const w = world();
   try {
     for (const rel of ['Library/Keychains/login.keychain-db', '.local/share/keyrings/login.keyring', '.password-store/site.gpg', '.config/git/credentials']) {
