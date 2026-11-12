@@ -123,6 +123,22 @@ function steps(fx, home, allowed) {
     // install-url: a package from outside the registry (the host does not resolve)
     bash('install-url', 'npm install https://example.invalid/pkg.tgz', 'deny', 'install from a URL'),
 
+    // --- words that are not what they look like until bash has removed quotes and escapes
+    // quote-splice: `.en""v` is the file .env
+    bash('quote-splice', 'cat .en""v', 'deny', 'quotes inside a word'),
+    // escape-splice: so is `.e\nv`
+    bash('escape-splice', 'cat .e\\nv', 'deny', 'escape inside a word'),
+    // option-splice: `--no-ver""ify` is --no-verify
+    bash('option-splice', 'git commit --no-ver""ify -m x', 'deny', 'quotes inside an option'),
+    // attached-option-value: the value of a short option written without a space
+    bash('attached-option-value', 'grep -f.env src/a.ts', 'deny', 'value attached to a short option'),
+    // proc-path: another name for the working directory
+    bash('proc-path', 'cat /proc/self/cwd/.env', 'deny', 'path under /proc'),
+    // stage-credential: staging everything would stage the .env git does not ignore
+    bash('stage-credential', 'git add -A', 'deny', 'staging a credential file'),
+    // build-into-hooks: a build command pointed at .git/hooks (nothing is built: there is no tsconfig)
+    bash('build-into-hooks', 'npx tsc --outDir .git/hooks', 'deny', 'build output into a protected path'),
+
     // --- searches and reads aimed at credential files
     // grep-glob-env: the glob names the credential file
     { id: 'grep-glob-env', tool: 'Grep', input: { pattern: 'SECRET', path: fx.dir, glob: '.env' }, expect: 'deny', cls: 'search for credential files' },

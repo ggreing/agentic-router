@@ -311,7 +311,7 @@ export function windowsPathProblem(p, platform = process.platform) {
   if (rest.includes(':')) return 'an NTFS stream name (":" inside the path)';
   for (const seg of rest.split(/[\\/]+/)) {
     if (/^[^\\/]{1,8}~\d{1,3}(?:\.[^\\/.]{0,3})?$/.test(seg)) return `an 8.3 short name (${seg})`;
-    if (seg !== '.' && seg !== '..' && /[. ]$/.test(seg)) return 'a path segment ending in a dot or a space';
+    if (seg !== '.' && seg !== '..' && seg !== '...' && /[. ]$/.test(seg)) return 'a path segment ending in a dot or a space';
   }
   return null;
 }
@@ -412,6 +412,32 @@ export const GUARD_EXTRA_DENY_OPTIONS = {
   'pip3 install': ['-i', '--index-url', '--extra-index-url', '-f', '--find-links', '--trusted-host'],
 };
 
+/**
+ * Further refused options, kept here (not mirrored in core): interactive and editor modes that cannot work
+ * without a terminal, a program run by rg, and installs that leave the repository.
+ */
+export const GUARD_LOCAL_DENY_OPTIONS = {
+  'git add': ['-e', '--edit', '-i', '--interactive', '-p', '--patch', '--chmod'],
+  'git commit': ['-e', '--edit', '--amend', '-p', '--patch', '--interactive', '--reedit-message', '--reset-author', '--no-post-rewrite'],
+  'git grep': ['--textconv'],
+  // `git stash list` passes its options on to git log
+  'git stash': ['--output', '--ext-diff', '--textconv'],
+  'rg': ['--hostname-bin'],
+  'sort': ['-T', '--temporary-directory'],
+  'diff': ['-l', '--paginate'],
+  'tail': ['-f', '-F', '--follow', '--retry'],
+  'npm install': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
+  'npm i': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
+  'npm ci': ['-g', '--global', '--location', '--prefix', '--userconfig', '--globalconfig'],
+  'pnpm install': ['-g', '--global', '--dir', '-C'], 'pnpm add': ['-g', '--global', '--dir', '-C'],
+  'yarn install': ['--cwd', '--modules-folder', '--global-folder'], 'yarn add': ['--cwd', '--modules-folder', '--global-folder'],
+  'pip install': ['-t', '--target', '--prefix', '--root', '--user'], 'pip3 install': ['-t', '--target', '--prefix', '--root', '--user'],
+};
+/** Commands that only read (and git, which has its own option list). Every other allowed command builds, tests or installs, and can write files. */
+const READ_ONLY_COMMANDS = new Set(['cd', 'pwd', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'echo', 'printf', 'diff', 'sort', 'uniq', 'cut', 'tr', 'which', 'where', 'true', 'false', 'test', 'set', 'git']);
+/** Device and process file systems: only these are plain enough to allow. */
+const PLAIN_DEVICES = new Set(['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr']);
+
 function stripOuterQuotes(w) { return w.replace(/^["']/, '').replace(/["']$/, ''); }
 function baseName(w) {
   const s = stripOuterQuotes(w).replace(/\\/g, '/').split('/').pop();
@@ -476,7 +502,33 @@ function lexBash(cmd) {
     cur += c; i++;
   }
   endCmd();
-  return { commands, refuse };
+  return { commands: commands.map(ws => ws.map(shellWord)), refuse };
+}
+
+/**
+ * A word as bash passes it on: quotes removed, escapes resolved. `.en""v`, `.e'n'v`, `.e\nv` and `".e"nv` are
+ * all the file .env to bash, and `--no-ver""ify` is --no-verify; every check has to look at that word, not at
+ * the text. (lexBash has already refused what would need more than this: $'…', $"…", substitutions, a
+ * backslash-newline.) A `$` keeps its place either way, so a quoted one is still treated as a variable.
+ */
+export function shellWord(raw) {
+  let out = '';
+  for (let i = 0; i < raw.length;) {
+    const c = raw[i];
+    if (c === "'") { const end = raw.indexOf("'", i + 1); if (end < 0) { out += raw.slice(i + 1); break; } out += raw.slice(i + 1, end); i = end + 1; continue; }
+    if (c === '"') {
+      i++;
+      while (i < raw.length && raw[i] !== '"') {
+        if (raw[i] === '\\' && i + 1 < raw.length && '"\\$`'.includes(raw[i + 1])) { out += raw[i + 1]; i += 2; continue; }
+        out += raw[i++];
+      }
+      i++;
+      continue;
+    }
+    if (c === '\\' && i + 1 < raw.length) { out += raw[i + 1]; i += 2; continue; }
+    out += c; i++;
+  }
+  return out;
 }
 
 /** Does one allowlist entry's words prefix-match the command's words? The command name must be bare (no path). */
@@ -624,7 +676,8 @@ function deniedOption(tok, denied) {
   }
   return denied.some(opt => {
     if (opt.startsWith('--')) return false;
-    if (opt.length === 2) return tok.slice(1).includes(opt[1]);          // a single-letter flag anywhere in a bundle
+    // a single-letter flag anywhere in a bundle; the bundle ends where a value starts (-g*.ts, -n5, -k1,2)
+    if (opt.length === 2) return (/^[A-Za-z.]*/.exec(tok.slice(1))?.[0] ?? '').includes(opt[1]);
     return tok === opt || tok.startsWith(opt);                            // find's -exec and the like
   });
 }
@@ -652,6 +705,10 @@ export function classifyBash(command, opts = {}) {
     if (words === null) return `this command has ${TOO_MANY_BRACES}; it is not allowed.`;
     for (const word of words) {
       if (word === '') continue;
+      // /proc/self/root/…, /proc/<pid>/cwd/…, /dev/clipboard, /dev/fd/N: other names for files and data the
+      // path checks below would not recognise
+      const px = toPosix(word).replace(/^\/+/, '/');
+      if (/^\/(?:proc|dev)(?:\/|$)/.test(px) && !PLAIN_DEVICES.has(px)) return 'this command names a path under /proc or /dev, which is not allowed.';
       if (/\$/.test(word)) {
         if (pathLikeArg(word) || READER_COMMANDS.has(cmd0)) return 'this command has a file argument with a variable reference ($), which cannot be checked; it is not allowed.';
         continue;
@@ -677,6 +734,17 @@ export function classifyBash(command, opts = {}) {
           if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
           if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
             return 'this command touches the router proxy binaries, which is not allowed.';
+          // A build, test or install command can write where its arguments point (-o, --outDir, --write,
+          // --target-dir, a report file, …). No list of such options would be complete, so for these commands
+          // any argument inside a protected place is refused: .git (hooks run at the next commit), CI
+          // configuration, .claude, the project's router policy.
+          if (!READ_ONLY_COMMANDS.has(cmd0) && opts.root) {
+            const rel = toPosix(path.relative(canonicalForms(opts.root)[0], abs));
+            if (rel && !rel.startsWith('..') && !/^[A-Za-z]:/.test(rel) && !isEnvTemplate(rel)
+              // the path itself, or a directory whose content is protected (--outDir .claude)
+              && [rel, `${rel}/x`].some(r => isProtectedPath(r, ['.git', '**/.git']) || isNeverGrantable(r)))
+              return `this command names ${rel}, a protected path (CI config, .git, .claude, …), and ${cmd0} can write files; it is not allowed.`;
+          }
         }
       }
     }
@@ -723,7 +791,20 @@ export function classifyBash(command, opts = {}) {
       const raw = words[i];
       const bare = stripOuterQuotes(raw);
       const value = bare.startsWith('-') ? (bare.includes('=') ? bare.slice(bare.indexOf('=') + 1) : null) : raw;
-      if (value === null || value === '') continue;
+      if (value === null) {
+        // -f.env, -F/path/to/file: the value of a short option written without a space. Where it begins is
+        // not known, so every tail of the word that looks like a path is checked.
+        if (/^-[^-]/.test(bare)) {
+          for (let k = 2; k < bare.length; k++) {
+            const tail = bare.slice(k);
+            if (!/^[.~\\/]|^[A-Za-z]:[\\/]/.test(tail)) continue;
+            const reason = checkArg(cmd0, tail, vcwd);
+            if (reason) return reason;
+          }
+        }
+        continue;
+      }
+      if (value === '') continue;
       const reason = checkArg(cmd0, value, vcwd);
       if (reason) return reason;
     }
@@ -741,7 +822,7 @@ export function classifyBash(command, opts = {}) {
 
     // dangerous options on otherwise-allowed commands (run a program, write a file, or read hidden files)
     const key = `${cmd0} ${sub}`;
-    const denied = [...(ROUTER_BASH_DENY_OPTIONS[key] || ROUTER_BASH_DENY_OPTIONS[cmd0] || []), ...(GUARD_EXTRA_DENY_OPTIONS[key] || GUARD_EXTRA_DENY_OPTIONS[cmd0] || [])];
+    const denied = [...(ROUTER_BASH_DENY_OPTIONS[key] || ROUTER_BASH_DENY_OPTIONS[cmd0] || []), ...(GUARD_EXTRA_DENY_OPTIONS[key] || GUARD_EXTRA_DENY_OPTIONS[cmd0] || []), ...(GUARD_LOCAL_DENY_OPTIONS[key] || GUARD_LOCAL_DENY_OPTIONS[cmd0] || [])];
     if (denied.length) {
       for (let i = 1; i < words.length; i++) {
         const tok = stripOuterQuotes(words[i]);
@@ -750,13 +831,31 @@ export function classifyBash(command, opts = {}) {
           return `this command uses the option ${tok} (${cmd0}${sub ? ' ' + sub : ''}), which runs a program, writes a file or reads files it should not, and is not allowed.`;
       }
     }
+    if (cmd0 === 'git' && sub === 'commit') {
+      const has = words.slice(2).some(w => /^--(?:message|file|reuse-message|fixup|squash)(?:=|$)/.test(w) || /^-[A-Za-z]*[mFC]/.test(w));
+      if (!has) return 'this git commit has no message on the command line (-m), so it would open an editor; it is not allowed.';
+    }
+    // `git branch` is allowed for --show-current only; anything more (-d, -m, --edit-description) changes branches
+    if (cmd0 === 'git' && sub === 'branch' && words.length > 3) return 'git branch is allowed only as `git branch --show-current`.';
+    if (cmd0 === 'git' && sub === 'add') {
+      // `git add -A`, `git add .`, `git add <dir>`: whatever lies below is staged, and `git diff --cached` then shows it
+      const rest = words.slice(2);
+      const all = rest.some(w => w === '-A' || w === '--all' || w === '--no-ignore-removal' || /^-[A-Za-z]*A/.test(w));
+      const dirs = rest.filter(w => !w.startsWith('-')).map(w => resolvePathArg(w, vcwd, userHome, opts.msys))
+        .filter(p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+      if (all && !dirs.length) dirs.push(opts.root ?? vcwd);
+      for (const d of dirs) {
+        const open = unignoredCredentialFiles(d);
+        if (open.length) return `this git add would stage ${open.slice(0, 3).join(', ')}, a credential file that git does not ignore; add the files by name, or add it to .gitignore.`;
+      }
+    }
     // commands that write to a second positional argument (e.g. `uniq IN OUT` writes OUT)
     if (cmd0 === 'uniq') {
       const positionals = words.slice(1).filter(w => !w.startsWith('-'));
       if (positionals.length >= 2) return 'this command writes to an output file argument, which is not allowed.';
     }
     // a recursive grep opens every file below its start, dotfiles included
-    if (cmd0 === 'grep' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return /^--(?:rec|dereference-rec|directories=recurse)/.test(t) || (/^-[A-Za-z]+$/.test(t) && /[rR]/.test(t)); })) {
+    if (cmd0 === 'grep' && words.slice(1).some(w => { const t = stripOuterQuotes(w); return /^--(?:rec|dereference-rec|dir)/.test(t) || (/^-[A-Za-z]+/.test(t) && /[rRd]/.test(t.replace(/^-/, '').replace(/[^A-Za-z].*$/, ''))); })) {
       const dirs = words.slice(2).map(w => stripOuterQuotes(w)).filter(w => !w.startsWith('-') && !GLOB_CHARS.test(w)).map(w => resolvePathArg(w, vcwd, userHome, opts.msys))
         .filter(p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
       if ((dirs.length ? dirs : [vcwd]).some(dirHoldsCredentialFile))

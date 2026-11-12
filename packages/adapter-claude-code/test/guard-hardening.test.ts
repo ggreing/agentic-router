@@ -38,7 +38,7 @@ test('Bash is never answered with allow: a command that is not denied gets no de
   try {
     for (const command of [
       'npm test', 'git status', 'git diff --stat', 'ls -la src', 'cat src/a.ts', 'cat README.md package.json', 'head -n 20 src/a.ts',
-      'grep -n "foo bar" src/a.ts', 'rg -n "TODO" src', 'git commit -m "fix: handle the empty case (#12)"', 'git add .', 'git add src/a.ts',
+      'grep -n "foo bar" src/a.ts', 'rg -n "TODO" src', 'git commit -m "fix: handle the empty case (#12)"', 'git add src/a.ts',
       'cd src && ls', 'npx tsc --noEmit', 'node --test src/x.test.js', 'npm install left-pad', 'npm install @scope/pkg@^1.2.3', 'npm ci',
       'pip install requests==2.31.0', 'pip install -r requirements.txt', 'find . -name "*.ts"', 'ls *.md', 'cat .env.example', 'git show HEAD:src/a.ts',
       'echo done 2>&1', 'npm test > /dev/null', 'git log --oneline -n 5', 'wc -l src/a.ts', 'sort -n src/a.ts', 'test -f src/a.ts',
@@ -514,5 +514,166 @@ test('a file tool given a Git Bash path is refused with the Windows path to use 
     assert.ok(call(w, 'Read', { file_path: 'src/a.ts' }) === null || call(w, 'Read', { file_path: 'src/a.ts' })!.allow !== undefined);
     const driveForm = '/' + w.repo[0]!.toLowerCase() + w.repo.slice(2).replace(/\\/g, '/') + '/src/a.ts';
     assert.ok(call(w, 'Read', { file_path: driveForm })!.allow, 'the /c/... form is still understood');
+  } finally { done(w); }
+});
+
+// Deep pass over the option lists and path spellings (after the delta audit).
+test('shellWord: a word as bash passes it on', () => {
+  const w = guard.shellWord;
+  assert.equal(w('.en""v'), '.env');
+  assert.equal(w(".e'n'v"), '.env');
+  assert.equal(w('.e\\nv'), '.env');
+  assert.equal(w('".e"nv'), '.env');
+  assert.equal(w('--no-ver""ify'), '--no-verify');
+  assert.equal(w('"a b"'), 'a b');
+  assert.equal(w("'a\\b'"), 'a\\b', 'single quotes keep a backslash');
+  assert.equal(w('"a\\b"'), 'a\\b', 'double quotes keep a backslash before an ordinary character');
+  assert.equal(w('"a\\"b"'), 'a"b');
+  assert.equal(w('"a\\\\b"'), 'a\\b');
+  assert.equal(w('C:\\Users\\x'), 'C:Usersx', 'unquoted backslashes are escapes, as in bash');
+  assert.equal(w("'C:\\Users\\x'"), 'C:\\Users\\x');
+  assert.equal(w('""'), '');
+  assert.equal(w('a\\ b'), 'a b');
+});
+
+test('quotes and escapes inside a word do not hide a credential file or a refused option', () => {
+  const w = world();
+  try {
+    const H = w.home.replace(/\\/g, '/');
+    const denied: Array<[string, RegExp]> = [
+      ['cat .e\\nv', /credential/], ['cat \\.env', /credential/], ['cat .en""v', /credential/], ["cat .e'n'v", /credential/], ['cat ".e"nv', /credential/],
+      [`cat ${H}/.s""sh/id_rsa`, /credential/], [`cat ${H}/.agentic-rou""ter/token`, /credential|state folder/],
+      ['git show HEAD:.e""nv', /credential/], ['git show :.e\\nv', /credential/],
+      ['git commit --no-ver""ify -m x', /option/], ['git commit --no-verif\\y -m x', /option/], ['git commit "--no-verify" -m x', /option/],
+      ['sort -""o out.txt src/a.ts', /option/], ['sort --out""put=out.txt src/a.ts', /option/], ['sort --outpu\\t=out.txt src/a.ts', /option/],
+      ["find . -ex'e'c cat {} +", /option/], ['find . "-delete"', /option/], ["git grep --open-files-in-pa'g'er=x y", /option/],
+      ['c""at .env', /credential/], ['c""url http://127.0.0.1:9/x', /allowlist/],['"cu"rl http://127.0.0.1:9/x', /allowlist/], ['\\curl http://127.0.0.1:9/x', /allowlist/], ['"" cat src/a.ts', /allowlist/],
+      ['git "pu"sh', /allowlist/], ['npm r""un env', /environment/],
+    ];
+    for (const [command, why] of denied) assert.match(bash(w, command)?.deny ?? '(not denied)', why, command);
+    // the same .env read, confirmed against a real shell where one is available: each spelling is the file .env
+    const r = spawnSync('bash', ['-c', 'cat .en""v; cat .e\\nv; cat ".e"nv'], { cwd: w.repo, encoding: 'utf8' });
+    if (r.status === 0) assert.equal(r.stdout, 'FAKE=1\nFAKE=1\nFAKE=1\n');
+    // quoting that changes nothing is still fine
+    for (const command of ["cat 'src/a.ts'", 'ls -la "src"', 'git commit -m "fix: it\'s done (#12)"', "git log --format='%h %s'", "grep -n 'a\\|b' src/a.ts", "rg -n 'foo\\.bar' src",
+      'echo "done: 3 files"', "find . -name '*.ts'", 'git commit -m \'cost is $5\'', 'git add "src/a.ts"'])
+      assert.equal(bash(w, command), null, command);
+  } finally { done(w); }
+});
+
+test('values attached to a short option, and paths under /proc and /dev', () => {
+  const w = world();
+  try {
+    const H = w.home.replace(/\\/g, '/');
+    for (const command of ['grep -f.env src/a.ts', 'git grep -f.env x', `git commit -F${H}/.ssh/id_rsa`, `git blame -S${H}/.ssh/id_rsa src/a.ts`, 'grep -nf./.env src/a.ts', `head -c5 -q${H}/.ssh/id_rsa`])
+      assert.match(bash(w, command)?.deny ?? '(not denied)', /credential/, command);
+    for (const command of ['cat /proc/self/cwd/.env', 'cat /proc/self/root/home/u/.ssh/id_rsa', 'cat /proc/1/cwd/x', 'cat /dev/clipboard', 'cat /dev/fd/0', 'head /dev/sda', 'cat //proc/self/environ', 'ls /proc'])
+      assert.match(bash(w, command)?.deny ?? '(not denied)', /\/proc or \/dev|credential/, command);
+    for (const command of ['cat /dev/null', 'npm test > /dev/null', 'grep -n5 foo src/a.ts', 'head -n20 src/a.ts', 'grep -e.ts src/a.ts', 'rg -g*.ts foo src', 'git log -n5'])
+      assert.equal(bash(w, command), null, command);
+  } finally { done(w); }
+});
+
+test('options that open an editor, run a program or install outside the repository', () => {
+  const w = world();
+  try {
+    for (const command of [
+      'git add -e', 'git add --edit', 'git add -i', 'git add --interactive', 'git add -p', 'git add --patch', 'git add -up',
+      'git commit', 'git commit -a', 'git commit -e -m x', 'git commit --amend -m x', 'git commit --amend --no-edit', 'git commit -p -m x', 'git commit --edit -m x',
+      "rg --hostname-bin ./src/x --hyperlink-format 'file://{host}{path}' a", 'rg --hostname-bin=./src/x a',
+      'git add --chmod=+x src/a.ts', 'git commit --reedit-message=HEAD', 'git commit -c HEAD', 'git commit --reset-author -m x', 'git commit --no-post-rewrite -m x',
+      'git grep --textconv x', 'git stash list -p --output=out.txt', 'git stash list --ext-diff', 'git branch --show-current -D main', 'git branch --show-current --edit-description',
+      'sort -T /x src/a.ts', 'sort --temporary-directory=/x src/a.ts', 'diff -l src/a.ts README.md', 'diff --paginate src/a.ts README.md', 'tail -f src/a.ts', 'tail -n5 -F src/a.ts', 'tail --follow=name src/a.ts',
+      'npm install -g left-pad', 'npm i --global left-pad', 'npm install --location=global left-pad', 'npm install --prefix /somewhere left-pad', 'npm ci --userconfig=x',
+      'pnpm add -g zod', 'pnpm install --dir /x', 'yarn add --cwd /x react', 'pip install --target /somewhere requests', 'pip install -t /x requests', 'pip install --user requests', 'pip install --prefix=/x requests',
+    ]) assert.ok(bash(w, command)?.deny, command);
+    for (const command of ['git add src/a.ts', 'git add -u', 'git add -f src/a.ts', 'git commit -m x', 'git commit -am "x"', 'git commit --message=x', 'git commit -F msg.txt', 'git commit -C HEAD',
+      'npm install left-pad', 'npm i -D typescript', 'npm ci', 'pnpm add zod', 'yarn add react', 'pip install requests', 'pip install -e .', 'rg -n foo src',
+      'git branch --show-current', 'git stash list', 'git stash list --stat', 'sort -t, -k2 src/a.ts', 'diff -u src/a.ts README.md', 'tail -n 20 src/a.ts', 'git grep -n foo'])
+      assert.equal(bash(w, command), null, command);
+  } finally { done(w); }
+});
+
+test('git add of a directory, or of everything, is refused where it would stage a credential file', () => {
+  const w = world();
+  try {
+    // the fixture's .env is not ignored
+    for (const command of ['git add -A', 'git add --all', 'git add .', 'git add -Av', 'cd src && git add ..', 'git add -A src/..'])
+      assert.match(bash(w, command)?.deny ?? '(not denied)', /would stage \.env, a credential file that git does not ignore/, command);
+    assert.equal(bash(w, 'git add src'), null, 'a directory without one');
+    assert.equal(bash(w, 'git add src/a.ts README.md'), null);
+    fs.writeFileSync(path.join(w.repo, '.gitignore'), '.env\n');
+    for (const command of ['git add -A', 'git add .']) assert.equal(bash(w, command), null, `${command} once .env is ignored`);
+  } finally { done(w); }
+});
+
+test('a recursive grep in every spelling of the option', () => {
+  const w = world();
+  try {
+    for (const command of ['grep -d recurse SECRET .', 'grep --directories recurse SECRET .', 'grep --directories=recurse SECRET .', 'grep -drecurse SECRET .', 'grep --dir=recurse SECRET .', 'grep -nR SECRET .', 'grep --dereference-recursive SECRET .'])
+      assert.match(bash(w, command)?.deny ?? '(not denied)', /recursive grep/, command);
+    assert.equal(bash(w, 'grep -n SECRET src/a.ts'), null);
+  } finally { done(w); }
+});
+
+test('a build, test or install command may not name a protected path', () => {
+  const w = world();
+  try {
+    for (const command of [
+      'go build -o .git/hooks/pre-commit ./cmd/x', 'npx tsc --outDir .git/hooks', 'npx tsc --outFile .github/workflows/x.js', 'npx eslint -o .github/workflows/ci.yml src',
+      'npx prettier --write .github/workflows/ci.yml', 'cargo build --target-dir .git/hooks', 'pytest --junitxml=.github/workflows/x.xml', 'npx tsc --outDir=.claude',
+      'go build -o.git/hooks/pre-commit ./cmd/x', 'npx prettier --write .agentic-router/policy.json', 'cd src && npx tsc --outDir ../.git/hooks', 'make build -C .git', 'npx jest --outputFile=.claude/settings.json',
+    ]) assert.match(bash(w, command)?.deny ?? '(not denied)', /a protected path .* can write files/, command);
+    // the same commands on ordinary paths, and readers on protected paths, are not refused
+    for (const command of ['go build ./...', 'go test ./...', 'go build -o bin/app ./cmd/x', 'npx tsc --outDir dist', 'npx tsc --noEmit', 'npx eslint src', 'npx prettier --check .', 'npx prettier --write src/a.ts',
+      'cargo build', 'pytest -q', 'npm run build', 'cat .github/workflows/ci.yml', 'ls .git', 'git log -- .github/workflows', 'grep -n on .github/workflows/ci.yml', 'npx prettier --check .env.example'])
+      assert.equal(bash(w, command), null, command);
+  } finally { done(w); }
+});
+
+test('path spellings for Bash arguments (Windows)', { skip: !WIN }, () => {
+  const w = world();
+  try {
+    const H = w.home.replace(/\\/g, '/');
+    for (const command of [
+      'cat c:.env', 'cat .ENV', 'cat ./src/../.env', 'cat src/..//.env', "cat '.env '", 'cat .env.', 'cat .env:x', "cat '.env::$DATA'", 'cat .ENV.',
+      `cat //localhost/${H[0]}$/${H.slice(3)}/.ssh/id_rsa`, `cat //127.0.0.1/${H[0]}$/${H.slice(3)}/.ssh/id_rsa`, `cat '\\\\?\\${w.home}\\.ssh\\id_rsa'`, `cat '\\\\.\\${w.home}\\.ssh\\id_rsa'`,
+      `cat ${H}/.SSH/ID_RSA`, `cat ${H}//.ssh///id_rsa`, `cat '${w.home}\\.ssh\\id_rsa'`, `cat ${H.replace(/^([A-Za-z]):/, (_m, d) => `/${d.toLowerCase()}`)}/.ssh/id_rsa`,
+      `cat ${H}/.ssh./id_rsa`, `grep --file=${H}/.SSH/id_rsa x src/a.ts`, `sort --files0-from=${H}/.ssh/id_rsa`, `wc --files0-from='${w.home}\\.ssh\\id_rsa'`,
+      `git blame --contents ${H}/.ssh/id_rsa src/a.ts`, `head -n1 ${H}/.agentic-router/TOKEN`, `cat ${H}/.AGENTIC-ROUTER/token`,
+    ]) assert.ok(bash(w, command)?.deny, command);
+  } finally { done(w); }
+});
+
+test('path spellings for the file tools: UNC, extended-length, short names, streams, case, trailing dots, mixed slashes (Windows)', { skip: !WIN }, () => {
+  const w = world();
+  try {
+    fs.mkdirSync(path.join(w.repo, '.github', 'workflows'), { recursive: true });
+    fs.mkdirSync(path.join(w.repo, '.claude'));
+    const D = w.repo[0]!, rest = w.repo.slice(3), hrest = w.home.slice(3);
+    const fwd = (p: string) => p.replace(/\\/g, '/');
+    const writes = [
+      path.join(w.repo, '.GITHUB', 'Workflows', 'x.yml'), fwd(w.repo) + '/.github\\workflows/x.yml', path.join(w.repo, 'src', '..', '.github', 'workflows', 'x.yml'),
+      `\\\\localhost\\${D}$\\${rest}\\.github\\workflows\\x.yml`, `\\\\127.0.0.1\\${D}$\\${rest}\\.git\\hooks\\pre-commit`, `//localhost/${D}$/${fwd(rest)}/.claude/settings.json`,
+      `\\\\?\\${w.repo}\\.github\\workflows\\x.yml`, `\\\\.\\${w.repo}\\.git\\config`, `\\\\?\\UNC\\localhost\\${D}$\\${rest}\\.git\\config`,
+      path.join(w.repo, '.git.', 'hooks', 'x'), path.join(w.repo, '.git ', 'hooks', 'x'), path.join(w.repo, '.github', 'workflows.', 'x.yml'), path.join(w.repo, '.claude', 'settings.json.'),
+      path.join(w.repo, '.git::$INDEX_ALLOCATION', 'hooks', 'x'), path.join(w.repo, '.github', 'workflows', 'x.yml::$DATA'), path.join(w.repo, '.github', 'workflows', 'x.yml:s'),
+      path.join(w.repo, 'GIT~1', 'hooks', 'x'), path.join(w.repo, 'GITHUB~1', 'WORKFL~1', 'x.yml'), path.join(w.repo, 'CLAUDE~1', 'settings.json'),
+      path.join(w.repo, '.ENV'), path.join(w.repo, '.env.'), path.join(w.repo, '.env '), path.join(w.repo, 'src', '.Env.Local'),
+      path.join(w.home, '.SSH', 'authorized_keys'), `\\\\localhost\\${D}$\\${hrest}\\.ssh\\authorized_keys`, path.join(w.state, 'TOKEN'), path.join(w.home, '.AGENTIC-ROUTER', 'agents', 'ag2.json'),
+      path.join(w.repo, '.Mcp.Json'), path.join(w.repo, 'claude.MD'), path.join(w.repo, '.HUSKY', 'pre-commit'),
+    ];
+    for (const p of writes) assert.ok(call(w, 'Write', { file_path: p, content: 'x' }, 'ag2')?.deny, `write ${p}`);
+    const reads = [
+      path.join(w.repo, '.ENV'), `\\\\localhost\\${D}$\\${rest}\\.env`, `\\\\?\\${w.repo}\\.env`, path.join(w.repo, '.env.'), path.join(w.repo, '.env::$DATA'), path.join(w.repo, 'src', '..', '.env'),
+      path.join(w.home, '.SSH', 'ID_RSA'), `\\\\127.0.0.1\\${D}$\\${hrest}\\.ssh\\id_rsa`, `//localhost/${D}$/${fwd(hrest)}/.ssh/id_rsa`, `\\\\?\\${w.home}\\.ssh\\id_rsa`, path.join(w.home, 'SSH~1', 'id_rsa'),
+      path.join(w.state, 'Token'), `\\\\localhost\\${D}$\\${hrest}\\.agentic-router\\token`, fwd(w.home) + '/.ssh\\id_rsa',
+    ];
+    for (const p of reads) assert.ok(call(w, 'Read', { file_path: p })?.deny, `read ${p}`);
+    for (const p of [path.join(w.home, '.ssh'), `\\\\localhost\\${D}$\\${hrest}\\.ssh`, w.state, w.home])
+      for (const tool of ['Grep', 'Glob']) assert.ok(call(w, tool, { pattern: 'x', path: p })?.deny, `${tool} ${p}`);
+    // the ordinary spellings of an ordinary file are fine
+    assert.ok(call(w, 'Write', { file_path: fwd(w.repo) + '/src\\b.ts', content: 'x' }, 'ag2')!.allow);
+    assert.ok(call(w, 'Read', { file_path: path.join(w.repo, 'SRC', 'A.TS') })!.allow);
   } finally { done(w); }
 });
