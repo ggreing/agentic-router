@@ -30,6 +30,40 @@ test('guard policy constants equal core/security.ts', () => {
   assert.deepEqual(guard.PACKAGE_INSTALL_PREFIXES, core.PACKAGE_INSTALL_PREFIXES);
   assert.deepEqual(guard.ROUTER_BASH_ALLOW, core.ROUTER_BASH_ALLOW);
   assert.deepEqual(guard.ROUTER_BASH_DENY_OPTIONS, core.ROUTER_BASH_DENY_OPTIONS);
+  assert.equal(guard.ROUTER_TOOL_PREFIX, core.ROUTER_TOOL_PREFIX);
+  assert.deepEqual(guard.ROUTER_TOOL_NAMES, [...core.ROUTER_TOOL_NAMES]);
+  assert.deepEqual(guard.NEVER_GRANTABLE_WRITE_PATHS, [...core.NEVER_GRANTABLE_WRITE_PATHS]);
+});
+
+// ---------------------------------------------------------------- router MCP tools + grants (decisions 127-130)
+test('router subagents are denied router MCP tools locally (daemon-off defence)', () => {
+  const name = core.ROUTER_TOOL_PREFIX + 'router_get_plan';
+  assert.match(guard.evaluate({ agent_type: CODER, tool_name: name, tool_input: {} })!.deny, /lead only/);
+  // the lead / non-router agents are not a router subagent, so the guard stays silent (the daemon decides)
+  assert.equal(guard.evaluate({ agent_type: 'Explore', tool_name: name, tool_input: {} }), null);
+});
+
+test('decideWrite honours protectedGranted, but never .git / .agentic-router', () => {
+  const base = { outsideRepo: false, allowed: ['src/**'], unscoped: false, userHome: os.homedir() };
+  // without a grant, a protected path is refused
+  assert.match(guard.decideWrite({ ...base, rel: '.github/workflows/ci.yml' })!, /protected path/);
+  // a matching grant opens it
+  assert.equal(guard.decideWrite({ ...base, rel: '.github/workflows/ci.yml', protectedGranted: ['.github/workflows/**'] }), null);
+  // a grant can also widen an ordinary out-of-scope path
+  assert.equal(guard.decideWrite({ ...base, rel: 'docs/x.md', protectedGranted: ['docs/**'] }), null);
+  // .git and .agentic-router are never grantable, even with a matching grant glob
+  assert.match(guard.decideWrite({ ...base, rel: '.git/hooks/pre-commit', protectedGranted: ['.git/**', '**'] })!, /protected path/);
+  assert.match(guard.decideWrite({ ...base, rel: '.agentic-router/policy.json', protectedGranted: ['**'] })!, /protected path/);
+});
+
+test('subagents may not read the router state folder (proxy-token) or run the proxy bin', () => {
+  const HOME = fs.realpathSync(tmp('ar-home-'));
+  const stateHome = fs.realpathSync(tmp('ar-state-'));
+  const repo = initRepo();
+  const readToken = guard.evaluate({ agent_type: CODER, tool_name: 'Read', cwd: repo, tool_input: { file_path: path.join(stateHome, 'proxy-token') } }, { userHome: HOME, routerHome: stateHome });
+  assert.match(readToken!.deny, /router state folder|proxy-token/);
+  const runProxy = guard.evaluate({ agent_type: CODER, tool_name: 'Bash', cwd: repo, tool_input: { command: 'node packages/proxy/bin/supervise.mjs' } }, { userHome: HOME, routerHome: stateHome });
+  assert.ok(runProxy!.deny, 'running a proxy bin is denied');
 });
 test('guard scopeKey / safeName match core (incl. hash suffix and 40-char slices)', () => {
   for (const [sid, tag] of [['s/1', 'A B'], ['x'.repeat(80), 'tag/weird:*'.repeat(5)], ['sess', '']] as Array<[string, string]>) {

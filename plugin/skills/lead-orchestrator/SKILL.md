@@ -112,3 +112,13 @@ Whenever you ask the user to choose or confirm — a HITL stop, a scope-widening
 ```
 
 The user's next message is then treated as the answer to this request, not a new request. To continue a stopped subtask afterwards, the user runs `/router resume` (see the `router` skill).
+
+## Router tools (optional)
+
+The router exposes five MCP tools for **you, the lead** (never the workers). Tool search defers them, so call them **by name**; they are optional — the hooks are the system of record and everything works if you never call one, and if the daemon is down a tool just returns an error and you continue.
+
+- **`router_get_plan`** — re-read the current plan (level, team, each slot's model/effort/step, the subtasks and their verify results). Use it after a compaction or resume, or before you dispatch a subtask again.
+- **`router_report_triage`** — report your own size judgement (`direct`/`team`, level, files, confidence) **before** the first subtask is dispatched. The router records it and re-plans upward if you judge the request larger than planned.
+- **`router_report_result`** — accept or reject a finished subtask. When a reviewer or tester judged it, pass their verdict on: `by: "reviewer"` (or `"tester"`), `bySubtaskId` = the reviewer's subtask ID, and `margin` exactly as their report says (`easy` or `normal`). Do not set `margin: "easy"` on your own judgement; it is not counted. Two easy results in a row let the router run that slot one step lower. Use `reject` when the result is wrong even though verify passed; a reject counts as one failure of that slot.
+- **`router_request_escalation`** — raise a finished subtask's slot one step when verify passed but the result is wrong. Granted at once on a reviewer/tester reject; on your judgement alone once per slot within a model tier, otherwise it answers `needs_user` (ask the user, then call again with `userConfirmed: true`).
+- **`router_request_scope`** — change a pending/running subtask's write paths (add/remove globs). A protected path needs the user's confirmation first; `.git`, `.agentic-router` and credential paths are never grantable.

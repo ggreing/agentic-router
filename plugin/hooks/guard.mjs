@@ -74,6 +74,15 @@ export const ROUTER_AGENT_PREFIX = 'agentic-router:';
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
+// Router MCP tools are lead-only; a router subagent must never call them (mirror of core/tools.ts).
+export const ROUTER_TOOL_PREFIX = 'mcp__plugin_agentic-router_router__';
+export const ROUTER_TOOL_NAMES = [
+  'router_get_plan', 'router_report_triage', 'router_report_result', 'router_request_escalation', 'router_request_scope',
+];
+export const isRouterToolName = (toolName) => typeof toolName === 'string' && toolName.startsWith(ROUTER_TOOL_PREFIX);
+// Protected write paths a user grant can never open (decision 129; mirror of core NEVER_GRANTABLE_WRITE_PATHS).
+export const NEVER_GRANTABLE_WRITE_PATHS = ['.git/**', '**/.git/**', '.agentic-router/**', '**/.agentic-router/**'];
+
 const DENY_NOT_ALLOWED = 'this command is not on the router\'s Bash allowlist; ask the lead (the lead can run it, or the user can add it to .agentic-router/policy.json).';
 
 // ---------------------------------------------------------------- paths (mirror of core/paths.ts)
@@ -367,6 +376,8 @@ export function classifyBash(command, opts = {}) {
       const abs = resolvePathArg(raw, vcwd, userHome);
       if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
       if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
+      if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
+        return 'this command touches the router proxy binaries, which is not allowed.';
     }
     if (cmd0 === 'git' && words.includes('-c')) return 'git -c is not allowed (it can run arbitrary config or hooks).';
 
@@ -424,11 +435,24 @@ export function isProtectedPath(rel, extraProtected = []) {
   return [...PROTECTED_WRITE_PATHS, ...extraProtected].some(p => globToRegExp(normRel(p), true).test(r));
 }
 
+/** A protected path a user grant can NEVER open (.git, .agentic-router). Credential paths are refused on
+ *  their own before decideWrite. ALWAYS case-insensitive. */
+export function isNeverGrantable(rel) {
+  const r = normRel(rel);
+  return NEVER_GRANTABLE_WRITE_PATHS.some(p => globToRegExp(normRel(p), true).test(r));
+}
+
 export function decideWrite(a) {
-  if (!a.outsideRepo && isProtectedPath(a.rel, a.extraProtected || []))
+  // A user-granted scope (decision 129) opens a protected or out-of-scope path — never .git/.agentic-router.
+  const granted = Array.isArray(a.protectedGranted) && a.protectedGranted.length > 0;
+  const grantCovers = (rel) => granted && !isNeverGrantable(rel) && matchesAny(rel, a.protectedGranted, a.userHome ?? os.homedir());
+  if (!a.outsideRepo && isProtectedPath(a.rel, a.extraProtected || [])) {
+    if (grantCovers(a.rel)) return null;
     return `${a.rel} is a protected path (.env, CI config, .claude, .git, .agentic-router, …) and needs user confirmation; add it to your report's "scope request" line instead of editing it`;
+  }
   if (a.outsideRepo)
     return 'writing outside the repository root is not allowed; stay within your worktree';
+  if (grantCovers(a.rel)) return null;
   if (a.allowed && !a.unscoped && !inScope(a.rel, a.allowed, a.platform ?? process.platform))
     return `${a.rel} is outside your allowed paths (${a.allowed.join(', ')}); add it to your report's "scope request" line instead of editing it`;
   return null;
@@ -465,6 +489,7 @@ function normalizeScope(s, confirmed) {
     allowed: Array.isArray(s.allowed) ? s.allowed : null,
     unscoped: s.unscoped === true || !Array.isArray(s.allowed),
     extraProtected: Array.isArray(s.protected) ? s.protected : [],
+    protectedGranted: Array.isArray(s.protectedGranted) ? s.protectedGranted : [],   // decision 129 grants
     confirmed,                       // true when a real scope record/file was read (vs fail-open)
   };
 }
@@ -472,7 +497,7 @@ function normalizeScope(s, confirmed) {
 function scopeFromFile(sessionId, subtaskId, home) {
   let text;
   try { text = fs.readFileSync(path.join(home, 'scopes', `${scopeKey(sessionId, subtaskId)}.json`), 'utf8'); }
-  catch { return { allowed: null, unscoped: true, extraProtected: [], confirmed: false }; }   // missing: fail-open
+  catch { return { allowed: null, unscoped: true, extraProtected: [], protectedGranted: [], confirmed: false }; }   // missing: fail-open
   return normalizeScope(JSON.parse(text), true);                           // corrupt: throw -> fail-closed deny
 }
 /**
@@ -495,7 +520,7 @@ export function loadScope(hookInput, home) {
   }
   const subtaskId = resolveSubtaskId(hookInput, home);
   if (!subtaskId || typeof hookInput.session_id !== 'string')
-    return { allowed: null, unscoped: true, extraProtected: [], confirmed: false };
+    return { allowed: null, unscoped: true, extraProtected: [], protectedGranted: [], confirmed: false };
   return scopeFromFile(hookInput.session_id, subtaskId, home);
 }
 
@@ -544,15 +569,20 @@ export function evaluate(hookInput, opts = {}) {
   const tool = hookInput.tool_name || '';
   const input = (hookInput.tool_input && typeof hookInput.tool_input === 'object') ? hookInput.tool_input : {};
 
+  // Router MCP tools are lead-only; a router subagent must never call them (decision 127). The daemon
+  // also denies these from a subagent, but this is the local defence when the daemon is down.
+  if (isRouterToolName(tool)) return { deny: '[router] blocked: router MCP tools are for the lead only; a subagent may not call them.' };
+
   // D7 (decision 102): router workers use Bash only; a PowerShell/pwsh tool call is always refused.
   if (tool === 'PowerShell' || tool === 'Pwsh') return { deny: '[router] blocked: router workers use Bash only, not PowerShell.' };
 
   const cwd = typeof hookInput.cwd === 'string' ? hookInput.cwd : process.cwd();
   const root = gitRoot(cwd);
+  const proxyBinDir = path.join(root, 'packages', 'proxy', 'bin');   // subagents may not run the proxy (decision 130)
 
   if (tool === 'Bash') {
     const command = input.command || '';
-    const reason = classifyBash(command, { userHome, routerHome: stateHome, bashAllow: projectBashAllow(root), cwd });
+    const reason = classifyBash(command, { userHome, routerHome: stateHome, bashAllow: projectBashAllow(root), cwd, denyExec: [proxyBinDir] });
     if (reason) return { deny: `[router] ${reason}` };
     if (runsPackageScript(command) && packageScriptsChanged(root))
       return { deny: '[router] package.json scripts changed from HEAD; the lead or user must confirm before running npm/pnpm/yarn scripts.' };
@@ -572,6 +602,10 @@ export function evaluate(hookInput, opts = {}) {
     for (const p of targets)
       if (matchesPath(p, CREDENTIAL_PATHS, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be read.` };
+    // The router state folder holds the local token and the proxy token (decision 130); off-limits to subagents.
+    for (const p of targets)
+      if (isUnder(p, stateHome))
+        return { deny: `[router] blocked: ${toPosix(p)} is inside the router state folder (incl. proxy-token) and may not be read.` };
     // D1 detail: allow (skip the prompt) only when every target is inside the repo; an out-of-repo read
     // (even a non-credential one, e.g. ~/Documents) is left to Claude Code's normal confirmation.
     return targets.every(p => isUnder(p, root)) ? { allow: '[router] checked: in-repo, not a credential path' } : null;
@@ -587,7 +621,7 @@ export function evaluate(hookInput, opts = {}) {
       const relRaw = path.relative(canonicalForms(root)[0], canonicalForms(p)[0]);
       const rel = toPosix(relRaw);
       const outsideRepo = rel === '' ? false : (rel.startsWith('..') || path.isAbsolute(relRaw) || /^[A-Za-z]:/.test(rel));
-      const reason = decideWrite({ rel, outsideRepo, allowed: scope.allowed, unscoped: scope.unscoped, extraProtected: scope.extraProtected, userHome });
+      const reason = decideWrite({ rel, outsideRepo, allowed: scope.allowed, unscoped: scope.unscoped, extraProtected: scope.extraProtected, protectedGranted: scope.protectedGranted, userHome });
       if (reason) return { deny: `[router] ${reason}` };
     }
     // D1: allow (skip the prompt) only when the scope is CONFIRMED; on the fail-open path (no scope

@@ -2,6 +2,7 @@
 name: coder
 description: 작업자. 명세에 따라 허용 경로 안에서 코드를 구현하고 빌드·테스트를 확인한다. Agentic Router 총괄이 프롬프트 첫 줄에 [subtask:<ID>]를 붙여 부를 때만 사용한다.
 tools: Read, Edit, Write, Bash, Grep, Glob
+disallowedTools: mcp__plugin_agentic-router_router__*
 model: haiku
 effort: low
 maxTurns: 40

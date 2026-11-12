@@ -2,6 +2,7 @@
 name: architect
 description: 설계자. 아키텍처·모듈 구조·API/DB 스키마를 설계하고 하위 작업 명세를 쓴다. Agentic Router 총괄이 프롬프트 첫 줄에 [subtask:<ID>]를 붙여 부를 때만 사용한다.
 tools: Read, Grep, Glob, Write, Edit
+disallowedTools: mcp__plugin_agentic-router_router__*
 model: sonnet
 effort: medium
 maxTurns: 30

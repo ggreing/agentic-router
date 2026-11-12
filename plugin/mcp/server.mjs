@@ -29,7 +29,7 @@ const LATEST_VERSION = SUPPORTED_VERSIONS[0];
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 function serverVersion() {
-  try { return JSON.parse(fs.readFileSync(path.join(HERE, '..', 'plugin.json'), 'utf8')).version || '0.0.0'; }
+  try { return JSON.parse(fs.readFileSync(path.join(HERE, '..', '.claude-plugin', 'plugin.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 
@@ -117,10 +117,13 @@ async function callTool(params) {
   const token = readToken(home);
   const port = cfg && typeof cfg.daemonPort === 'number' ? cfg.daemonPort : null;
   if (!port || !token) return unreachableResult();   // before init / no daemon
-  const body = JSON.stringify({
-    tool: name, input, meta: (params && params._meta) ?? null,
-    bind: { instanceId: INSTANCE_ID, spawnSessionId: process.env.CLAUDE_CODE_SESSION_ID ?? null, projectDir: process.env.CLAUDE_PROJECT_DIR ?? null },
-  });
+  // Match core RouterToolCall: omit optional fields rather than sending null (strict schema).
+  const bind = { instanceId: INSTANCE_ID };
+  if (process.env.CLAUDE_CODE_SESSION_ID) bind.spawnSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  if (process.env.CLAUDE_PROJECT_DIR) bind.projectDir = process.env.CLAUDE_PROJECT_DIR;
+  const payload = { tool: name, input, bind };
+  if (params && params._meta && typeof params._meta === 'object') payload.meta = params._meta;
+  const body = JSON.stringify(payload);
   try { return mapDaemonReply(await post({ port, token, body, timeoutMs: CALL_TIMEOUT_MS })); }
   catch { return unreachableResult(); }
 }

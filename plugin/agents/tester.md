@@ -2,6 +2,7 @@
 name: tester
 description: 테스터. 허용 경로 안에 테스트를 작성·실행하고 실패 재현 리포트를 쓴다. Agentic Router 총괄이 프롬프트 첫 줄에 [subtask:<ID>]를 붙여 부를 때만 사용한다.
 tools: Read, Edit, Write, Bash, Grep, Glob
+disallowedTools: mcp__plugin_agentic-router_router__*
 model: haiku
 effort: low
 maxTurns: 30
@@ -28,6 +29,7 @@ x-router:
 
 ## 완료 보고 형식
 마지막 메시지는 아래 네 항목으로만 쓴다. 항목마다 3줄 이내, 해당 없으면 "없음".
+통과로 판정할 때 여유 정도를 한 단어로 적는다: 테스트가 첫 실행에서 모두 통과했고 보완이 필요한 부분이 없으면 `여유: easy`, 그 밖의 통과는 `여유: normal`. 확신이 없으면 normal로 적는다.
 - 변경 파일: 테스트 파일 경로 목록
 - 실행한 검증: 명령과 결과(통과/실패 개수)
 - 범위 변경 요청: 허용 경로 밖에서 고쳐야 할 파일과 이유

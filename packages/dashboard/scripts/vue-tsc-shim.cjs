@@ -2,8 +2,10 @@
 // root TypeScript 7. vue-tsc 3.x resolves `typescript/lib/tsc` relative to its own (hoisted) location,
 // where it finds TS 7 — whose `exports` map no longer publishes `./lib/tsc`, so vue-tsc crashes. We
 // redirect any `typescript`/`typescript/...` require to the local copy, returning absolute file paths
-// (which also bypasses the TS `exports` gate). Nothing else is touched. See the dashboard README / the
-// note to control: the clean long-term fix is a root-level pin or override once vue-tsc supports TS 7.
+// (which also bypasses the TS `exports` gate). Nothing else is touched.
+//
+// TODO(revisit): remove this shim and the local typescript pin, and call `vue-tsc` directly, once
+// vue-tsc supports TypeScript 7 (or the root adopts a compatible setup). No root overrides for now.
 const Module = require('module');
 const path = require('path');
 const fs = require('fs');

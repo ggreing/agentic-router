@@ -2,6 +2,7 @@
 name: ui-designer
 description: UI 디자이너. 화면 구성·컴포넌트·스타일·사용자 흐름을 설계하고 허용 경로 안의 프론트엔드 파일에 마크업 초안을 쓴다. Agentic Router 총괄이 프롬프트 첫 줄에 [subtask:<ID>]를 붙여 부를 때만 사용한다.
 tools: Read, Grep, Glob, Write, Edit
+disallowedTools: mcp__plugin_agentic-router_router__*
 model: sonnet
 effort: medium
 maxTurns: 30

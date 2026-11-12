@@ -33,6 +33,19 @@ test('every role file parses, names a tool list, and omits Agent/Task/WebFetch/W
   }
 });
 
+test('no role grants an mcp__ tool, and each disallows the router tools (decision 127)', () => {
+  const files = roleFiles();
+  if (files.length === 0) { assert.ok(true, 'no role files yet'); return; }
+  for (const f of files) {
+    const text = fs.readFileSync(f, 'utf8');
+    const role = parseRoleFile(text);
+    const base = path.basename(f);
+    for (const t of role.tools)
+      assert.ok(!t.startsWith('mcp__'), `${base}: must not grant an MCP tool (${t})`);
+    assert.match(text, /^disallowedTools:\s*mcp__plugin_agentic-router_router__\*/m, `${base}: must disallow the router MCP tools`);
+  }
+});
+
 test('once all five role files exist, each router role is covered exactly once', () => {
   const files = roleFiles();
   if (files.length < ROLES.length) {
