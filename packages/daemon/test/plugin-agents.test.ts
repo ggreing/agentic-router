@@ -68,8 +68,11 @@ test('decision 139: role files, skills and hooks are English; the report items l
   assert.match(skill, /report's "scope request" line/);
   assert.match(guard, /add it to your report's "scope request" line/);
   assert.match(router, /list them under "Scope request" in your report/);
-  // the margin the lead passes on to router_report_result is the word after "Margin:" in the reviewer's or tester's report
-  assert.match(skill, /`margin` exactly as their report says \(`easy` or `normal`\)/);
+  // decision 145: the router reads the reviewer's/tester's verdict and margin from their report, so the skill
+  // no longer tells the lead to pass them, and router tools are loaded with ToolSearch before being called.
+  assert.doesNotMatch(skill, /call them \*\*by name\*\*|call them by name/);
+  assert.match(skill, /load one with ToolSearch/);
+  assert.match(skill, /verdict and margin are read by the router from their report/);
   // decision 145: reviewer and tester open the last message with the two lines the daemon reads at
   // SubagentStop, in exactly this form; the parser relies on these substrings.
   for (const role of ['reviewer', 'tester'] as const) {
