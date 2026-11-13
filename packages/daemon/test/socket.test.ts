@@ -200,15 +200,38 @@ test('a directory that is not the user\'s alone gets no socket: TCP with sealed 
     assert.equal(privateDir(path.join(base, 'file'), uid, false), false);
     fs.writeFileSync(path.join(base, 'file'), '');
     assert.equal(privateDir(path.join(base, 'file'), uid, true), false, 'not a directory');
-    // a home too long for a socket path, with a fallback place that someone else prepared: no socket at all
-    const longHome = path.join(base, 'h'.repeat(110));
-    const taken = socketCandidates(longHome, { env: { XDG_RUNTIME_DIR: base }, tmpdir: base })[0]!;
-    fs.mkdirSync(taken.dir, { mode: 0o777 }); fs.chmodSync(taken.dir, 0o777);
-    assert.equal(socketLocation(longHome, { env: { XDG_RUNTIME_DIR: base }, tmpdir: base }), undefined, 'the prepared directory is refused');
-    fs.rmSync(taken.dir, { recursive: true });
-    const made = socketLocation(longHome, { env: { XDG_RUNTIME_DIR: base }, tmpdir: base })!;
-    assert.deepEqual([made.fallback, fs.statSync(made.dir).mode & 0o777], [true, 0o700], 'free: the daemon makes its own');
+    // a home too long for a socket path, with a fallback place that someone else prepared: no socket at all.
+    // The fallback base is a short directory straight under /tmp: the per-test temp directory is itself too
+    // long for a socket path on macOS (/var/folders/…/T/…), which would leave no candidate to test.
+    const short = fs.realpathSync(fs.mkdtempSync('/tmp/ar-'));
+    try {
+      const longHome = path.join(base, 'h'.repeat(110));
+      const where = { env: { XDG_RUNTIME_DIR: short }, tmpdir: short };
+      const candidates = socketCandidates(longHome, where);
+      assert.equal(candidates.length, 1, `one fallback place fits (${candidates.map(c => c.path).join(', ')})`);
+      const taken = candidates[0]!;
+      assert.ok(taken.fallback && Buffer.byteLength(taken.path) <= sunPathMax());
+      fs.mkdirSync(taken.dir, { mode: 0o777 }); fs.chmodSync(taken.dir, 0o777);
+      assert.equal(socketLocation(longHome, where), undefined, 'the prepared directory is refused');
+      fs.rmSync(taken.dir, { recursive: true });
+      const made = socketLocation(longHome, where)!;
+      assert.deepEqual([made.fallback, fs.statSync(made.dir).mode & 0o777], [true, 0o700], 'free: the daemon makes its own');
+      // every candidate too long for the system: there is no place, whatever exists on disk
+      const far = { env: { XDG_RUNTIME_DIR: path.join(short, 'r'.repeat(100)) }, tmpdir: path.join(short, 't'.repeat(100)) };
+      assert.deepEqual(socketCandidates(longHome, far), []);
+      assert.equal(socketLocation(longHome, far), undefined);
+    } finally { rmrf(short); }
   } finally { rmrf(base); }
+  // the paths of a real install fit, on both systems: the home of an ordinary account, and the fallback under
+  // the default macOS temp directory (the longest default there is) with a ten-digit uid
+  for (const platform of ['darwin', 'linux'] as const) {
+    const home = platform === 'darwin' ? '/Users/a-rather-long-account-name/.agentic-router' : '/home/a-rather-long-account-name/.agentic-router';
+    assert.equal(socketCandidates(home, { platform, uid: 501, env: {}, tmpdir: '/tmp' })[0]!.fallback, false, `${platform}: the home holds the socket`);
+    const macTmp = '/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T';
+    const fb = socketCandidates('/Users/x/' + 'd'.repeat(100), { platform, uid: 1234567890, env: {}, tmpdir: macTmp });
+    assert.equal(fb.length, 1, `${platform}: the fallback under the default macOS temp directory fits`);
+    assert.ok(Buffer.byteLength(fb[0]!.path) <= sunPathMax(platform), `${fb[0]!.path.length} bytes`);
+  }
   // a home that others could enter is closed by the daemon at start (as before), and then holds the socket
   const openHome = makeHome();
   fs.chmodSync(openHome, 0o755);
@@ -236,6 +259,16 @@ test('a directory that is not the user\'s alone gets no socket: TCP with sealed 
       assert.equal(readEndpoint(home)?.socket, undefined);
     }
     assert.equal((await sealedCall({ home, port: d.port, secret: TOKEN, method: 'GET', path: '/router/v1/health' })).status, 200, 'TCP, sealed');
+    // the same when every candidate path is too long for the system (nothing to do with permissions): TCP, sealed
+    await d.close();
+    d = undefined;
+    process.env.XDG_RUNTIME_DIR = '/' + 'r'.repeat(100); process.env.TMPDIR = '/' + 't'.repeat(100);
+    assert.equal(socketLocation(home), undefined);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: 0, fableOptIn: false, holdoutRate: 0 }));
+    d = await startTestDaemon({ home, verify: { resolveCommands: async () => [] } });
+    assert.deepEqual([d.socketPath, readEndpoint(home)?.socket, readEndpoint(home)?.port], [undefined, undefined, d.port]);
+    assert.equal((await sealedCall({ home, port: d.port, secret: TOKEN, method: 'GET', path: '/router/v1/health' })).status, 200, 'TCP, sealed');
+    assert.equal((await plugin.sealedCall({ home, port: d.port, secret: TOKEN, method: 'GET', path: '/router/v1/status' })).status, 200);
   } finally {
     if (saved.xdg === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = saved.xdg;
     if (saved.tmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved.tmp;
