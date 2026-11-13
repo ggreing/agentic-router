@@ -111,21 +111,25 @@ test('what the sealed route refuses: every reason looks the same from outside', 
   assert.ok(!JSON.stringify(d.ledger.db.prepare('SELECT payload FROM events').all()).includes(TOKEN));
 }));
 
-test('the bearer route: on by default for one release, off with config bearerApi "off"; sealed calls work either way', async () => {
+test('decision 164: the bearer route is off by default (the token as a header opens nothing); bearerApi "on" still lets it in; sealed calls work either way', async () => {
   const bearer = (port: number, p: string, method = 'GET') => request(port, { method, path: p, headers: { authorization: `Bearer ${TOKEN}` } });
+  for (const config of [{}, { bearerApi: 'off' }]) {
+    await withDaemon(async d => {
+      assert.equal((await bearer(d.port, '/router/v1/status')).status, 401, `${JSON.stringify(config)}: the token as a header opens nothing`);
+      assert.equal((await bearer(d.port, '/dashboard/register-code', 'POST')).status, 401);
+      assert.equal((await request(d.port, { method: 'POST', path: HOOK, body: prompt('hi'), headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' } })).status, 401);
+      assert.equal((await sealed(d, 'GET', '/router/v1/status')).status, 200);
+      assert.equal((await sealed(d, 'POST', HOOK, prompt('Fix the typo in README.md'))).status, 200);
+      assert.equal((await sealed(d, 'POST', '/dashboard/register-code')).status, 200);
+      assert.equal((await request(d.port, { path: '/router/v1/health' })).status, 200, 'health needs no credential');
+    }, config);
+  }
   await withDaemon(async d => {
-    assert.equal((await bearer(d.port, '/router/v1/status')).status, 200, 'default: a client of the last version still gets in');
+    assert.equal((await bearer(d.port, '/router/v1/status')).status, 200, 'on: a client that still sends the token as a header gets in (deprecated)');
     assert.equal((await sealed(d, 'GET', '/router/v1/status')).status, 200);
-  });
-  await withDaemon(async d => {
-    assert.equal((await bearer(d.port, '/router/v1/status')).status, 401, 'off: the token as a header opens nothing');
-    assert.equal((await bearer(d.port, '/dashboard/register-code', 'POST')).status, 401);
-    assert.equal((await request(d.port, { method: 'POST', path: HOOK, body: prompt('hi'), headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' } })).status, 401);
-    assert.equal((await sealed(d, 'GET', '/router/v1/status')).status, 200);
-    assert.equal((await sealed(d, 'POST', HOOK, prompt('Fix the typo in README.md'))).status, 200);
-    assert.equal((await sealed(d, 'POST', '/dashboard/register-code')).status, 200);
-    assert.equal((await request(d.port, { path: '/router/v1/health' })).status, 200, 'health needs no credential');
-  }, { bearerApi: 'off' });
+    const log = fs.readFileSync(path.join(d.home, 'logs', 'daemon.log'), 'utf8');
+    assert.equal(log.split('\n').filter(l => /bearerApi is on: .*deprecated and will be removed/.test(l)).length, 1, 'one line at start');
+  }, { bearerApi: 'on' });
 });
 
 // ------------------------------------------------------------------ a squatter on the port

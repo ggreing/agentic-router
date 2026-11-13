@@ -8,7 +8,9 @@ import { DAEMON_VERSION, startDaemon } from '../src/index.ts';
 import { TOKEN, claudeAdapter, getStatus, makeHome, postHook, request, rmrf, startTestDaemon, type TestDaemon } from './helpers.ts';
 
 let d: TestDaemon;
-before(async () => { d = await startTestDaemon(); });
+// The direct-request handler (body limits, content types, routes, methods) is reached here with the deprecated
+// bearerApi "on" (decision 164); the router's clients go through sealed calls, which open nothing else.
+before(async () => { d = await startTestDaemon({ config: { bearerApi: 'on' } }); });
 after(async () => { await d.close(); rmrf(d.home); });
 
 const HOOK = '/router/v1/hooks/claude-code';

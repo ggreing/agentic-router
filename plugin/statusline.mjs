@@ -2,7 +2,7 @@
 // Do It All Claude Code status line for Claude Code (dependency-free, single file).
 //
 // Reads the status line input JSON on stdin, asks the local daemon for the session's request
-// (GET /router/v1/status?session_id=..., port from config.json, Bearer token from the token file)
+// (GET /router/v1/status?session_id=..., port from config.json, as a call sealed with the token from the token file)
 // and prints one line:  [Router] L2 | architect s3 · coder×2 s1 · reviewer s3 · tester s1 | $0.42
 // The cost reads ~$0.42 when it includes estimates and $0.42+? when some subagent costs are unknown.
 // A request the lead handles itself (L0) reads: [Router] L0 · direct | $0.00; a level forced by config.forceLevel: [Router] L2 forced | ...

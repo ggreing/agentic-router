@@ -5,7 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, type Level, type TeamPreset } from '@do-it-all-claude-code/core';
+import { DEFAULT_PRESETS, SealError, sealedCall, type Level, type TeamPreset } from '@do-it-all-claude-code/core';
 import { loadClaudeCodeAdapter, type ClientAdapter } from '../src/adapter.ts';
 import { createDaemon, type Daemon, type DaemonOptions } from '../src/index.ts';
 
@@ -128,18 +128,34 @@ export function request(port: number, o: { method?: string; path: string; header
   });
 }
 
+/**
+ * A call as every client of the daemon makes it (decision 156): sealed with the token, over TCP. The daemon's own
+ * status, content type and body come back like request()'s. (A Bearer header is refused unless the deprecated
+ * config bearerApi is "on", decision 164.)
+ */
+export async function call(port: number, o: { method?: string; path: string; body?: string; token?: string }): Promise<RawResponse> {
+  const r = await sealedCall({ port, secret: o.token ?? TOKEN, method: o.method ?? 'GET', path: o.path, ...(o.body !== undefined ? { body: o.body } : {}), timeoutMs: 600_000 });
+  let body: unknown = r.body;
+  try { body = JSON.parse(r.body); } catch { /* not JSON */ }
+  return { status: r.status, headers: { 'content-type': r.contentType }, body, text: r.body };
+}
+
+/**
+ * A call as a given caller: no credential at all (null: a plain request), or a call sealed with `token`; a seal the
+ * daemon refuses (a wrong token) answers 401, as the daemon does.
+ */
+export async function callAs(port: number, token: string | null, o: { method?: string; path: string; body?: string }): Promise<RawResponse> {
+  if (token === null) return request(port, { method: o.method ?? 'GET', path: o.path, ...(o.body !== undefined ? { body: o.body, headers: { 'content-type': 'application/json' } } : {}) });
+  try { return await call(port, { ...o, token }); }
+  catch (e) { if (e instanceof SealError) return { status: 401, headers: {}, body: { error: 'unauthorized' }, text: '' }; throw e; }
+}
+
 export function postHook(port: number, input: HookInput): Promise<RawResponse> {
-  return request(port, {
-    method: 'POST', path: '/router/v1/hooks/claude-code', body: JSON.stringify(input),
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-  });
+  return call(port, { method: 'POST', path: '/router/v1/hooks/claude-code', body: JSON.stringify(input) });
 }
 
 export function getStatus(port: number, sessionId?: string): Promise<RawResponse> {
-  return request(port, {
-    path: `/router/v1/status${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
-    headers: { authorization: `Bearer ${TOKEN}` },
-  });
+  return call(port, { path: `/router/v1/status${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}` });
 }
 
 /** Ledger rows as plain objects, for assertions. */

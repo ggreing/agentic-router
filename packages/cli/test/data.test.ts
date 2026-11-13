@@ -71,12 +71,12 @@ test('export: to a 0600 file or to stdout (the note on stderr); dates are checke
 
 test('against the real daemon, then with it stopped: export and purge reach the same ledger; an open request survives', async () => {
   const { ensureLocalState, readConfig, writeConfig } = await import('../src/setup.ts');
-  const { localRequest, start, stop } = await import('../src/daemonctl.ts');
+  const { daemonRequest, start, stop } = await import('../src/daemonctl.ts');
   await ensureLocalState();
   const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
   writeConfig({ ...readConfig()!, daemonPort: port });
   const token = fs.readFileSync(paths.token(), 'utf8').trim();
-  const hook = (sid: string, h: Record<string, unknown>) => localRequest(port, 'POST', '/router/v1/hooks/claude-code', {
+  const hook = (sid: string, h: Record<string, unknown>) => daemonRequest(port, 'POST', '/router/v1/hooks/claude-code', {
     token, body: JSON.stringify({ session_id: sid, cwd: tmp, transcript_path: path.join(tmp, `${sid}.jsonl`), ...h }),
   });
   const lines: string[] = [];
@@ -96,7 +96,7 @@ test('against the real daemon, then with it stopped: export and purge reach the 
     // purge through the daemon: the two closed requests go, the open one stays
     assert.equal(await dataPurge({ all: true, yes: true }, d), 0);
     assert.match(lines.at(-1)!, /^Removed 2 closed request\(s\) \(all of them\), \d+ row\(s\) in all .*; the ledger was compacted\.$/);
-    const st = JSON.parse((await localRequest(port, 'GET', '/router/v1/status?session_id=c', { token }))!.body) as { request: { id: string } | null };
+    const st = JSON.parse((await daemonRequest(port, 'GET', '/router/v1/status?session_id=c', { token }))!.body) as { request: { id: string } | null };
     assert.ok(st.request, 'the open request is still there');
   } finally { await stop(); }
   // no daemon: the CLI opens the ledger itself

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { formatStatus } from '../../../plugin/statusline.mjs';
 import http from 'node:http';
 import { sealedFake } from '../../core/test/sealed-fake.ts';
-import { TOKEN, makeHome, postHook, request, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
+import { TOKEN, call, makeHome, postHook, request, rmrf, startTestDaemon, tmpDir, write, type TestDaemon } from './helpers.ts';
 
 const SCRIPT = fileURLToPath(new URL('../../../plugin/statusline.mjs', import.meta.url));
 const L2_PROMPT = 'Add a pagination module and refactor the API layer across multiple files';
@@ -169,9 +169,7 @@ test('decision 144: the status line\'s model.id reaches the daemon, so the sessi
   assert.deepEqual([posted.sessionId, posted.model, posted.rateLimits], ['seen', 'claude-sonnet-5-5', undefined]);
   // 2. what the daemon does with it: the session's model, used by the first prompt that has no transcript yet
   const token = fs.readFileSync(path.join(d.home, 'token'), 'utf8').trim();
-  const limits = (body: unknown) => request(d.port, {
-    method: 'POST', path: '/router/v1/limits', body: JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-  });
+  const limits = (body: unknown) => call(d.port, { method: 'POST', path: '/router/v1/limits', body: JSON.stringify(body), token });
   assert.deepEqual((await limits(posted)).body, { stored: false, model: true });
   assert.equal(d.ledger.sessionLeadModel('seen'), 'claude-sonnet-5-5');
   assert.equal((await postHook(d.port, { session_id: 'seen', cwd: d.home, hook_event_name: 'UserPromptSubmit', prompt: L1 })).status, 200);

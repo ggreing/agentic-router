@@ -5,9 +5,8 @@
 //   POST a sealed envelope to /router/v1/sealed (core seal.ts). The daemon opens it with the token as the
 //   shared secret, makes the request it carries to itself, and seals the answer. A program that took this
 //   port while the daemon was down can therefore read neither the token nor the hook data.
-// - "Authorization: Bearer <token>" is still accepted for one release (config bearerApi, default on) for
-//   clients of an older version and for the proxy, compared in constant time; with bearerApi off only sealed
-//   calls get in.
+// - "Authorization: Bearer <token>" is accepted only with config bearerApi "on" (decision 164: off by default;
+//   deprecated, to be removed), compared in constant time. Otherwise only sealed calls get in.
 // - POST /shutdown answers { ok: true } first, then asks the daemon to stop (CLI `stop`).
 // - POST bodies: application/json only, at most 1 MB.
 // - The hook response is what relay.mjs prints unchanged: text/plain for pre_compact, JSON otherwise.
@@ -79,7 +78,7 @@ export interface ServerDeps {
   data?: { recordPrompts: boolean; secrets: () => string[] };
   /** The router home's folders, for purge --all (spool, scopes, agents, logs). */
   home?: DataHome;
-  /** Decision 156: accept calls that carry the token as a Bearer header (older clients, the proxy). Default true. */
+  /** Decisions 156, 164: accept calls that carry the token as a Bearer header (config bearerApi "on"). Default false. */
   acceptBearer?: boolean;
 }
 
@@ -94,9 +93,9 @@ class HttpError extends Error {
 const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
 
 export function createHttpServer(d: ServerDeps): http.Server {
-  // The token a Bearer header must carry. With bearerApi off it is a value nobody outside this process knows,
-  // used only for the request a sealed call makes to the daemon itself (below).
-  const bearer = d.acceptBearer === false ? randomBytes(32).toString('base64url') : d.token;
+  // The token a Bearer header must carry. Unless bearerApi is on (decision 164) it is a value nobody outside this
+  // process knows, used only for the request a sealed call makes to the daemon itself (below).
+  const bearer = d.acceptBearer === true ? d.token : randomBytes(32).toString('base64url');
   const tokenDigest = digest(bearer);
   const maxBody = d.maxBodyBytes ?? MAX_BODY_BYTES;
   const seen = new NonceWindow();
@@ -161,7 +160,8 @@ export function createHttpServer(d: ServerDeps): http.Server {
     if (req.headers.origin !== undefined) throw new HttpError(403, 'cross-origin requests are not allowed');
     if (req.method !== 'POST') throw methodNotAllowed(res, 'POST');
     const text = await readText(req, MAX_SEALED_BYTES);
-    const { inner, nonce } = openRequest(d.token, text, { now: now().getTime(), seen });
+    // the seal's time window is the wall clock (the client stamps with its own), not the injectable business clock
+    const { inner, nonce } = openRequest(d.token, text, { now: Date.now(), seen });
     if (inner.p.split('?')[0] === SEALED_PATH || !/^(GET|POST)$/.test(inner.m)) throw new SealError('format');
     const a = server.address();
     if (!a || typeof a === 'string') throw new HttpError(503, 'not listening');
@@ -183,7 +183,7 @@ export function createHttpServer(d: ServerDeps): http.Server {
       r.on('error', reject);
       r.end(body);
     });
-    const out = sealResponse(d.token, nonce, answer, { now: now().getTime() });
+    const out = sealResponse(d.token, nonce, answer, { now: Date.now() });
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(out), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     res.end(out);
   }

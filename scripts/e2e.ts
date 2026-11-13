@@ -144,13 +144,12 @@ const selected = ONLY.length ? R5S.filter(s => ONLY.includes(s.id)) : R5S;
 const wantDash = args['no-dashboard'] !== 'true';
 const promptOf = (s: R5) => s.prompt ?? task(s.taskId!).prompt as string;
 
-function httpJson(port: number, method: string, pathname: string, opts: { cookie?: string; token?: string; body?: unknown } = {}): Promise<{ status: number; headers: any; text: string }> {
+function httpJson(port: number, method: string, pathname: string, opts: { cookie?: string; body?: unknown } = {}): Promise<{ status: number; headers: any; text: string }> {
   return new Promise((resolve, reject) => {
     const data = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
     const headers: any = { host: `127.0.0.1:${port}` };
     if (data !== undefined) { headers['content-type'] = 'application/json'; headers['content-length'] = Buffer.byteLength(data); }
     if (opts.cookie) headers['cookie'] = opts.cookie;
-    if (opts.token) headers['authorization'] = `Bearer ${opts.token}`;
     const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, res => {
       let t = ''; res.setEncoding('utf8'); res.on('data', d => { t += d; }); res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: t }));
     });

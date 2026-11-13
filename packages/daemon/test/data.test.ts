@@ -9,7 +9,7 @@ import { scopeKey } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { REQUEST_TABLES, exportLines, isoTime, purge } from '../src/data.ts';
 import { homeLayout } from '../src/home.ts';
-import { TOKEN, postHook, request, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
+import { TOKEN, call, postHook, request, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
 
 type Rec = Record<string, any>;   // eslint-disable-line @typescript-eslint/no-explicit-any
 const KEY = 'sk-ant-api03-' + 'A'.repeat(40);
@@ -22,10 +22,10 @@ async function withDaemon(config: Record<string, unknown>, fn: (d: TestDaemon, c
 const hook = (d: TestDaemon, sid: string, h: HookInput) => postHook(d.port, { session_id: sid, cwd: d.home, transcript_path: path.join(d.home, `${sid}.jsonl`), ...h });
 const prompt = (text: string, id: string): HookInput => ({ hook_event_name: 'UserPromptSubmit', prompt: text, prompt_id: id });
 const stop = (msg = 'Done.'): HookInput => ({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: msg });
-const exportGet = (d: TestDaemon, q = '', headers: Record<string, string> = {}) => request(d.port, { path: `/router/v1/data/export${q}`, headers: { authorization: `Bearer ${TOKEN}`, ...headers } });
-const purgePost = (d: TestDaemon, body: unknown) => request(d.port, {
-  method: 'POST', path: '/router/v1/data/purge', body: JSON.stringify(body), headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-});
+// sealed, as the CLI calls them; with extra headers (an Origin), a plain request that must be refused before any credential
+const exportGet = (d: TestDaemon, q = '', headers: Record<string, string> = {}) => (Object.keys(headers).length
+  ? request(d.port, { path: `/router/v1/data/export${q}`, headers }) : call(d.port, { path: `/router/v1/data/export${q}` }));
+const purgePost = (d: TestDaemon, body: unknown) => call(d.port, { method: 'POST', path: '/router/v1/data/purge', body: JSON.stringify(body) });
 const lines = (text: string) => text.trim().split('\n').map(l => JSON.parse(l) as Rec);
 
 /** Four sessions: "old" (closed 1 Oct), "new" (closed 20 Oct), "live" (closed 1 Oct, then an open request), "wait" (awaiting the user). */

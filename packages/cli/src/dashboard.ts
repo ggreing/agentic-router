@@ -1,7 +1,7 @@
-// `do-it-all-claude-code dashboard` (decision 132): asks the daemon for a one-time login code with the local Bearer
-// token (POST /dashboard/register-code) and opens http://127.0.0.1:<port>/dashboard#code=<code> in the
-// browser; the page trades the code for a session cookie. The token stays in this process: it is sent only
-// in the Authorization header to 127.0.0.1, never put in a URL, an argument or a log line. The code is
+// `do-it-all-claude-code dashboard` (decision 132): asks the daemon for a one-time login code in a call sealed with the
+// local token (POST /dashboard/register-code, decision 156) and opens http://127.0.0.1:<port>/dashboard#code=<code> in the
+// browser; the page trades the code for a session cookie. The token stays in this process: it only seals the
+// call (it is never sent), and is never put in a URL, an argument or a log line. The code is
 // single-use and expires in a minute, so the URL is printed when no browser can be opened. The browser is
 // pointed at a local page holding the URL (audit C1), so the code never shows in a process list.
 import { spawn } from 'node:child_process';

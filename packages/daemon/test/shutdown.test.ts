@@ -1,11 +1,11 @@
-// POST /router/v1/shutdown (decision 66): Bearer auth, answer { ok: true } first, kill
+// POST /router/v1/shutdown (decision 66): a sealed call (decisions 156, 164), answer { ok: true } first, kill
 // running verify commands, then close.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { TOKEN, makeRepo, postHook, request, rmrf, startTestDaemon, type HookInput } from './helpers.ts';
+import { TOKEN, call, makeRepo, postHook, request, rmrf, startTestDaemon, type HookInput } from './helpers.ts';
 
 const SHUTDOWN = '/router/v1/shutdown';
 
@@ -19,11 +19,10 @@ test('shutdown needs the token and POST; then answers ok and the daemon stops', 
     assert.equal((await request(d.port, { method: 'POST', path: SHUTDOWN })).status, 401);
     assert.equal((await request(d.port, { method: 'POST', path: SHUTDOWN, headers: { authorization: 'Bearer nope-nope-nope-nope' } })).status, 401);
     assert.equal((await request(d.port, { method: 'POST', path: SHUTDOWN, headers: { authorization: `Bearer ${TOKEN}`, origin: 'http://x' } })).status, 403);
-    const get = await request(d.port, { path: SHUTDOWN, headers: { authorization: `Bearer ${TOKEN}` } });
-    assert.equal(get.status, 405);
-    assert.equal(get.headers.allow, 'POST');
+    assert.equal((await request(d.port, { method: 'POST', path: SHUTDOWN, headers: { authorization: `Bearer ${TOKEN}` } })).status, 401, 'the token as a header: refused (decision 164)');
+    assert.equal((await call(d.port, { path: SHUTDOWN })).status, 405);
 
-    const r = await request(d.port, { method: 'POST', path: SHUTDOWN, headers: { authorization: `Bearer ${TOKEN}` } });
+    const r = await call(d.port, { method: 'POST', path: SHUTDOWN });
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true });
     await d.closed;
@@ -51,7 +50,7 @@ test('shutdown kills a running verify command; the waiting stop gets {} and no v
     assert.ok(alive(pid), 'verify command should be running');
 
     const t0 = Date.now();
-    const r = await request(d.port, { method: 'POST', path: SHUTDOWN, headers: { authorization: `Bearer ${TOKEN}` } });
+    const r = await call(d.port, { method: 'POST', path: SHUTDOWN });
     assert.deepEqual(r.body, { ok: true });
     assert.deepEqual(await stopping, {});
     await d.closed;

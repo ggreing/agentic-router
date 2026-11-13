@@ -9,8 +9,8 @@
 //
 // Trust model (distinct from the hook API, which refuses browsers): the static SPA shell is served
 // unauthenticated (it carries no data); the metrics API requires a session cookie obtained through a
-// one-time code. The CLI's `do-it-all-claude-code dashboard` calls POST /dashboard/register-code with the local
-// Bearer token to mint a code, then opens http://127.0.0.1:<port>/dashboard#code=<code>; the page reads
+// one-time code. The CLI's `do-it-all-claude-code dashboard` calls POST /dashboard/register-code (a sealed call; the
+// daemon makes it to itself with the token below) to mint a code, then opens http://127.0.0.1:<port>/dashboard#code=<code>; the page reads
 // the fragment, POSTs it once to /dashboard/auth, and the daemon sets an HttpOnly SameSite=Strict cookie.
 // Every route also checks Host (loopback only -> DNS-rebinding defence), Origin and Sec-Fetch-Site
 // (same-origin only -> CSRF defence). The long-lived token never reaches the browser, a URL, or a log.
@@ -26,7 +26,7 @@ import type { Level } from '@do-it-all-claude-code/core';
 
 export interface DashboardDeps {
   ledger: Ledger;
-  /** The local Bearer token; only POST /dashboard/register-code (the CLI) uses it. */
+  /** The Bearer value POST /dashboard/register-code needs: what a sealed call's inner request carries (decisions 156, 164). */
   token: string;
   /** Directory of the built SPA (packages/dashboard/dist). */
   distDir: string;

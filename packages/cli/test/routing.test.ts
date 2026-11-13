@@ -68,7 +68,7 @@ test('routing reset: what the daemon cleared, or why nothing happened', async ()
 
 test('against the real daemon: a released level shows in doctor\'s lines, and routing reset delegates it again', async () => {
   const { ensureLocalState, readConfig, writeConfig } = await import('../src/setup.ts');
-  const { localRequest, start, stop } = await import('../src/daemonctl.ts');
+  const { daemonRequest, start, stop } = await import('../src/daemonctl.ts');
   const { Ledger } = await import('@do-it-all-claude-code/daemon');
   await ensureLocalState();
   const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
@@ -77,7 +77,7 @@ test('against the real daemon: a released level shows in doctor\'s lines, and ro
   l.setRelease('opus', { autoDelegateFrom: 'L2' }, new Date().toISOString());
   l.close();
   const token = fs.readFileSync(paths.token(), 'utf8').trim();
-  const routing = async () => (JSON.parse((await localRequest(port, 'GET', '/router/v1/status', { token }))!.body) as StatusView).routing;
+  const routing = async () => (JSON.parse((await daemonRequest(port, 'GET', '/router/v1/status', { token }))!.body) as StatusView).routing;
   try {
     assert.match(await start(), /^started/);
     const before = routingChecks(await routing());

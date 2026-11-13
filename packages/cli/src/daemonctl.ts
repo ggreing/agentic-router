@@ -24,11 +24,12 @@ export const START_WAIT_MS = 30_000;
 /**
  * Talks to the daemon with node:http, never fetch: with NODE_USE_ENV_PROXY / --use-env-proxy and an
  * HTTP_PROXY that does not exempt 127.0.0.1, fetch would send these calls to the proxy (env audit #12).
+ * Without a credential (decision 164): only what needs none, such as health; everything else is daemonRequest.
  */
-export function localRequest(port: number, method: 'GET' | 'POST', urlPath: string, opts: { token?: string; body?: string; timeoutMs?: number } = {}): Promise<{ status: number; body: string } | null> {
+export function localRequest(port: number, method: 'GET' | 'POST', urlPath: string, opts: { body?: string; timeoutMs?: number } = {}): Promise<{ status: number; body: string } | null> {
   return new Promise(resolve => {
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, agent: false, timeout: opts.timeoutMs ?? 1500,
-      headers: { ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}), ...(opts.body !== undefined ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(opts.body) } : {}) } },
+      headers: { ...(opts.body !== undefined ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(opts.body) } : {}) } },
     res => { let b = ''; res.setEncoding('utf8'); res.on('data', d => { b += d; }); res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b })); });
     req.on('timeout', () => { req.destroy(); resolve(null); });
     req.on('error', () => resolve(null));

@@ -7,7 +7,7 @@
 // comes from the layer below (core loadPresets with a base). An invalid file is logged and ignored.
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS, PROJECT_DIR, loadPresets, projectFile, withLeadModel, type Level, type LeadModelClass, type TeamPreset } from '@do-it-all-claude-code/core';
+import { DEFAULT_PRESETS, PROJECT_DIR, loadPresets, withLeadModel, type Level, type LeadModelClass, type TeamPreset } from '@do-it-all-claude-code/core';
 import { applyBudgets } from './config.ts';
 import { errorText, type Logger } from './log.ts';
 
@@ -58,8 +58,8 @@ export class PresetResolver {
     const user = this.#load(this.#userFile, presets);
     if (user) { presets = user; used.push('user'); }
     const root = cwd ? workTreeRoot(cwd) : undefined;
-    // the previous release's folder (.agentic-router) is read when the new one has no teams.yaml (decision 161)
-    const project = root ? this.#load(projectFile(root, TEAMS_FILE, fs.existsSync).file, presets) : undefined;
+    // the previous release's .agentic-router/teams.yaml is no longer read (decision 164; doctor names the folder)
+    const project = root ? this.#load(path.join(root, PROJECT_TEAMS_FILE), presets) : undefined;
     if (project) { presets = project; used.push('project'); }
     return { presets: applyBudgets(presets, this.#budgets), source: (used.join('+') || 'default') as PresetSource };
   }

@@ -9,7 +9,7 @@ import { ROUTER_TOOL_PREFIX } from '@do-it-all-claude-code/core';
 import { Ledger, SCHEMA_VERSION } from '../src/ledger.ts';
 import type { StatusView } from '../src/router.ts';
 import { TOOL_USE_ID_META } from '../src/tools.ts';
-import { TOKEN, getStatus, makeRepo, postHook, request, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
+import { call as sealedApi, getStatus, makeRepo, postHook, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
 
 const L1_PROMPT = 'Fix the bug where parse() fails on empty input in src/parse.ts';
 const L2_PROMPT = 'Refactor the validation module across multiple files and add an audit log';
@@ -32,8 +32,8 @@ function session(d: TestDaemon, sid: string, cwd: string) {
   const tool = async (name: string, input: Record<string, unknown> = {}): Promise<ToolOut> => {
     const id = `toolu_d${++seq}`;
     await post({ hook_event_name: 'PreToolUse', tool_name: ROUTER_TOOL_PREFIX + name, tool_use_id: id, tool_input: input });
-    const r = await request(d.port, {
-      method: 'POST', path: '/router/v1/tools/call', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    const r = await sealedApi(d.port, {
+      method: 'POST', path: '/router/v1/tools/call',
       body: JSON.stringify({ tool: name, input, meta: { [TOOL_USE_ID_META]: id }, bind: { instanceId: 'i-1', projectDir: cwd } }),
     });
     return r.body as ToolOut;

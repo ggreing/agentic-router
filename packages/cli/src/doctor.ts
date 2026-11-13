@@ -291,6 +291,12 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
   return out;
 }
 
+/** Decision 164: the Bearer switch is off by default and stays for this release only; a warning while it is on. */
+export function bearerApiCheck(cfg: CliConfig): Check | null {
+  return cfg.bearerApi === 'on' ? { name: 'bearerApi', ok: false, blocking: false,
+    detail: 'on: the daemon accepts the token as a Bearer header. This is deprecated and will be removed; every client of this release uses sealed calls, so take bearerApi out of config.json (or set it to "off") and restart the daemon' } : null;
+}
+
 export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Check[]> {
   const checks: Check[] = [];
   const node = process.versions.node;
@@ -333,6 +339,8 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   checks.push(...environmentChecks(env));
   if (cfg) checks.push({ name: 'prompt text', ok: true, blocking: false, detail: promptStorageSummary(cfg.recordPrompts) });   // decision 142
   if (cfg) checks.push(updateCheckLine(cfg));   // decision 163
+  const bearer = cfg ? bearerApiCheck(cfg) : null;   // decision 164
+  if (bearer) checks.push(bearer);
   // audit C6: the dashboard is served from its build; the router works without it (loaded here only, so other
   // commands do not load the daemon)
   try {

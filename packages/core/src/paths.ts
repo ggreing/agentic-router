@@ -24,9 +24,9 @@ export function routerHome(): string {
 }
 
 // ------------------------------------------------------------------ names of the previous release (decision 161)
-// The product was renamed. These names are only read: to move the old home (init), to honour a project folder
-// that has not been renamed yet, to keep both folders protected, and to recognise settings entries the
-// previous release wrote. Nothing is written under them.
+// The product was renamed. These names are only read: to move the old home (init), to keep both project folders
+// protected and name a folder that was not renamed (doctor; decision 164: its files are no longer read), and to
+// recognise settings entries the previous release wrote. Nothing is written under them.
 
 /** The previous product's command, plugin and keychain service name. */
 export const LEGACY_SLUG = 'agentic-router';
@@ -40,15 +40,6 @@ export function legacyRouterHome(env: NodeJS.ProcessEnv = process.env, home: str
   return v && path.isAbsolute(v) ? v : path.join(home, LEGACY_PROJECT_DIR);
 }
 
-/**
- * A project file: <root>/.do-it-all-claude-code/<name>, or the same file in the previous release's folder when
- * only that one has it (honoured for this release; doctor asks to rename the folder). `legacy` says which.
- */
-export function projectFile(root: string, name: string, exists: (p: string) => boolean): { file: string; legacy: boolean } {
-  const file = path.join(root, PROJECT_DIR, name);
-  const old = path.join(root, LEGACY_PROJECT_DIR, name);
-  return !exists(file) && exists(old) ? { file: old, legacy: true } : { file, legacy: false };
-}
 
 export const paths = {
   config: () => path.join(routerHome(), 'config.json'),
@@ -89,7 +80,7 @@ export interface RouterConfig {
   autoRelease?: 'on' | 'observe' | 'off';   // decision 138: default observe (holdout runs and the comparison is shown; nothing switches)
   holdoutRate?: number;      // decision 138: share of delegated-level requests handled lead-direct as the baseline, 0 to 0.2 (default 0.1)
   eventRetentionDays?: number;   // decision 141: hook events older than this are dropped (default 30; 0 keeps them)
-  bearerApi?: 'on' | 'off';  // decision 156: whether the daemon still accepts "Authorization: Bearer <token>" calls from clients of an older version (default on for one release; the router's own clients no longer send it)
+  bearerApi?: 'on' | 'off';  // decisions 156, 164: "on" lets the daemon accept "Authorization: Bearer <token>" calls (default off; deprecated, to be removed; the router's own clients use sealed calls)
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com

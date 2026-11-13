@@ -109,7 +109,7 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     const proxyUsage = new ProxyUsage(ledger, logger, opts.now);
     const srv = createHttpServer({
       router, adapter, token, logger, version: DAEMON_VERSION, proxyUsage, ledger, home, ...(opts.now ? { now: opts.now } : {}),
-      acceptBearer: config.bearerApi !== 'off',      // decision 156
+      acceptBearer: config.bearerApi === 'on',       // decisions 156, 164: off unless asked for
       // data export (spec 4.4): stored prompts only with recordPrompts; the proxy token is masked like the daemon's
       data: { recordPrompts: config.recordPrompts === true, secrets: () => { try { return [fs.readFileSync(path.join(home.root, 'proxy-token'), 'utf8').trim()]; } catch { return []; } } },
       onShutdown: () => void close().catch(() => {}),
@@ -148,6 +148,8 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     }
     try { writeEndpoint(home.root, { version: 1, pid: process.pid, startedAt: (opts.now?.() ?? new Date()).toISOString(), port: bound, ...(socketPath ? { socket: socketPath } : {}) }); }
     catch (e) { logger.warn('endpoint file not written', { error: errorText(e) }); }
+    // decision 164: the switch stays for this release only
+    if (config.bearerApi === 'on') logger.warn('bearerApi is on: the daemon accepts the token as a Bearer header; this is deprecated and will be removed (every client of this release uses sealed calls)');
     logger.info('daemon listening', { port: bound, ...(socketPath ? { socket: socketPath } : {}), version: DAEMON_VERSION, replayed: replay.events });
 
     let closing: Promise<void> | undefined;

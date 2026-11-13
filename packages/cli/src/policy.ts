@@ -17,9 +17,8 @@ export interface PolicyStatus {
   acceptedHash: string | null;
   policy: { bashAllow?: unknown[]; verifyEnv?: unknown[] } | null;
   error?: string;
-  /** The file read (decision 161: the previous release's folder when only it has a policy), and whether it is that one. */
+  /** The file read. */
   file?: string;
-  legacy?: boolean;
 }
 export interface GuardPolicy {
   policyRoot(dir: string): string;
@@ -51,7 +50,10 @@ function droppedEntries(file: string, key: 'bashAllow' | 'verifyEnv', kept: numb
 }
 
 export function describePolicy(root: string, s: PolicyStatus): string[] {
-  if (!s.present) return [`${root}: no ${PROJECT_DIR}/policy.json`];
+  if (!s.present) {
+    // decision 164: the previous release's folder is no longer read; say so when only it has a policy
+    return [`${root}: no ${PROJECT_DIR}/policy.json${fs.existsSync(path.join(root, LEGACY_PROJECT_DIR, 'policy.json')) ? `; ${LEGACY_PROJECT_DIR}/policy.json is no longer read: rename ${LEGACY_PROJECT_DIR} to ${PROJECT_DIR} (a policy you accepted counts again after the rename)` : ''}`];
+  }
   const file = s.file ?? path.join(root, PROJECT_DIR, 'policy.json');
   const state = !s.valid ? `not valid${s.error ? ` (${s.error})` : ''}: ignored`
     : s.accepted ? 'accepted' : s.acceptedHash ? 'changed since you accepted it: ignored until you accept it again' : 'not accepted: ignored';
@@ -64,7 +66,7 @@ export function describePolicy(root: string, s: PolicyStatus): string[] {
     ];
   };
   return [
-    `${file} (sha256 ${s.hash?.slice(0, 12) ?? '?'}): ${state}${s.legacy ? ` (in the previous release's folder: rename ${LEGACY_PROJECT_DIR} to ${PROJECT_DIR}; the acceptance stays)` : ''}`,
+    `${file} (sha256 ${s.hash?.slice(0, 12) ?? '?'}): ${state}`,
     ...section('bashAllow', 'extra commands workers may run'),
     ...section('verifyEnv', 'extra variables passed to verify'),
   ];
@@ -102,15 +104,15 @@ export async function policyCommand(sub: string | undefined, f: Record<string, s
 }
 
 /**
- * Decision 161: a project that still has the previous release's folder. Its policy.json, verify.json and
- * teams.yaml are read from it for this release, each only when the new folder has no file of that name.
+ * Decisions 161, 164: a project that still has the previous release's folder. Its policy.json, verify.json and
+ * teams.yaml are no longer read (workers still cannot write there).
  */
 export function projectFolderCheck(root: string): Check | null {
   if (!fs.existsSync(path.join(root, LEGACY_PROJECT_DIR))) return null;
   const both = fs.existsSync(path.join(root, PROJECT_DIR));
   return { name: 'project folder', ok: false, blocking: false, detail: both
-    ? `${root} has both ${LEGACY_PROJECT_DIR} and ${PROJECT_DIR}: a file missing in ${PROJECT_DIR} is still read from ${LEGACY_PROJECT_DIR}; move what is left and remove ${LEGACY_PROJECT_DIR}`
-    : `${root} has the previous release's ${LEGACY_PROJECT_DIR}: rename it to ${PROJECT_DIR} (it is still read for this release)` };
+    ? `${root} has both ${LEGACY_PROJECT_DIR} and ${PROJECT_DIR}: ${LEGACY_PROJECT_DIR} is no longer read; move what you still need into ${PROJECT_DIR} and remove it`
+    : `${root} has ${LEGACY_PROJECT_DIR} (the previous release's folder): no longer read; rename it to ${PROJECT_DIR}` };
 }
 
 /** doctor's line for the current project's policy. */

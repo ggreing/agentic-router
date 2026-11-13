@@ -7,7 +7,7 @@ import path from 'node:path';
 import { ROUTER_TOOL_PREFIX } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { MAX_TICKETS, TICKET_TTL_MS, TOOL_USE_ID_META, TicketStore, addGlobs, removeGlobs, sortScopeGlobs, toolUseIdOf } from '../src/tools.ts';
-import { TOKEN, makeRepo, postHook, request, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
+import { call as sealedApi, makeRepo, postHook, request, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
 
 const L1_PROMPT = 'Fix the bug where parse() fails on empty input in src/parse.ts';
 const L2_PROMPT = 'Refactor the validation module across multiple files and add an audit log';
@@ -17,7 +17,6 @@ type Out = { decision?: string; hookSpecificOutput?: { additionalContext?: strin
 type ToolOut = { ok: boolean; code?: string; message?: string; result?: Record<string, any> };
 
 let seq = 0;
-const AUTH = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
 
 async function withDaemon(fn: (d: TestDaemon, repo: string) => Promise<void>, opts: Parameters<typeof startTestDaemon>[0] = {}): Promise<void> {
   const repo = makeRepo({ 'src/a.ts': 'a\n', 'README.md': 'x\n' });
@@ -33,7 +32,7 @@ function session(d: TestDaemon, sid: string, cwd: string) {
     return r.body as Out;
   };
   const raw = async (body: unknown): Promise<ToolOut> => {
-    const r = await request(d.port, { method: 'POST', path: '/router/v1/tools/call', headers: AUTH, body: JSON.stringify(body) });
+    const r = await sealedApi(d.port, { method: 'POST', path: '/router/v1/tools/call', body: JSON.stringify(body) });
     assert.equal(r.status, 200, r.text);
     return r.body as ToolOut;
   };
@@ -134,7 +133,7 @@ test('a tool call is bound to the session of its PreToolUse; a subagent call is 
   // the endpoint is behind the token like every other route
   const noAuth = await request(d.port, { method: 'POST', path: '/router/v1/tools/call', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(noAuth.status, 401);
-  assert.equal((await request(d.port, { path: '/router/v1/tools/call', headers: AUTH })).status, 405);
+  assert.equal((await sealedApi(d.port, { path: '/router/v1/tools/call' })).status, 405);
 
   // calls are recorded as events of the session; refused ones before binding are not
   const ev = rows(d, "SELECT session_id, tool_name, payload FROM events WHERE type = 'tool_call' ORDER BY id");

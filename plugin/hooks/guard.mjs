@@ -1086,16 +1086,10 @@ function gitRoot(cwd) {
 // the file counts only after the user accepted it: its hash is recorded in the router home, per repository,
 // and a changed file is ignored until it is accepted again. Workers cannot write either file (the policy
 // folder and the router home are both off-limits to them).
+// The previous release's folder (.agentic-router) is no longer read (decision 164); it stays protected. The
+// acceptance is keyed by repository and content, not by the folder, so a policy accepted there counts again once
+// the folder is renamed.
 export const POLICY_FILE = path.join('.do-it-all-claude-code', 'policy.json');
-// The folder of the previous release (decision 161): honoured while the new one has no policy.json; doctor asks
-// to rename it. The acceptance is keyed by repository and content, so renaming the folder keeps it.
-export const LEGACY_POLICY_FILE = path.join('.agentic-router', 'policy.json');
-/** The policy file a repository uses: the new folder first, else the previous release's. */
-export function policyFile(root) {
-  const file = path.join(root, POLICY_FILE);
-  const old = path.join(root, LEGACY_POLICY_FILE);
-  return !fs.existsSync(file) && fs.existsSync(old) ? { file: old, legacy: true } : { file, legacy: false };
-}
 export const POLICY_ACCEPT_FILE = 'policy-accepted.json';
 
 function policyKey(root) {
@@ -1111,14 +1105,13 @@ function readAccepted(stateHome) {
 }
 /**
  * The project policy of a repository and whether the user accepted this exact content.
- * { present, valid, hash, accepted, acceptedHash, policy: { bashAllow, verifyEnv }, file, legacy } - `policy` is
- * the file's content whether accepted or not (for doctor to show); use readAcceptedPolicy to act on it. `file` is
- * the file read, and `legacy` says it is in the previous release's folder.
+ * { present, valid, hash, accepted, acceptedHash, policy: { bashAllow, verifyEnv }, file } - `policy` is the file's
+ * content whether accepted or not (for doctor to show); use readAcceptedPolicy to act on it. `file` is the file read.
  */
 export function policyStatus(root, stateHome = routerHome()) {
-  const { file, legacy } = policyFile(root);
+  const file = path.join(root, POLICY_FILE);
   let text;
-  try { text = fs.readFileSync(file); } catch { return { present: false, valid: false, hash: null, accepted: false, acceptedHash: null, policy: null, file, legacy: false }; }
+  try { text = fs.readFileSync(file); } catch { return { present: false, valid: false, hash: null, accepted: false, acceptedHash: null, policy: null, file }; }
   const hash = createHash('sha256').update(text).digest('hex');
   const acceptedHash = readAccepted(stateHome)[policyKey(root)]?.hash ?? null;
   let policy = null;
@@ -1129,7 +1122,7 @@ export function policyStatus(root, stateHome = routerHome()) {
       policy = { bashAllow: list(j.bashAllow), verifyEnv: list(j.verifyEnv) };
     }
   } catch { /* not JSON: present but not valid */ }
-  return { present: true, valid: policy !== null, hash, accepted: policy !== null && acceptedHash === hash, acceptedHash, policy, file, legacy };
+  return { present: true, valid: policy !== null, hash, accepted: policy !== null && acceptedHash === hash, acceptedHash, policy, file };
 }
 /** The project policy when the user accepted its current content; null otherwise (absent, invalid, new or changed). */
 export function readAcceptedPolicy(root, stateHome = routerHome()) {

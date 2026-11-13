@@ -7,7 +7,7 @@ import type { UsageRow } from '@do-it-all-claude-code/core';
 import { Ledger } from '../src/ledger.ts';
 import type { Logger } from '../src/log.ts';
 import { CROSS_CHECK_TOLERANCE, MAX_ROWS_PER_POST, crossCheck, validRow } from '../src/proxyusage.ts';
-import { TOKEN, makeRepo, postHook, request, rmrf, rows, startTestDaemon, tmpDir, type HookInput, type TestDaemon } from './helpers.ts';
+import { TOKEN, call, callAs, makeRepo, postHook, rmrf, rows, startTestDaemon, tmpDir, type HookInput, type TestDaemon } from './helpers.ts';
 
 const L0_PROMPT = 'fix the typo in README.md';
 const L2_PROMPT = 'Refactor the validation module across multiple files and add an audit log';
@@ -36,10 +36,9 @@ async function withDaemon(fn: (d: TestDaemon, warns: Array<{ msg: string; data?:
   const d = await startTestDaemon({ now: () => new Date(t), logger: log });
   try { await fn(d, warns); } finally { await d.close(); rmrf(d.home); }
 }
-const usage = (d: TestDaemon, body: unknown, token = TOKEN) => request(d.port, {
-  method: 'POST', path: '/router/v1/usage', body: JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-});
-const budget = (d: TestDaemon, q: string) => request(d.port, { path: `/router/v1/budget${q}`, headers: { authorization: `Bearer ${TOKEN}` } });
+// sealed, as the proxy calls them (decision 156)
+const usage = (d: TestDaemon, body: unknown, token = TOKEN) => callAs(d.port, token, { method: 'POST', path: '/router/v1/usage', body: JSON.stringify(body) });
+const budget = (d: TestDaemon, q: string) => call(d.port, { path: `/router/v1/budget${q}` });
 const session = (d: TestDaemon, sid: string, cwd: string) => async (h: HookInput) => {
   const r = await postHook(d.port, { session_id: sid, cwd, transcript_path: path.join(d.home, `${sid}.jsonl`), ...h });
   assert.equal(r.status, 200, r.text);
@@ -56,7 +55,7 @@ test('decision 130: POST /router/v1/usage stores each row once (row id, message 
   assert.deepEqual((await usage(d, { rows: bad })).body, { accepted: 0, duplicates: 0, rejected: 6 });
   assert.equal((await usage(d, { rows: Array.from({ length: MAX_ROWS_PER_POST + 1 }, () => row()) })).status, 400);
   assert.equal((await usage(d, { nope: [] })).status, 400);
-  assert.equal((await request(d.port, { method: 'GET', path: '/router/v1/usage', headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
+  assert.equal((await call(d.port, { method: 'GET', path: '/router/v1/usage' })).status, 405);
   assert.equal(rows(d, 'SELECT COUNT(*) AS c FROM proxy_rows')[0]!.c, 2);
   // no request in session s1: stored, not attributed, no cost
   assert.deepEqual(rows(d, 'SELECT DISTINCT attributed_by, request_id FROM proxy_rows'), [{ attributed_by: 'none', request_id: null }]);

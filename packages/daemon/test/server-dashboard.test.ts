@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { Ledger, SCHEMA_VERSION } from '../src/ledger.ts';
-import { TOKEN, postHook, request, rmrf, rows, startTestDaemon, tmpDir, type TestDaemon } from './helpers.ts';
+import { TOKEN, call, callAs, postHook, request, rmrf, rows, startTestDaemon, tmpDir, type TestDaemon } from './helpers.ts';
 
 const LIMITS = {
   five_hour: { used_percentage: 23.5, resets_at: 1738425600 },
@@ -34,7 +34,7 @@ test('the hook API still refuses any Origin, the daemon\'s own included', () => 
 }));
 
 test('spec 3.8: POST /router/v1/limits stores a session\'s latest rate limits (token required; junk is not stored)', () => withDaemon(async d => {
-  const post = (token: string | null, body: unknown) => request(d.port, { path: '/router/v1/limits', ...json(token, body) });
+  const post = (token: string | null, body: unknown) => callAs(d.port, token, { method: 'POST', path: '/router/v1/limits', body: JSON.stringify(body) });
   assert.equal((await post(null, { sessionId: 's1', rateLimits: LIMITS })).status, 401);
   assert.equal((await post('wrong', { sessionId: 's1', rateLimits: LIMITS })).status, 401);
   assert.equal((await post(TOKEN, { rateLimits: LIMITS })).status, 400);
@@ -43,13 +43,14 @@ test('spec 3.8: POST /router/v1/limits stores a session\'s latest rate limits (t
   assert.deepEqual((await post(TOKEN, { sessionId: 's1', rateLimits: LIMITS, at: '1999-01-01T00:00:00.000Z' })).body, { stored: true, model: false });
   assert.deepEqual(rows(d, 'SELECT session_id, five_hour_pct, seven_day_pct, spend_pct, updated_at FROM session_limits'),
     [{ session_id: 's1', five_hour_pct: 23.5, seven_day_pct: 41.2, spend_pct: null, updated_at: '2026-11-12T12:00:00.000Z' }]);   // the daemon's clock
-  assert.equal((await request(d.port, { path: '/router/v1/limits', headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
+  assert.equal((await call(d.port, { path: '/router/v1/limits' })).status, 405);
 }));
 
-test('decision 132: the dashboard through the daemon: a one-time code for the Bearer token, then a cookie for the metrics', () => withDaemon(async d => {
-  await request(d.port, { path: '/router/v1/limits', ...json(TOKEN, { sessionId: 's1', rateLimits: LIMITS }) });
+test('decision 132: the dashboard through the daemon: a one-time code for a sealed call (the CLI\'s), then a cookie for the metrics', () => withDaemon(async d => {
+  await call(d.port, { method: 'POST', path: '/router/v1/limits', body: JSON.stringify({ sessionId: 's1', rateLimits: LIMITS }) });
   assert.equal((await request(d.port, { path: '/dashboard/register-code', method: 'POST' })).status, 401);
-  const reg = await request(d.port, { path: '/dashboard/register-code', method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal((await request(d.port, { path: '/dashboard/register-code', method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } })).status, 401, 'the token as a header: refused (decision 164)');
+  const reg = await call(d.port, { path: '/dashboard/register-code', method: 'POST' });
   assert.equal(reg.status, 200);
   const { code, url } = reg.body as { code: string; url: string };
   assert.equal(url, `http://127.0.0.1:${d.port}/dashboard#code=${code}`);
@@ -87,9 +88,7 @@ test('ledger v11: a v10 ledger gains session_limits', () => {
 test('decision 138: POST /router/v1/routing/reset clears the released levels (token required, no body)', async () => {
   const d = await startTestDaemon({ config: { autoRelease: 'on' } });
   try {
-    const reset = (o: { token?: string | null; method?: string } = {}) => request(d.port, {
-      method: o.method ?? 'POST', path: '/router/v1/routing/reset', headers: o.token === null ? {} : { authorization: `Bearer ${o.token ?? TOKEN}` },
-    });
+    const reset = (o: { token?: string | null; method?: string } = {}) => callAs(d.port, o.token === undefined ? TOKEN : o.token, { method: o.method ?? 'POST', path: '/router/v1/routing/reset' });
     const released = () => d.router.routing().classes.flatMap(c => c.levels.filter(l => l.released).map(l => `${c.leadClass}:${l.level}`));
     d.ledger.setRelease('opus', { autoDelegateFrom: 'L2' }, '2026-11-12T12:00:00.000Z');
     assert.deepEqual(released(), ['opus:L1']);

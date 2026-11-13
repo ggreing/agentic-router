@@ -88,17 +88,24 @@ test('audit N5: entries are listed one per line with control, bidi and zero-widt
   assert.equal((text.match(/^ {4}- /gm) ?? []).length, 100);
 });
 
-test('decision 161: a project with the previous release\'s folder: its policy is shown from there, and doctor asks to rename the folder', async () => {
+test('decision 164: a policy only in the previous release\'s folder is not read; policy show and doctor say to rename the folder', async () => {
   const guard = await loadGuard(PLUGIN);
   fs.rmSync(path.join(repo, '.do-it-all-claude-code'), { recursive: true });
   assert.equal(projectFolderCheck(repo), null);
   fs.mkdirSync(path.join(repo, '.agentic-router'));
   fs.writeFileSync(path.join(repo, '.agentic-router', 'policy.json'), JSON.stringify({ bashAllow: ['make lint'] }));
   const shown = await run(guard, 'show');
-  assert.match(shown.text, /\.agentic-router[\\/]policy\.json \(sha256 [0-9a-f]{12}\): not accepted: ignored \(in the previous release's folder: rename \.agentic-router to \.do-it-all-claude-code; the acceptance stays\)/);
-  assert.match(shown.text, /- "make lint"/);
-  assert.match(projectFolderCheck(repo)!.detail, /has the previous release's \.agentic-router: rename it to \.do-it-all-claude-code/);
+  assert.match(shown.text, /: no \.do-it-all-claude-code\/policy\.json; \.agentic-router\/policy\.json is no longer read: rename \.agentic-router to \.do-it-all-claude-code \(a policy you accepted counts again after the rename\)$/);
+  assert.ok(!shown.text.includes('make lint'), 'nothing of it is shown as if it counted');
+  assert.equal((await run(guard, 'accept', { yes: true })).code, 2, 'nothing to accept');
+  assert.deepEqual(policyCheck(guard, repo), { name: 'project policy', ok: true, blocking: false, detail: 'none in this repository' });
+  assert.match(projectFolderCheck(repo)!.detail, /has \.agentic-router \(the previous release's folder\): no longer read; rename it to \.do-it-all-claude-code$/);
   fs.mkdirSync(path.join(repo, '.do-it-all-claude-code'));
-  assert.match(projectFolderCheck(repo)!.detail, /has both \.agentic-router and \.do-it-all-claude-code/);
+  assert.match(projectFolderCheck(repo)!.detail, /has both \.agentic-router and \.do-it-all-claude-code: \.agentic-router is no longer read; move what you still need into \.do-it-all-claude-code and remove it$/);
   assert.equal(projectFolderCheck(repo)!.blocking, false);
+  // renamed: read again
+  fs.rmSync(path.join(repo, '.do-it-all-claude-code'), { recursive: true });
+  fs.renameSync(path.join(repo, '.agentic-router'), path.join(repo, '.do-it-all-claude-code'));
+  assert.match((await run(guard, 'show')).text, /- "make lint"/);
+  assert.equal(projectFolderCheck(repo), null);
 });

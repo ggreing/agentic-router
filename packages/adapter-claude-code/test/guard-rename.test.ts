@@ -1,12 +1,13 @@
-// Decision 161: the product was renamed. The previous release's project folder (.agentic-router) is still read
-// for this release and stays as protected as the new one; the previous home (~/.agentic-router) stays off
-// limits to workers until init moves it. Temp repositories and homes only.
+// Decisions 161, 164: the product was renamed. The previous release's project folder (.agentic-router) is no longer
+// read and stays as protected as the new one; the previous home (~/.agentic-router) stays off limits to workers
+// until init moves it. Temp repositories and homes only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as guard from '../../../plugin/hooks/guard.mjs';
 import { CREDENTIAL_PATHS, GUARD_SENSITIVE_SEGMENTS, NEVER_GRANTABLE_WRITE_PATHS, PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 
@@ -42,23 +43,35 @@ test('decision 161: both project folders are protected, never grantable, and nam
   } finally { fs.rmSync(w.base, { recursive: true, force: true }); }
 });
 
-test('decision 161: a policy in the previous release\'s folder is read while the new folder has none, and the acceptance survives the rename', () => {
+test('decision 164: the previous release\x27s folder is no longer read; an acceptance is keyed by repository and content, so it carries over a rename', () => {
   const w = world();
   const stateHome = path.join(w.home, '.do-it-all-claude-code');
+  const oldDir = path.join(w.repo, '.agentic-router'), newDir = path.join(w.repo, '.do-it-all-claude-code');
+  const content = JSON.stringify({ bashAllow: ['make lint'] });
   try {
-    fs.mkdirSync(path.join(w.repo, '.agentic-router'));
-    fs.writeFileSync(path.join(w.repo, '.agentic-router', 'policy.json'), JSON.stringify({ bashAllow: ['make lint'] }));
+    // only the old folder: not read
+    fs.mkdirSync(oldDir);
+    fs.writeFileSync(path.join(oldDir, 'policy.json'), content);
     let s = guard.policyStatus(w.repo, stateHome);
-    assert.deepEqual([s.present, s.legacy, s.file], [true, true, path.join(w.repo, '.agentic-router', 'policy.json')]);
-    guard.acceptPolicy(w.repo, stateHome, new Date(), s.hash);
-    assert.deepEqual(guard.readAcceptedPolicy(w.repo, stateHome)?.bashAllow, ['make lint']);
-    // the user renames the folder: same content, same acceptance
-    fs.renameSync(path.join(w.repo, '.agentic-router'), path.join(w.repo, '.do-it-all-claude-code'));
+    assert.deepEqual([s.present, s.accepted, s.file], [false, false, path.join(newDir, 'policy.json')]);
+    assert.equal(guard.readAcceptedPolicy(w.repo, stateHome), null);
+    // renamed: read, accepted, and the record names the repository and the content's hash, not a folder
+    fs.renameSync(oldDir, newDir);
     s = guard.policyStatus(w.repo, stateHome);
-    assert.deepEqual([s.accepted, s.legacy], [true, false]);
-    // both folders: the new one is read
-    fs.mkdirSync(path.join(w.repo, '.agentic-router'));
-    fs.writeFileSync(path.join(w.repo, '.agentic-router', 'policy.json'), JSON.stringify({ bashAllow: ['rm -rf /'] }));
+    assert.equal(s.hash, createHash('sha256').update(content).digest('hex'));
+    guard.acceptPolicy(w.repo, stateHome, new Date(), s.hash);
+    const record = JSON.parse(fs.readFileSync(path.join(stateHome, guard.POLICY_ACCEPT_FILE), 'utf8')) as { roots: Record<string, { hash: string }> };
+    assert.deepEqual(Object.values(record.roots).map(r => r.hash), [s.hash]);
+    assert.ok(Object.keys(record.roots).every(k => !/\.agentic-router|\.do-it-all-claude-code/.test(k)), 'keyed by the repository, not by the folder');
+    // an acceptance recorded while the policy sat in the old folder (as the previous release did) carries over: the
+    // same key and hash; moved away it is not read, moved back it counts again without a new acceptance
+    fs.renameSync(newDir, oldDir);
+    assert.equal(guard.readAcceptedPolicy(w.repo, stateHome), null, 'in the old folder: not read');
+    fs.renameSync(oldDir, newDir);
+    assert.deepEqual(guard.readAcceptedPolicy(w.repo, stateHome)?.bashAllow, ['make lint']);
+    // both folders: only the new one is read
+    fs.mkdirSync(oldDir);
+    fs.writeFileSync(path.join(oldDir, 'policy.json'), JSON.stringify({ bashAllow: ['rm -rf /'] }));
     assert.deepEqual(guard.policyStatus(w.repo, stateHome).policy?.bashAllow, ['make lint']);
   } finally { fs.rmSync(w.base, { recursive: true, force: true }); }
 });
