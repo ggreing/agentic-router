@@ -40,8 +40,9 @@ Steps to cut a public release. Replace `X.Y.Z` with the version (for example `0.
 - Tag the release commit (`git tag vX.Y.Z`) and push the tag.
 - Create the GitHub release from the tag, using `docs/release-notes-X.Y.Z.md` as the body.
 
-## Next steps (not done yet)
+## CI
 
-- **No CI workflow yet.** There is no `.github/workflows/` pipeline; the pre-PR checks in CONTRIBUTING.md
-  (`npm test`, `npx tsc -b`, `npm run build:dashboard`, and `scripts/guard-e2e/run.mjs` for guard changes)
-  are run by hand. Adding a CI workflow that runs them on every PR is the recommended next step.
+GitHub Actions (`.github/workflows/ci.yml`) builds, typechecks, builds the dashboard and runs the tests on Linux,
+Windows and macOS for every pull request and every push to `main`. A release commit should be green on all
+three. The live checks that need a real Claude Code (`scripts/guard-e2e/run.mjs`, `scripts/tls-live/run.mjs`)
+are run by hand before a release that touches the guard or API-key mode.

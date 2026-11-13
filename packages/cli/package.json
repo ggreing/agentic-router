@@ -1,6 +1,6 @@
 {
   "name": "agentic-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "agentic-router command: init, start, stop, status, doctor, supervise, mode, token, key, proxy",
   "license": "Apache-2.0",
@@ -15,8 +15,8 @@
     "agentic-router": "./src/index.ts"
   },
   "dependencies": {
-    "@agentic-router/core": "0.1.0",
-    "@agentic-router/daemon": "0.1.0",
-    "@agentic-router/proxy": "0.1.0"
+    "@agentic-router/core": "0.2.0",
+    "@agentic-router/daemon": "0.2.0",
+    "@agentic-router/proxy": "0.2.0"
   }
 }

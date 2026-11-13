@@ -5,6 +5,21 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-13
+
+Second pre-release: mostly security work for shared machines and API-key mode, plus better triage outside English.
+
+### Upgrading from 0.1.0
+
+- Run `agentic-router stop`, then `git pull`, `npm ci` and `npm run build:dashboard`, then
+  `agentic-router start`: the daemon needs a restart for the sealed messages and, on macOS and Linux, the
+  socket. Restart open Claude Code sessions too; the plugin is read from your checkout.
+- In API-key mode, run `agentic-router mode api` once. It makes the local certificate and switches Claude
+  Code's settings to `https://127.0.0.1:<port>`.
+- The daemon still accepts the 0.1.0 way of calling it (the token sent as a header) for this release, so
+  sessions that were open during the upgrade keep working. It is controlled by `bearerApi` and will be off
+  by default in the next release.
+
 ### API-key mode
 
 - The proxy now holds each request's worst case — its prompt size and `max_tokens` priced at the model's
@@ -19,13 +34,14 @@ All notable changes to this project are documented here. This project adheres to
   through the corporate proxy, `init --mode api` and `mode api` add `127.0.0.1` and `localhost` to
   `NO_PROXY` in Claude Code's settings (keeping your entries); `mode direct`, `mode subscription` and
   `uninstall` remove only what they added. `agentic-router doctor` checks both directions.
+- Pricing knows Claude Fable 5.2, charges fast-mode requests at their real rate, and prices Fable 5.1 cache
+  reads correctly (they were overestimated).
 
 ### Security
 
 - Messages between the router's own programs (hooks, status line, MCP server, CLI) and the daemon are now
   encrypted and authenticated with a key derived from the token. A program that takes the daemon's port
-  while it is down can read neither the token nor your prompts and cannot answer in the daemon's place
-  (decision 156).
+  while it is down can read neither the token nor your prompts and cannot answer in the daemon's place.
 - On macOS and Linux the router's programs reach the daemon through a Unix socket in the router home that
   only your user can enter, and never fall back to the port when the socket is gone; Windows keeps the
   local port with sealed messages.
@@ -124,5 +140,6 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
-[Unreleased]: https://github.com/ggreing/agentic-router/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ggreing/agentic-router/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ggreing/agentic-router/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ggreing/agentic-router/releases/tag/v0.1.0
