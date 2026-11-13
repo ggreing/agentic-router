@@ -91,9 +91,11 @@ daemon, and does not see those requests at all. If there is no private place for
 path is too long and no private directory can be made), the daemon uses the local port with sealed messages
 and `daemon.log` says so. Windows uses the local port with sealed messages.
 
-In API-key mode, Claude Code sends its requests to the local proxy directly, and that connection is not
-protected yet: a program that takes the proxy's port while the proxy is down receives the requests sent to
-it, prompts and the local token included.
+In API-key mode Claude Code reaches the proxy over local TLS with a certificate only this router holds, so a
+program that takes the proxy's port can't complete the handshake and gets neither the token nor a prompt.
+Without `openssl` (plain HTTP), Claude Code caches the helper's token for up to 60 seconds: for that long
+after the proxy stops, a program on its port could receive that token — useless once the proxy restarts with
+a new one — and the prompts sent in that minute. `doctor` reports when TLS is off.
 
 **What real isolation would take.** Running workers as another OS user or in a container. That is not
 part of this release.

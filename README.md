@@ -81,6 +81,18 @@ by URL, and server tools such as web search — is charged when the call settles
 little over the cap. The key itself lives only in the OS keychain. If the proxy ever gets in your way, `agentic-router mode direct`
 bypasses it and `agentic-router mode proxy` puts it back.
 
+**Local TLS.** In API-key mode Claude Code reaches the proxy over `https://127.0.0.1:<port>` with a
+certificate only this router holds — made with `openssl`, good for `127.0.0.1` and `localhost` only and
+unable to vouch for any other site, and kept readable by you alone in the router home — which Claude Code
+trusts through `NODE_EXTRA_CA_CERTS` in its settings. The certificate is renewed before it expires, and
+Claude Code sessions that were open during a renewal need a restart; `doctor` says when. If another program
+takes the proxy's port while the proxy is down, it cannot complete the TLS handshake, so neither the local
+token nor a prompt reaches it. If you already set `NODE_EXTRA_CA_CERTS` yourself (say a corporate CA), the router
+writes a bundle of your certificates and its own into Claude Code's settings so your CA stays trusted;
+`mode direct`, `mode subscription` and `uninstall` put your own value back, and `doctor` offers to point
+your shell variable at the bundle too. Without `openssl` the proxy stays on plain HTTP with the same request
+checks, and `doctor` says so.
+
 **Behind a corporate proxy.** The proxy reaches the API through whatever proxy your environment names — the
 first of `https_proxy`, `HTTPS_PROXY`, `http_proxy` and `HTTP_PROXY` (the order Claude Code uses), with
 `NO_PROXY` honoured. It uses Node's built-in proxy support (Node 24.5 or later), so HTTPS goes through a
@@ -89,8 +101,8 @@ only to the proxy and never appear in logs, errors or `doctor`. A TLS-inspecting
 certificate trusted by Node, for example through `NODE_EXTRA_CA_CERTS`. SOCKS is not supported, and a proxy
 setting the router cannot use stops it from starting rather than quietly going around the proxy.
 
-In the other direction, Claude Code would otherwise send its own calls to the local proxy
-(`http://127.0.0.1:<port>`, local token included) through your corporate proxy too. So when a proxy is set,
+In the other direction, Claude Code would otherwise send its own requests for the local proxy at
+`127.0.0.1:<port>` (local token included) through your corporate proxy too. So when a proxy is set,
 `agentic-router init --mode api` and `mode api` add `127.0.0.1` and `localhost` to `NO_PROXY` in Claude
 Code's settings, keeping your own entries; `mode direct`, `mode subscription` and `uninstall` remove only
 what they added. `agentic-router doctor` checks both directions.

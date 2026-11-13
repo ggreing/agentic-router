@@ -82,6 +82,18 @@ API キーで使うには `agentic-router init --mode api` を実行します。
 キーチェーンにだけ置きます。プロキシが邪魔なときは
 `agentic-router mode direct` で迂回し、`agentic-router mode proxy` で戻せます。
 
+**ローカル TLS。** API キーモードでは Claude Code は `https://127.0.0.1:<port>` でプロキシに接続し、この
+ルーターだけが持つ証明書を使います。`openssl` で作り、`127.0.0.1` と `localhost` にのみ有効で、ほかのサイト
+の保証はできず、ルーターホームにあなただけが読める形で置きます。Claude Code は設定の `NODE_EXTRA_CA_CERTS`
+を通じてこの証明書を信頼します。証明書は期限が切れる前に更新され、更新中に開いていた Claude Code のセッション
+は再起動が必要です。`doctor` がそのタイミングを伝えます。別のプログラムがプロキシの停止中にそのポートを奪っても
+TLS ハンドシェイクを完了できないので、ローカルトークンもプロンプトもそこには届きません。すでに
+`NODE_EXTRA_CA_CERTS` を自分で設定している場合（たとえば社内 CA）、ルーターはあなたの証明書と自分の証明書を
+束ねたバンドルを Claude Code の設定に書き込み、社内 CA も信頼されたままにします。`mode direct`・
+`mode subscription`・`uninstall` はあなたの元の値に戻し、`doctor` はシェル変数もそのバンドルを指すよう勧め
+ます。`openssl` が無ければプロキシは同じリクエスト点検を保ったまま平文 HTTP で動き、`doctor` がそれを伝え
+ます。
+
 **社内プロキシの背後で。** プロキシは環境が指定するプロキシ経由で API に届きます。`https_proxy`、
 `HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY` のうち最初に設定されたもの（Claude Code が使う順）を用い、
 `NO_PROXY` を尊重します。Node 組み込みのプロキシ対応（Node 24.5 以降）を使うので、HTTPS は CONNECT
@@ -90,8 +102,8 @@ API キーで使うには `agentic-router init --mode api` を実行します。
 する必要があり、たとえば `NODE_EXTRA_CA_CERTS` で指定します。SOCKS には対応せず、ルーターが使えない
 プロキシ設定なら、こっそり迂回する代わりに起動を止めます。
 
-逆方向では、そのままだと Claude Code がローカルプロキシ宛てに送る自分の呼び出し（`http://127.0.0.1:<port>`、
-ローカルトークンを含む）も社内プロキシを経由してしまいます。そこでプロキシが設定されていると、
+逆方向では、そのままだと Claude Code が `127.0.0.1:<port>` のローカルプロキシ宛てに送る自分のリクエスト
+（ローカルトークンを含む）も社内プロキシを経由してしまいます。そこでプロキシが設定されていると、
 `agentic-router init --mode api` と `mode api` が Claude Code の設定の `NO_PROXY` に `127.0.0.1` と
 `localhost` を追加し（既存の項目は残します）、`mode direct`・`mode subscription`・`uninstall` は自分が
 追加した分だけを取り除きます。`agentic-router doctor` は両方向を確認します。

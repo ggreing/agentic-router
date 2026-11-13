@@ -80,6 +80,17 @@ API 키로 쓰려면 `agentic-router init --mode api`를 실행하세요. API �
 키체인에만 둡니다. 프록시가 거슬리면 `agentic-router mode direct`로 우회하고, `agentic-router mode proxy`로
 되돌리면 됩니다.
 
+**로컬 TLS.** API 키 모드에서 Claude Code는 `https://127.0.0.1:<port>`로 프록시에 연결하며, 이 라우터만
+가진 인증서를 씁니다. `openssl`로 만들고 `127.0.0.1`과 `localhost`에만 유효하며 다른 사이트를 보증할 수
+없고, 라우터 홈에 당신만 읽을 수 있게 둡니다. Claude Code는 설정의 `NODE_EXTRA_CA_CERTS`를 통해 이 인증서를
+신뢰합니다. 인증서는 만료 전에 갱신되며, 갱신 중에 열려 있던 Claude Code 세션은 다시 시작해야 합니다.
+`doctor`가 그 시점을 알려줍니다. 다른 프로그램이 프록시가 꺼진 사이 그 포트를 차지해도 TLS 핸드셰이크를 끝내지
+못하므로 로컬 토큰도 프롬프트도 그쪽으로 가지 않습니다. 이미 `NODE_EXTRA_CA_CERTS`를 직접 쓰고 있다면(예:
+회사 CA), 라우터가 당신의 인증서와 자기 인증서를 묶은 번들을 Claude Code 설정에 넣어 회사 CA도 계속
+신뢰되게 하고, `mode direct`·`mode subscription`·`uninstall`은 당신의 원래 값을 되돌리며, `doctor`는 셸
+변수도 그 번들을 가리키도록 제안합니다. `openssl`이 없으면 프록시는 같은 요청 점검을 유지한 채 평문 HTTP로
+동작하고, `doctor`가 이를 알려줍니다.
+
 **회사 프록시 뒤에서.** 프록시는 환경이 지정한 프록시를 통해 API에 닿습니다. `https_proxy`, `HTTPS_PROXY`,
 `http_proxy`, `HTTP_PROXY` 중 처음 설정된 것(Claude Code가 쓰는 순서)을 쓰고 `NO_PROXY`를 존중합니다.
 Node 내장 프록시 지원(Node 24.5 이상)을 쓰므로 HTTPS는 CONNECT 터널로 지나가고 API 인증서는 끝까지
@@ -87,8 +98,8 @@ Node 내장 프록시 지원(Node 24.5 이상)을 쓰므로 HTTPS는 CONNECT 터
 들여다보는 프록시라면 그 루트 인증서를 Node가 신뢰해야 하며, 예를 들어 `NODE_EXTRA_CA_CERTS`로 지정합니다.
 SOCKS는 지원하지 않고, 라우터가 쓸 수 없는 프록시 설정이면 프록시를 몰래 우회하는 대신 시작을 멈춥니다.
 
-반대 방향으로, 그냥 두면 Claude Code가 로컬 프록시로 보내는 자기 호출(`http://127.0.0.1:<port>`, 로컬
-토큰 포함)도 회사 프록시를 거치게 됩니다. 그래서 프록시가 설정돼 있으면 `agentic-router init --mode api`와
+반대 방향으로, 그냥 두면 Claude Code가 `127.0.0.1:<port>`의 로컬 프록시로 보내는 자기 요청(로컬 토큰
+포함)도 회사 프록시를 거치게 됩니다. 그래서 프록시가 설정돼 있으면 `agentic-router init --mode api`와
 `mode api`가 Claude Code 설정의 `NO_PROXY`에 `127.0.0.1`과 `localhost`를 더하고(기존 항목은 유지),
 `mode direct`, `mode subscription`, `uninstall`은 자신이 더한 것만 뺍니다. `agentic-router doctor`가 양쪽
 방향을 모두 점검합니다.

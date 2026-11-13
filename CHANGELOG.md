@@ -29,6 +29,12 @@ All notable changes to this project are documented here. This project adheres to
 - On macOS and Linux the router's programs reach the daemon through a Unix socket in the router home that
   only your user can enter, and never fall back to the port when the socket is gone; Windows keeps the
   local port with sealed messages.
+- In API-key mode the proxy serves Claude Code over local TLS: a private certificate, held only by this
+  router and valid for `127.0.0.1` and `localhost` only, that Claude Code trusts through
+  `NODE_EXTRA_CA_CERTS` in its settings (bundled with any certificate you already trust there, and restored
+  on a mode switch and `uninstall`). The local-token helper prints the token only after the proxy proves it
+  holds the current one, and the proxy writes a fresh token at every start, so an old token is refused.
+  Without `openssl` the proxy stays on plain HTTP and `doctor` says so.
 
 ### Delegation
 

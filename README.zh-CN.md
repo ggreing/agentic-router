@@ -71,13 +71,23 @@ Anthropic 通信。
 不在正文里，只有在调用结算时才计费，所以一天仍可能略微超出上限。密钥本身只放在操作系统的密钥库里。要是代理碍事，`agentic-router mode direct` 可以绕过它，`agentic-router mode
 proxy` 再把它放回来。
 
+**本地 TLS。** 在 API 密钥模式下，Claude Code 通过 `https://127.0.0.1:<port>` 连接代理，使用只有这个路由器
+持有的证书。它用 `openssl` 生成，只对 `127.0.0.1` 和 `localhost` 有效，无法为其他站点背书，放在路由器主目录
+里、只有你能读取。Claude Code 通过设置里的 `NODE_EXTRA_CA_CERTS` 信任这张证书。证书会在到期前续期，续期时
+仍开着的 Claude Code 会话需要重启；`doctor` 会告知时机。若别的程序在代理停止时占住它的端口，它无法完成
+TLS 握手，所以本地令牌和提示都不会送到那里。如果你自己已经在用
+`NODE_EXTRA_CA_CERTS`（比如公司 CA），路由器会把你的证书和它自己的证书打成一个捆绑包写进 Claude Code 的
+设置，让公司 CA 继续受信任；`mode direct`、`mode subscription` 和 `uninstall` 会还原你原来的值，`doctor`
+还会建议把你的 shell 变量也指向这个捆绑包。没有 `openssl` 时，代理会保持相同的请求检查、改用明文 HTTP，
+`doctor` 会说明这一点。
+
 **在公司代理后面。** 代理通过你环境里指定的代理访问 API：`https_proxy`、`HTTPS_PROXY`、`http_proxy`、
 `HTTP_PROXY` 中第一个设置的那个（Claude Code 使用的顺序），并尊重 `NO_PROXY`。它用 Node 内置的代理支持
 （Node 24.5 及以上），所以 HTTPS 走 CONNECT 隧道，API 的证书仍然端到端验证。代理 URL 里的凭据只发给代理，
 不会出现在日志、错误或 `doctor` 里。会解密 TLS 的代理需要让 Node 信任它的根证书，例如通过
 `NODE_EXTRA_CA_CERTS`。不支持 SOCKS；遇到路由器无法使用的代理设置，它会停止启动，而不是悄悄绕过代理。
 
-反过来，若不处理，Claude Code 发给本地代理的自身调用（`http://127.0.0.1:<port>`，含本地令牌）也会经过你的
+反过来，若不处理，Claude Code 发给 `127.0.0.1:<port>` 本地代理的自身请求（含本地令牌）也会经过你的
 公司代理。所以设置了代理时，`agentic-router init --mode api` 和 `mode api` 会把 `127.0.0.1` 和 `localhost`
 加到 Claude Code 设置的 `NO_PROXY` 里（保留你自己的条目）；`mode direct`、`mode subscription` 和
 `uninstall` 只移除它们自己加的那部分。`agentic-router doctor` 会检查两个方向。
