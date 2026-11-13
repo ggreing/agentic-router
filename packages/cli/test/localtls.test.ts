@@ -253,47 +253,55 @@ test('decision 156: uninstall and an offline purge remove the daemon\'s endpoint
   const long = path.join(h, 'x'.repeat(120));
   fs.mkdirSync(long, { recursive: true });
   fs.writeFileSync(path.join(long, 'endpoint.json'), '{}');
-  const base = path.join(tmp, 'run');
-  fs.mkdirSync(base);
-  const o = { env: { XDG_RUNTIME_DIR: base }, tmpdir: path.join(tmp, 'tmp-none') };
-  const fallback = socketCandidates(long, o).find(c => c.fallback)!;
-  fs.mkdirSync(fallback.dir, { mode: 0o700 });
-  fs.writeFileSync(fallback.path, '');
-  assert.deepEqual(removeEndpointFiles(long, { ...o, dryRun: true }).sort(), [path.join(long, 'endpoint.json'), fallback.path, fallback.dir].sort());
-  removeEndpointFiles(long, o);
-  assert.deepEqual(fs.readdirSync(base), [], 'the fallback directory is gone');
-  // review L6: the socket the daemon named (elsewhere than this environment derives) goes too, when its directory is ours
-  const named = path.join(tmp, 'named-run');
-  fs.mkdirSync(named, { mode: 0o700 });
-  const endpointNaming = (socket: string) => fs.writeFileSync(path.join(long, 'endpoint.json'), JSON.stringify({ version: 1, pid: 1, startedAt: '', port: 4711, socket }));
-  // review R5: only a real socket called daemon.sock: a regular file of that name, or any other file named, is kept
-  fs.writeFileSync(path.join(named, 'daemon.sock'), 'not a socket');
-  endpointNaming(path.join(named, 'daemon.sock'));
-  removeEndpointFiles(long, o);
-  assert.equal(fs.readFileSync(path.join(named, 'daemon.sock'), 'utf8'), 'not a socket');
-  fs.writeFileSync(path.join(named, 'notes.txt'), 'keep');
-  endpointNaming(path.join(named, 'notes.txt'));
-  removeEndpointFiles(long, o);
-  assert.equal(fs.readFileSync(path.join(named, 'notes.txt'), 'utf8'), 'keep');
-  fs.rmSync(path.join(named, 'daemon.sock'));
-  fs.rmSync(path.join(named, 'notes.txt'));
-  const listener = net.createServer();
-  await new Promise<void>(r => listener.listen(path.join(named, 'daemon.sock'), () => r()));
-  endpointNaming(path.join(named, 'daemon.sock'));
-  removeEndpointFiles(long, o);
-  await new Promise<void>(r => listener.close(() => r()));
-  assert.ok(!fs.existsSync(named), 'the named socket and its private directory are gone');
-  // a fallback "directory" that is a link, or open to others, is left alone
-  const elsewhere = path.join(tmp, 'elsewhere');
-  fs.mkdirSync(elsewhere, { mode: 0o700 });
-  fs.writeFileSync(path.join(elsewhere, 'daemon.sock'), 'keep');
-  fs.symlinkSync(elsewhere, fallback.dir);
-  removeEndpointFiles(long, o);
-  assert.ok(fs.existsSync(path.join(elsewhere, 'daemon.sock')), 'nothing removed through a link');
-  fs.unlinkSync(fallback.dir);
-  fs.mkdirSync(fallback.dir, { mode: 0o755 });
-  fs.chmodSync(fallback.dir, 0o755);
-  fs.writeFileSync(fallback.path, '');
-  removeEndpointFiles(long, o);
-  assert.ok(fs.existsSync(fallback.path), 'not a private directory: not ours to clean');
+  // The fallback base, and the socket the daemon names below, are in a short directory straight under /tmp: the
+  // per-test temp directory is itself too long for a socket path on macOS (/var/folders/…/T/…), which would leave no
+  // candidate to test (and no socket to listen on).
+  const short = fs.realpathSync(fs.mkdtempSync('/tmp/ar-'));
+  try {
+    const base = path.join(short, 'run');
+    fs.mkdirSync(base);
+    const o = { env: { XDG_RUNTIME_DIR: base }, tmpdir: path.join(short, 'tmp-none') };
+    const candidates = socketCandidates(long, o).filter(c => c.fallback);
+    assert.ok(candidates.length >= 1, `a fallback place fits (${socketCandidates(long, o).map(c => c.path).join(', ') || 'none'})`);
+    const fallback = candidates[0]!;
+    fs.mkdirSync(fallback.dir, { mode: 0o700 });
+    fs.writeFileSync(fallback.path, '');
+    assert.deepEqual(removeEndpointFiles(long, { ...o, dryRun: true }).sort(), [path.join(long, 'endpoint.json'), fallback.path, fallback.dir].sort());
+    removeEndpointFiles(long, o);
+    assert.deepEqual(fs.readdirSync(base), [], 'the fallback directory is gone');
+    // review L6: the socket the daemon named (elsewhere than this environment derives) goes too, when its directory is ours
+    const named = path.join(short, 'named-run');
+    fs.mkdirSync(named, { mode: 0o700 });
+    const endpointNaming = (socket: string) => fs.writeFileSync(path.join(long, 'endpoint.json'), JSON.stringify({ version: 1, pid: 1, startedAt: '', port: 4711, socket }));
+    // review R5: only a real socket called daemon.sock: a regular file of that name, or any other file named, is kept
+    fs.writeFileSync(path.join(named, 'daemon.sock'), 'not a socket');
+    endpointNaming(path.join(named, 'daemon.sock'));
+    removeEndpointFiles(long, o);
+    assert.equal(fs.readFileSync(path.join(named, 'daemon.sock'), 'utf8'), 'not a socket');
+    fs.writeFileSync(path.join(named, 'notes.txt'), 'keep');
+    endpointNaming(path.join(named, 'notes.txt'));
+    removeEndpointFiles(long, o);
+    assert.equal(fs.readFileSync(path.join(named, 'notes.txt'), 'utf8'), 'keep');
+    fs.rmSync(path.join(named, 'daemon.sock'));
+    fs.rmSync(path.join(named, 'notes.txt'));
+    const listener = net.createServer();
+    await new Promise<void>(r => listener.listen(path.join(named, 'daemon.sock'), () => r()));
+    endpointNaming(path.join(named, 'daemon.sock'));
+    removeEndpointFiles(long, o);
+    await new Promise<void>(r => listener.close(() => r()));
+    assert.ok(!fs.existsSync(named), 'the named socket and its private directory are gone');
+    // a fallback "directory" that is a link, or open to others, is left alone
+    const elsewhere = path.join(tmp, 'elsewhere');
+    fs.mkdirSync(elsewhere, { mode: 0o700 });
+    fs.writeFileSync(path.join(elsewhere, 'daemon.sock'), 'keep');
+    fs.symlinkSync(elsewhere, fallback.dir);
+    removeEndpointFiles(long, o);
+    assert.ok(fs.existsSync(path.join(elsewhere, 'daemon.sock')), 'nothing removed through a link');
+    fs.unlinkSync(fallback.dir);
+    fs.mkdirSync(fallback.dir, { mode: 0o755 });
+    fs.chmodSync(fallback.dir, 0o755);
+    fs.writeFileSync(fallback.path, '');
+    removeEndpointFiles(long, o);
+    assert.ok(fs.existsSync(fallback.path), 'not a private directory: not ours to clean');
+  } finally { fs.rmSync(short, { recursive: true, force: true }); }
 });
