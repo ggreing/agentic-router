@@ -24,6 +24,7 @@
 // the same bytes and open each other's messages.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import http from 'node:http';
+import { daemonTarget } from './endpoint.ts';
 
 export const SEAL_VERSION = 1;
 export const SEALED_PATH = '/router/v1/sealed';
@@ -144,7 +145,15 @@ export function openResponse(secret: string, requestNonce: string, envelopeText:
     v => typeof v.s === 'number' && typeof v.ct === 'string' && typeof v.b === 'string');
 }
 
-export interface SealedCall { port: number; secret: string; method: string; path: string; body?: string; timeoutMs?: number; host?: string }
+export interface SealedCall {
+  port: number; secret: string; method: string; path: string; body?: string; timeoutMs?: number; host?: string;
+  /** A Unix socket to connect to in place of the TCP port (the port still names the daemon in the Host header). */
+  socketPath?: string;
+  /** The router home: when the daemon named a socket in its endpoint file there, that socket is used, and only it. */
+  home?: string;
+  /** An http.Agent for the TCP connection (a caller that must not go through an environment proxy passes its own). */
+  agent?: http.Agent | false;
+}
 
 /**
  * One sealed call to the daemon (node:http, never fetch: an HTTP_PROXY setting must not see it).
@@ -157,9 +166,14 @@ export function sealedCall(o: SealedCall): Promise<{ status: number; contentType
   return new Promise((resolve, reject) => {
     const { envelope, nonce } = sealRequest(o.secret, { m: o.method, p: o.path, ...(o.body !== undefined ? { b: o.body } : {}) });
     const host = o.host ?? '127.0.0.1';
+    // The socket the daemon named for this home, when there is one. Then only the socket is tried: if it
+    // cannot be reached the daemon is down, and the TCP port is not a second chance (no silent downgrade).
+    const named = o.socketPath === undefined && o.home !== undefined ? daemonTarget(o.home, o.port) : undefined;
+    const socketPath = o.socketPath ?? named?.socketPath;
+    const port = named?.port ?? o.port;
     const req = http.request({
-      host, port: o.port, method: 'POST', path: SEALED_PATH, agent: false, timeout: o.timeoutMs ?? 1500,
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(envelope), host: `${host}:${o.port}` },
+      ...(socketPath !== undefined ? { socketPath } : { host, port }), method: 'POST', path: SEALED_PATH, agent: o.agent ?? false, timeout: o.timeoutMs ?? 1500,
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(envelope), host: `${host}:${port}` },
     }, res => {
       const chunks: Buffer[] = [];
       res.on('data', d => chunks.push(d as Buffer));

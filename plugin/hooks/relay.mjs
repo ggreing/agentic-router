@@ -261,8 +261,8 @@ export function spool(home, eventInput, receivedAt, recordPrompts = false) {
 // token nor the hook input, and cannot answer. Anything but a sealed answer from the daemon that holds the
 // token counts as "daemon not reachable": the event is spooled and the hook passes. There is no fallback
 // to a call that sends the token, also not against a daemon of an older version.
-async function post({ port, token, body, timeoutMs }) {
-  const res = await sealedCall({ port, secret: token, method: 'POST', path: ENDPOINT, body, timeoutMs });
+async function post({ home, port, token, body, timeoutMs }) {
+  const res = await sealedCall({ home, port, secret: token, method: 'POST', path: ENDPOINT, body, timeoutMs });
   if (res.status >= 200 && res.status < 300) return res.body;
   throw new Error(`daemon status ${res.status}`);
 }
@@ -306,7 +306,7 @@ export async function relay(raw, { home = routerHome(), write = s => process.std
   try {
     // decision 149: the lead's edit reaches the daemon as tool name and path only; its content never leaves this hook
     const body = JSON.stringify(isRecord(input) && EDIT_TOOL_PATH[input.tool_name] ? minimalHookInput(input) : input);
-    const response = await post({ port, token, body, timeoutMs });
+    const response = await post({ home, port, token, body, timeoutMs });
     write(response);                        // verbatim: JSON for most events, text/plain for pre_compact
   } catch {
     spool(home, input, receivedAt, cfg.recordPrompts === true);   // daemon down / slow / error: queue for replay, then pass

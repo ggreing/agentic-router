@@ -56,9 +56,9 @@ export function shouldSendLimits(stamp, rateLimits, now, minIntervalMs = LIMITS_
   return now - (Number(stamp.at) || 0) >= minIntervalMs;
 }
 
-async function postLimits({ port, token, sessionId, rateLimits, model, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
+async function postLimits({ home, port, token, sessionId, rateLimits, model, timeoutMs = LIMITS_POST_TIMEOUT_MS }) {
   const body = JSON.stringify({ sessionId, rateLimits, ...(model ? { model } : {}), at: new Date().toISOString() });
-  await sealedCall({ port, secret: token, method: 'POST', path: LIMITS_ENDPOINT, body, timeoutMs });
+  await sealedCall({ home, port, secret: token, method: 'POST', path: LIMITS_ENDPOINT, body, timeoutMs });
 }
 
 /** Reads the per-session stamp, decides via shouldSendLimits, posts if due, and updates the stamp. Never throws. */
@@ -71,7 +71,7 @@ export async function maybeSendLimits({ home, port, token, sessionId, rateLimits
   if (!shouldSendLimits(stamp, rateLimits, now, LIMITS_MIN_INTERVAL_MS, model)) return;
   // Stamp before the POST so rapid renders don't queue duplicate requests even if the POST is slow.
   try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify({ hash: stampHash(rateLimits, model), at: now })); } catch { /* best effort */ }
-  try { await postLimits({ port, token, sessionId, rateLimits, model }); } catch { /* daemon down/slow: the status line still prints */ }
+  try { await postLimits({ home, port, token, sessionId, rateLimits, model }); } catch { /* daemon down/slow: the status line still prints */ }
 }
 
 /** One line from a /router/v1/status response; roles with the same step are grouped (coder×2 s1). */
@@ -103,12 +103,12 @@ function readText(file) {
 }
 
 /** The daemon's status view, or null when it does not answer properly within the time limit. */
-export async function fetchStatus({ port, token, sessionId, timeoutMs = DAEMON_TIMEOUT_MS }) {
+export async function fetchStatus({ home, port, token, sessionId, timeoutMs = DAEMON_TIMEOUT_MS }) {
   if (!Number.isInteger(port) || port <= 0 || !token) return null;
   const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
   try {
     // sealed: the answer is shown only when it comes from the daemon that holds the token
-    const res = await sealedCall({ port, secret: token, method: 'GET', path: `/router/v1/status${query}`, timeoutMs });
+    const res = await sealedCall({ home, port, secret: token, method: 'GET', path: `/router/v1/status${query}`, timeoutMs });
     return res.status === 200 ? JSON.parse(res.body) : null;
   } catch { return null; }
 }
@@ -161,7 +161,7 @@ export async function statusLine(input, env = process.env) {
     ? maybeSendLimits({ home, port: config.daemonPort, token, sessionId, rateLimits: parsed.rate_limits, model })
     : Promise.resolve();
   const [view, wrapped] = await Promise.all([
-    fetchStatus({ port: config.daemonPort, token, sessionId }),
+    fetchStatus({ home, port: config.daemonPort, token, sessionId }),
     env[NESTED_ENV] ? Promise.resolve('') : runWrapped(config.wrappedStatusLine, input, WRAPPED_TIMEOUT_MS, env),
     limits,
   ]);

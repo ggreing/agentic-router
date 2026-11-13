@@ -48,9 +48,11 @@ hooks shows up here before it shows up as a wrong guard decision.
 
 A third run, **squatter** (`--only=squatter` runs it alone), checks the hooks rather than the guard. The
 daemon is stopped and a listener that records every byte takes its port, as another local user's process
-could while the daemon is down. Claude Code then runs one prompt with the plugin. It passes when requests
-did reach the listener, none of them carried the router's token, the prompt or an `Authorization` header,
-the session still answered, and the events wait in the spool. The daemon is started again afterwards.
+could while the daemon is down. Claude Code then runs one prompt with the plugin. It passes when nothing
+that reached the listener carried the router's token, the prompt or an `Authorization` header, the session
+still answered, and the events wait in the spool. On Windows the hooks do try the port, with sealed
+messages; on macOS and Linux they know the daemon by its Unix socket and send the port nothing. The daemon
+is started again afterwards.
 
 ## When to run it
 

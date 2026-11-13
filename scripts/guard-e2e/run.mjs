@@ -348,7 +348,9 @@ async function runSquatter(ctx, d) {
   const res = {
     scenario: 'squatter', exitCode: r.exitCode ?? null, timedOut: r.timedOut ?? false, durationMs: r.durationMs, spawnError: r.spawnError, result,
     listener: seen, spooledEvents: safeList(path.join(ctx.home, 'spool')).length - spoolBefore,
-    ok: !r.spawnError && seen.requests > 0 && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen && result === 'E2E_MAIN_DONE',
+    // On Windows the clients do try the port (sealed). On macOS and Linux the daemon named a Unix socket, so they
+    // treat the daemon as down and send the port nothing at all.
+    ok: !r.spawnError && (WIN ? seen.requests > 0 : !seen.requestLines.some(l => l.includes('/sealed'))) && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen && result === 'E2E_MAIN_DONE',
     stderrTail: (r.stderr || '').slice(-600),
   };
   fs.writeFileSync(path.join(RESULTS, 'run-squatter.json'), JSON.stringify(res, null, 2) + '\n');
@@ -443,7 +445,7 @@ async function selftest() {
   await squat.close();
   const seen = judgeWire(squat.wire, token);
   assert(hookOut === '{}' && /OFF/.test(lineOut), 'squatter: the hook passes and the status line says OFF');
-  assert(seen.requests >= 2 && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen, `squatter: ${seen.requests} requests reached the listener, none with the token, the prompt or an Authorization header`);
+  assert((WIN ? seen.requests >= 2 : !seen.requestLines.some(l => l.includes('/sealed'))) && !seen.tokenSeen && !seen.markerSeen && !seen.authorizationHeaderSeen, `squatter: ${seen.requests} requests reached the listener, none with the token, the prompt or an Authorization header`);
   assert(safeList(path.join(d.home, 'spool')).length === 1, 'squatter: the event waits in the spool');
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* a handle may still be open on Windows */ }
   console.log('selftest passed');

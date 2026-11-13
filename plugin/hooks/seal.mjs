@@ -6,6 +6,8 @@
 // is encrypted and authenticated with a key derived from it, so a program that took the daemon's port while
 // the daemon was down can read nothing and cannot answer. There is no fallback to a call that sends the token.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import nodePath from 'node:path';
 
 export const SEAL_VERSION = 1;
 export const SEALED_PATH = '/router/v1/sealed';
@@ -56,18 +58,39 @@ export function openResponse(secret, requestNonce, envelopeText) {
 }
 
 /**
- * One sealed call to the daemon: { port, secret, method, path, body?, timeoutMs? }.
+ * How to reach the daemon of this router home (copy of core endpoint.ts daemonTarget). On macOS and Linux the
+ * daemon also listens on a Unix socket in a directory only the user can enter and names it in
+ * <home>/endpoint.json. A socket named there is used, and only it: when it cannot be reached the daemon is
+ * down, and the TCP port is not tried. Without one (Windows, or a daemon that could not make a private
+ * socket) it is the TCP port from the config.
+ */
+export function daemonTarget(home, configPort) {
+  let e;
+  try { e = JSON.parse(fs.readFileSync(nodePath.join(home, 'endpoint.json'), 'utf8')); } catch { e = undefined; }
+  if (!e || typeof e !== 'object' || e.version !== 1 || !Number.isInteger(e.port)) e = undefined;
+  if (e && e.socket !== undefined && !(typeof e.socket === 'string' && e.socket.length > 1 && e.socket.length < 4096)) e = undefined;
+  if (e?.socket) return { port: e.port, socketPath: e.socket };
+  const port = typeof configPort === 'number' && configPort > 0 ? configPort : e?.port;
+  return typeof port === 'number' && port > 0 ? { port } : undefined;
+}
+
+/**
+ * One sealed call to the daemon: { port, secret, method, path, body?, timeoutMs?, home?, socketPath? }.
+ * With `home`, the daemon's endpoint file there decides between its Unix socket and the TCP port.
  * Resolves with { status, contentType, body } as the daemon answered. Rejects with a SealError when nothing
  * answered or when what answered does not hold the secret (an older daemon, or another program on the port).
  */
-export function sealedCall({ port, secret, method, path, body, timeoutMs = 1500 }) {
+export function sealedCall({ port, secret, method, path, body, timeoutMs = 1500, home, socketPath }) {
   return new Promise((resolve, reject) => {
     // node:http is loaded lazily, as the callers did before, so a hook that never calls stays small
     import('node:http').then(({ request }) => {
       const { envelope, nonce } = sealRequest(secret, { m: method, p: path, ...(body !== undefined ? { b: body } : {}) });
+      const named = socketPath === undefined && home !== undefined ? daemonTarget(home, port) : undefined;
+      const sock = socketPath ?? named?.socketPath;
+      const hostPort = named?.port ?? port;
       const req = request({
-        host: '127.0.0.1', port, method: 'POST', path: SEALED_PATH, agent: false, timeout: timeoutMs,
-        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(envelope), host: `127.0.0.1:${port}` },
+        ...(sock !== undefined ? { socketPath: sock } : { host: '127.0.0.1', port: hostPort }), method: 'POST', path: SEALED_PATH, agent: false, timeout: timeoutMs,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(envelope), host: `127.0.0.1:${hostPort}` },
       }, res => {
         const chunks = [];
         res.on('data', d => chunks.push(d));

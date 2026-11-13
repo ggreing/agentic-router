@@ -2,10 +2,10 @@
 // Entry contract: startDaemon(opts) resolves after the spool replay, with the bound
 // port and close(). main.ts is the process entry point.
 import fs from 'node:fs';
-import type http from 'node:http';
+import http from 'node:http';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { Level, TeamPreset } from '@agentic-router/core';
+import { socketLocation, writeEndpoint, type Level, type TeamPreset } from '@agentic-router/core';
 import { loadClaudeCodeAdapter, type ClientAdapter } from './adapter.ts';
 import { readConfig, readToken } from './config.ts';
 import { ensureHomeDirs, homeLayout, tightenPermissions } from './home.ts';
@@ -37,9 +37,13 @@ export interface DaemonOptions extends StartOptions {
   presets?: Record<Level, TeamPreset>;
   verify?: Partial<VerifySettings>;
   now?: () => Date;
+  /** false: no Unix socket, TCP only (decision 156; the socket is the default on macOS and Linux). */
+  socket?: boolean;
 }
 
 export interface Daemon extends DaemonHandle {
+  /** The Unix socket the daemon also listens on (macOS and Linux), when one could be made. */
+  socketPath?: string;
   router: Router;
   ledger: Ledger;
   replay: ReplayResult;
@@ -109,7 +113,34 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     });
     const addr = srv.address();
     const bound = addr && typeof addr === 'object' ? addr.port : port;
-    logger.info('daemon listening', { port: bound, version: DAEMON_VERSION, replayed: replay.events });
+    // Decision 156, step 3: on macOS and Linux the same server also answers on a Unix socket in a directory only
+    // the user can enter, and tells the clients so in endpoint.json. They then use the socket and nothing else.
+    let socketServer: http.Server | undefined;
+    let socketPath: string | undefined;
+    if (process.platform !== 'win32' && opts.socket !== false) {
+      try {
+        const loc = socketLocation(home.root);
+        if (!loc) logger.warn('no private place for the daemon socket (the router home is open to others, or its path is too long): TCP only');
+        else {
+          try { if (fs.lstatSync(loc.path).isSocket()) fs.unlinkSync(loc.path); } catch { /* none there */ }
+          const s = http.createServer((req, res) => { srv.emit('request', req, res); });
+          s.requestTimeout = srv.requestTimeout;
+          s.headersTimeout = srv.headersTimeout;
+          const old = process.umask(0o177);                    // the socket is created 0600
+          try {
+            await new Promise<void>((resolve, reject) => { s.once('error', reject); s.listen(loc.path, () => { s.off('error', reject); resolve(); }); });
+          } finally { process.umask(old); }
+          fs.chmodSync(loc.path, 0o600);
+          socketServer = s;
+          socketPath = loc.path;
+        }
+      } catch (e) {
+        logger.warn('daemon socket not available: TCP only', { error: errorText(e) });
+      }
+    }
+    try { writeEndpoint(home.root, { version: 1, pid: process.pid, startedAt: (opts.now?.() ?? new Date()).toISOString(), port: bound, ...(socketPath ? { socket: socketPath } : {}) }); }
+    catch (e) { logger.warn('endpoint file not written', { error: errorText(e) }); }
+    logger.info('daemon listening', { port: bound, ...(socketPath ? { socket: socketPath } : {}), version: DAEMON_VERSION, replayed: replay.events });
 
     let closing: Promise<void> | undefined;
     let markClosed!: () => void;
@@ -119,16 +150,21 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     close = () => closing ??= (async () => {
       router.abort();                                          // kill running verify commands first
       const stopped = new Promise<void>(resolve => srv.close(() => resolve()));   // no new connections
+      const socketStopped = socketServer ? new Promise<void>(resolve => socketServer!.close(() => resolve())) : Promise.resolve();
       await router.drain();                                    // in-flight hooks finish; aborted stops answer {}
       srv.closeIdleConnections();
       await Promise.race([stopped, sleep(2000, undefined, { ref: false })]);   // let the last responses flush
       srv.closeAllConnections();
+      socketServer?.closeAllConnections();
       await stopped;
+      await socketStopped;
+      // the socket goes; endpoint.json stays and keeps naming it, so clients treat the daemon as down and do not try the port
+      if (socketPath) { try { fs.unlinkSync(socketPath); } catch { /* already gone */ } }
       if (pruneTimer) clearInterval(pruneTimer);
       ledger.close();
       logger.info('daemon stopped');
     })().then(markClosed, e => { markFailed(e); throw e; });
-    return { port: bound, close: () => close(), closed, router, ledger, replay };
+    return { port: bound, ...(socketPath ? { socketPath } : {}), close: () => close(), closed, router, ledger, replay };
   } catch (e) {
     server?.close();
     ledger.close();

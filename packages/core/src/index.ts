@@ -11,4 +11,5 @@ export * from './tools.ts';
 export * from './acceptance.ts';
 export * from './release.ts';
 export * from './seal.ts';
+export * from './endpoint.ts';
 export type * from './proxy-wire.ts';

@@ -63,8 +63,8 @@ function loadTools() {
 
 // ---------------------------------------------------------------- daemon POST
 // Sealed (decision 156): no token on the wire, and no answer is accepted from a program that does not hold it.
-async function post({ port, token, body, timeoutMs }) {
-  const res = await sealedCall({ port, secret: token, method: 'POST', path: ENDPOINT, body, timeoutMs });
+async function post({ home, port, token, body, timeoutMs }) {
+  const res = await sealedCall({ home, port, secret: token, method: 'POST', path: ENDPOINT, body, timeoutMs });
   if (res.status >= 200 && res.status < 300) return res.body;
   throw new Error(`daemon status ${res.status}`);
 }
@@ -104,7 +104,7 @@ async function callTool(params) {
   const payload = { tool: name, input, bind };
   if (params && params._meta && typeof params._meta === 'object') payload.meta = params._meta;
   const body = JSON.stringify(payload);
-  try { return mapDaemonReply(await post({ port, token, body, timeoutMs: CALL_TIMEOUT_MS })); }
+  try { return mapDaemonReply(await post({ home, port, token, body, timeoutMs: CALL_TIMEOUT_MS })); }
   catch { return unreachableResult(); }
 }
 

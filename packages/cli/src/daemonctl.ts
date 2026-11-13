@@ -44,7 +44,7 @@ export function localRequest(port: number, method: 'GET' | 'POST', urlPath: stri
  */
 export async function daemonRequest(port: number, method: 'GET' | 'POST', urlPath: string, opts: { token: string; body?: string; timeoutMs?: number }): Promise<{ status: number; body: string } | null> {
   try {
-    const r = await sealedCall({ port, secret: opts.token, method, path: urlPath, ...(opts.body !== undefined ? { body: opts.body } : {}), timeoutMs: opts.timeoutMs ?? 1500 });
+    const r = await sealedCall({ home: routerHome(), port, secret: opts.token, method, path: urlPath, ...(opts.body !== undefined ? { body: opts.body } : {}), timeoutMs: opts.timeoutMs ?? 1500 });
     return { status: r.status, body: r.body };
   } catch { return null; }
 }
