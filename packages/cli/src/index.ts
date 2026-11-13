@@ -5,7 +5,8 @@ import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths, type Level } from '@do-it-all-claude-code/core';
-import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planBackupClean, planProject, planStatusLine, promptStorageSummary, readConfig, type PlannedChange } from './setup.ts';
+import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planBackupClean, planProject, planStatusLine, promptStorageSummary, readConfig, writeConfig, type PlannedChange } from './setup.ts';
+import { UPDATE_QUESTION, updateCommand } from './update.ts';
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
 import { keyHelper, localTokenHelper, planApiSettings } from './apimode.ts';
@@ -43,6 +44,14 @@ async function confirm(changes: PlannedChange[], yes: boolean): Promise<boolean>
   const a = (await rl.question('Apply? [y/N] ')).trim().toLowerCase();
   rl.close();
   return a === 'y' || a === 'yes';
+}
+
+/** A question whose default is yes (Enter answers yes). */
+async function askDefaultYes(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const a = (await rl.question(question)).trim().toLowerCase();
+  rl.close();
+  return a === '' || a === 'y' || a === 'yes';
 }
 
 async function ask(question: string): Promise<boolean> {
@@ -97,6 +106,16 @@ async function init(f: Record<string, string | boolean>) {
   const ar = configuredAutoRelease(config);
   console.log(`auto-release: ${autoReleaseSummary(ar.mode, ar.rate)}`);
   console.log(`prompt text: ${promptStorageSummary(config.recordPrompts)}`);   // decision 142
+  // decision 163: the update check is opt-in and asked once; a choice made before is kept
+  if (config.updateCheck === undefined) {
+    if (f.yes === true || process.stdin.isTTY === true) {
+      const on = f.yes === true || await askDefaultYes(`${UPDATE_QUESTION} [Y/n] `);
+      const saved = readConfig() ?? config;
+      config.updateCheck = saved.updateCheck = on ? 'on' : 'off';
+      writeConfig(saved);
+    }
+  }
+  console.log(`update check: ${config.updateCheck === 'on' ? 'on (once a day; `do-it-all-claude-code update off` stops it)' : config.updateCheck === 'off' ? 'off (`do-it-all-claude-code update on` turns it on)' : 'not set (not a terminal); `do-it-all-claude-code update on` turns it on'}`);
   const changes: PlannedChange[] = [];
   // A settings file we cannot parse skips only that step (review #12); nothing is overwritten.
   const step = (name: string, plan: () => PlannedChange[]) => {
@@ -182,5 +201,6 @@ if (isMain) {
     process.exitCode = positional[0] === 'export' ? await dataExport(f, d) : await dataPurge(f, d);
   }
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: do-it-all-claude-code <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate [--no-grace]|key set|proxy allow-upstream <origin>>');
+  else if (cmd === 'update') process.exitCode = await updateCommand(positional[0], { out: line => console.log(line) });   // decision 163
+  else console.log('usage: do-it-all-claude-code <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate [--no-grace]|key set|proxy allow-upstream <origin>|update on|off|check>');
 }

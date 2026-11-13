@@ -13,6 +13,7 @@ import { legacyRouterHome, paths, routerHome, sealedCall } from '@do-it-all-clau
 import { portOwner } from './portowner.ts';
 import { isFree, readConfig } from './setup.ts';
 import { proxyHealth, readSuperviseStatus, superviseFiles } from './supervise.ts';
+import { updateStatusLine } from './update.ts';
 
 const pidFile = () => path.join(routerHome(), 'daemon.pid');
 const startLock = () => path.join(routerHome(), 'daemon.start.lock');
@@ -298,8 +299,8 @@ export async function status(): Promise<string> {
   const token = readToken();
   const h = await daemonIdentity(cfg.daemonPort, token);
   if (h.who !== 'ours') {
-    return h.who === 'other' ? `Router OFF: ${otherOnPort(cfg.daemonPort)} Claude Code keeps working without routing`
-      : `Router OFF (daemon not responding on 127.0.0.1:${cfg.daemonPort}); Claude Code keeps working without routing`;
+    return (h.who === 'other' ? `Router OFF: ${otherOnPort(cfg.daemonPort)} Claude Code keeps working without routing`
+      : `Router OFF (daemon not responding on 127.0.0.1:${cfg.daemonPort}); Claude Code keeps working without routing`) + `\n${updateStatusLine(cfg)}`;
   }
   let detail = '';
   try {
@@ -319,5 +320,6 @@ export async function status(): Promise<string> {
       : p?.other ? `API-key mode: port ${cfg.proxyPort} answers but does not prove it is this router's proxy (an older or restarting proxy, or another program; do-it-all-claude-code doctor names it); the helper gives it no token`
       : `API-key mode: proxy OFF (127.0.0.1:${cfg.proxyPort} not answering): API calls fail until it is back, or run do-it-all-claude-code mode direct`);
   }
+  lines.push(updateStatusLine(cfg));   // decision 163
   return `${lines.join('\n')}${detail}`;
 }

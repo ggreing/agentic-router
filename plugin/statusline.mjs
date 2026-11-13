@@ -75,8 +75,17 @@ export async function maybeSendLimits({ home, port, token, sessionId, rateLimits
 }
 
 /** One line from a /router/v1/status response; roles with the same step are grouped (coder×2 s1). */
+/**
+ * Decision 163: "update 0.4.0" while the daemon reports a newer release. Checked again here, so nothing but a
+ * version number can reach the status line.
+ */
+export function updateSegment(view) {
+  const v = view && typeof view === 'object' && view.update && typeof view.update === 'object' ? view.update.latest : undefined;
+  return typeof v === 'string' && v.length <= 64 && /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(v) ? `update ${v}` : '';
+}
+
 export function formatStatus(view) {
-  if (!view || typeof view !== 'object' || !view.request) return '[Router] idle';
+  if (!view || typeof view !== 'object' || !view.request) return ['[Router] idle', updateSegment(view)].filter(Boolean).join(' | ');
   // Decision 87: a lead-direct request (L0) shows "L0 · direct" and only the roles actually dispatched.
   const direct = view.request.leadDirect === true;
   const roles = (Array.isArray(view.roles) ? view.roles : []).filter(r => !direct || r.status !== 'idle');
@@ -91,7 +100,7 @@ export function formatStatus(view) {
   const cost = `${view.costEstimated ? '~' : ''}$${(Number(view.costUsd) || 0).toFixed(2)}${view.costUnknown ? '+?' : ''}`;
   // decision 107: a level forced by config.forceLevel (benchmarks) reads "L2 forced"
   const forced = view.request.forcedFrom ? ' forced' : '';
-  return [`[Router] ${view.request.level}${forced}${direct ? ' · direct' : ''}`, team, cost].filter(Boolean).join(' | ');
+  return [`[Router] ${view.request.level}${forced}${direct ? ' · direct' : ''}`, team, cost, updateSegment(view)].filter(Boolean).join(' | ');
 }
 
 function readJson(file) {

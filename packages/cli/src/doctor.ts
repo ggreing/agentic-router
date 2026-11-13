@@ -16,6 +16,7 @@ import type { StatusView } from '@do-it-all-claude-code/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks } from './routing.ts';
 import { loadGuard, policyCheck, projectFolderCheck } from './policy.ts';
 import { legacyHomeCheck } from './migrate.ts';
+import { updateCheckLine } from './update.ts';
 
 export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
 
@@ -331,6 +332,7 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   }
   checks.push(...environmentChecks(env));
   if (cfg) checks.push({ name: 'prompt text', ok: true, blocking: false, detail: promptStorageSummary(cfg.recordPrompts) });   // decision 142
+  if (cfg) checks.push(updateCheckLine(cfg));   // decision 163
   // audit C6: the dashboard is served from its build; the router works without it (loaded here only, so other
   // commands do not load the daemon)
   try {

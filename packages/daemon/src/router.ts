@@ -9,7 +9,7 @@ import {
   leadModelClass, normalizeLeadTriage, readRoleFile, redact, routerToolDef, routerToolErrorText, routerToolName, stepIndex, stepUp, triage,
   type LeadModelClass, type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
   type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
-  type VerifySignal,
+  type UpdateNotice, type VerifySignal,
 } from '@do-it-all-claude-code/core';
 import type { ConfigFile } from './config.ts';
 import { awaitsUser, classifyPrompt } from './continuation.ts';
@@ -54,6 +54,8 @@ export interface RouterOptions {
   verify?: Partial<VerifySettings>;
   secrets?: string[];
   now?: () => Date;
+  /** Decision 163: a newer release, for the session start (shown to the user only) and the status view. */
+  updates?: { sessionNotice(): string | undefined; status(): UpdateNotice | null };
 }
 
 type Deferred = { deferred: () => Promise<() => RouterDecision> };
@@ -90,6 +92,8 @@ export interface StatusView {
   stepAdjust: { up: 'on'; down: 'on' | 'off' };
   /** Decision 138: auto-release mode, holdout share, and per lead class and level the two arms and what the rule says. */
   routing: RoutingView;
+  /** Decision 163: a newer release while the update check is on (the status line shows "update <version>"). */
+  update: UpdateNotice | null;
 }
 
 export class Router {
@@ -111,6 +115,7 @@ export class Router {
   readonly #snapshots = new Map<string, Promise<RequestSnapshot | undefined>>();   // T7: request start states being taken
   readonly #prompts = new PromptMemory();                   // decision 137: the last prompts of a session, in memory only
   readonly #tickets = new TicketStore();                    // decision 134: PreToolUse of a router tool -> its tools/call
+  readonly #updates: RouterOptions['updates'];
 
   constructor(o: RouterOptions) {
     this.ledger = o.ledger;
@@ -126,6 +131,7 @@ export class Router {
     this.#verify = { commandTimeoutMs: COMMAND_TIMEOUT_MS, totalTimeoutMs: TOTAL_TIMEOUT_MS, ...o.verify };
     this.#secrets = o.secrets ?? [];
     this.#now = o.now ?? (() => new Date());
+    this.#updates = o.updates;
   }
 
   /** Handles one event in session order and returns what the client should do. */
@@ -1158,6 +1164,14 @@ export class Router {
   // ------------------------------------------------------------------ session_start / stop
 
   #sessionStart(ev: RouterEvent, ctx: Ctx): RouterDecision {
+    const decision = this.#sessionStartContext(ev, ctx);
+    // Decision 163: a newer release, at most once a day per version, for a live start only (not a replayed one).
+    // It goes to the user as userMessage (systemMessage); it never joins the context the model reads.
+    const notice = ev.spooled ? undefined : this.#updates?.sessionNotice();
+    return notice ? { ...decision, userMessage: decision.userMessage ? `${decision.userMessage}\n${notice}` : notice } : decision;
+  }
+
+  #sessionStartContext(ev: RouterEvent, ctx: Ctx): RouterDecision {
     this.#recordClient(ev);
     const latest = this.ledger.latestRequest(ev.sessionId);
     ctx.requestId = latest?.id ?? null;
@@ -2011,7 +2025,8 @@ export class Router {
     const clients = this.ledger.recentClients(10);
     const stepAdjust = { up: 'on' as const, down: this.#stepDownOn() ? 'on' as const : 'off' as const };
     const routing = this.routing();
-    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust, routing };
+    const update = this.#updates?.status() ?? null;
+    if (!r) return { request: null, roles: [], costUsd: 0, costEstimated: false, costUnknown: false, sessionCostUsd: sessionId ? this.ledger.sessionCostUsd(sessionId) : 0, clients, stepAdjust, routing, update };
     const subs = this.ledger.listSubtasks(r.id);
     const slots = this.ledger.getSlots(r.id);
     const roles: RoleView[] = [];
@@ -2048,6 +2063,7 @@ export class Router {
       clients,
       stepAdjust,
       routing,
+      update,
     };
   }
 }

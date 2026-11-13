@@ -16,6 +16,7 @@ import { Router, type VerifySettings } from './router.ts';
 import { createHttpServer } from './server.ts';
 import { ProxyUsage } from './proxyusage.ts';
 import { replaySpool, type ReplayResult } from './spool.ts';
+import { UpdateWatcher, type UpdateWatcherOptions } from './updates.ts';
 
 export interface StartOptions {
   home?: string;
@@ -39,6 +40,8 @@ export interface DaemonOptions extends StartOptions {
   now?: () => Date;
   /** false: no Unix socket, TCP only (decision 156; the socket is the default on macOS and Linux). */
   socket?: boolean;
+  /** Decision 163, tests: the update check's request and timer (it runs only while config.updateCheck is "on"). */
+  updateCheck?: Pick<UpdateWatcherOptions, 'check' | 'tickMs' | 'firstTickMs'>;
 }
 
 export interface Daemon extends DaemonHandle {
@@ -78,9 +81,12 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
   const ledger = new Ledger(home.db, { keepPrompts: config.recordPrompts === true });
   if (process.platform !== 'win32') tightenPermissions(home);   // the ledger file was just created (compatibility #13)
   let server: http.Server | undefined;
+  let updates: UpdateWatcher | undefined;
   try {
+    // decision 163: the update check (a timer; it asks GitHub only while config.updateCheck is "on", at most daily)
+    updates = new UpdateWatcher({ home: home.root, configFile: home.config, current: DAEMON_VERSION, logger, ...(opts.now ? { now: opts.now } : {}), ...opts.updateCheck });
     const router = new Router({
-      ledger, home, config, logger, secrets: [token],
+      ledger, home, config, logger, secrets: [token], updates,
       ...(opts.presets ? { presets: opts.presets } : {}),
       ...(opts.verify ? { verify: opts.verify } : {}),
       ...(opts.now ? { now: opts.now } : {}),
@@ -95,6 +101,8 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
       } catch (e) { logger.error('event retention failed', { error: errorText(e) }); }
     };
     prune();
+    updates.start();
+    const watcher = updates;
     const pruneTimer = retentionDays > 0 ? setInterval(prune, 86_400_000) : undefined;
     pruneTimer?.unref();
     let close: () => Promise<void> = async () => {};
@@ -161,11 +169,13 @@ export async function createDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
       // the socket goes; endpoint.json stays and keeps naming it, so clients treat the daemon as down and do not try the port
       if (socketPath) { try { fs.unlinkSync(socketPath); } catch { /* already gone */ } }
       if (pruneTimer) clearInterval(pruneTimer);
+      watcher.stop();
       ledger.close();
       logger.info('daemon stopped');
     })().then(markClosed, e => { markFailed(e); throw e; });
     return { port: bound, ...(socketPath ? { socketPath } : {}), close: () => close(), closed, router, ledger, replay };
   } catch (e) {
+    updates?.stop();
     server?.close();
     ledger.close();
     throw e;
