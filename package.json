@@ -1,7 +1,7 @@
 {
   "name": "do-it-all-claude-code-monorepo",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Difficulty-based team router for Claude Code: triage each request, build a right-sized subagent team, and move each session up or down a model x effort ladder.",
   "license": "Apache-2.0",
   "type": "module",

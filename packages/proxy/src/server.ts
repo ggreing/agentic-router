@@ -21,7 +21,7 @@ import type { ProxyPaths } from './paths.ts';
 import type { LocalTokens } from './token.ts';
 import { UsageReporter, attribution, price, tokensOf, type DaemonTarget, type ReporterOptions, type RowState, type UsageRow } from './usage.ts';
 
-export const PROXY_VERSION = '0.3.0';
+export const PROXY_VERSION = '0.4.0';
 
 /**
  * The answer to a request over a budget cap (decision 130): 429 with x-should-retry: false so Claude Code
