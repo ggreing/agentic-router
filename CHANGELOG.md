@@ -5,6 +5,10 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-13
+
+Third pre-release: the project is renamed. Nothing else changes in how it works.
+
 ### Renamed to Do It All Claude Code
 
 - The project is now **Do It All Claude Code** (was Agentic Router Proxy). The CLI and the published
@@ -19,14 +23,14 @@ All notable changes to this project are documented here. This project adheres to
   not have that file, and the new folder wins where both do. `do-it-all-claude-code doctor` flags the old
   folder so you can rename it, and an accepted policy carries over the rename.
 
-### Upgrading from 0.2.0
+### Upgrading from 0.1.0 or 0.2.0
 
 - Stop the old install with the **old** CLI first, from your current checkout:
   `node packages/cli/src/index.ts stop`.
 - `git pull`, then `npm ci` and `npm run build:dashboard`. The remote is now `ggreing/do-it-all-claude-code`;
   GitHub redirects the old URL, and you can update your remote with
   `git remote set-url origin https://github.com/ggreing/do-it-all-claude-code`.
-- Run `do-it-all-claude-code init`. When it finds an old install (`DO_IT_ALL_CLAUDE_CODE_HOME` or
+- Run `do-it-all-claude-code init`. When it finds an old install (the folder named by
   `AGENTIC_ROUTER_HOME`, or `~/.agentic-router`), it lists what it will change — including, by pid, the
   processes it will stop — and asks first. On yes it stops the old supervisor, daemon and proxy; moves the
   router home (ledger, tokens, the TLS certificate and bundle, config) to `~/.do-it-all-claude-code`; backs
@@ -178,6 +182,7 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
-[Unreleased]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ggreing/do-it-all-claude-code/releases/tag/v0.1.0

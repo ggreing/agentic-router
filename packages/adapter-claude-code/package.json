@@ -1,6 +1,6 @@
 {
   "name": "@do-it-all-claude-code/adapter-claude-code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Claude Code adapter: hook input/output translation, local guard hooks, plugin assets",
   "license": "Apache-2.0",
@@ -12,6 +12,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@do-it-all-claude-code/core": "0.2.0"
+    "@do-it-all-claude-code/core": "0.3.0"
   }
 }

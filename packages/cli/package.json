@@ -1,6 +1,6 @@
 {
   "name": "do-it-all-claude-code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "do-it-all-claude-code command: init, start, stop, status, doctor, supervise, mode, token, key, proxy",
   "license": "Apache-2.0",
@@ -15,8 +15,8 @@
     "do-it-all-claude-code": "./src/index.ts"
   },
   "dependencies": {
-    "@do-it-all-claude-code/core": "0.2.0",
-    "@do-it-all-claude-code/daemon": "0.2.0",
-    "@do-it-all-claude-code/proxy": "0.2.0"
+    "@do-it-all-claude-code/core": "0.3.0",
+    "@do-it-all-claude-code/daemon": "0.3.0",
+    "@do-it-all-claude-code/proxy": "0.3.0"
   }
 }
