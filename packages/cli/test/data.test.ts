@@ -1,18 +1,18 @@
-// `agentic-router data export | purge` (spec 3.7, 4.4): through the daemon when it runs, on the ledger directly
+// `do-it-all-claude-code data export | purge` (spec 3.7, 4.4): through the daemon when it runs, on the ledger directly
 // when it does not, never beside a daemon that is alive but silent; purge asks first. Temp homes, loopback.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { paths } from '@agentic-router/core';
+import { paths } from '@do-it-all-claude-code/core';
 import { dataExport, dataPurge, realDataDeps, type DataDeps } from '../src/data.ts';
 import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-data-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 
 interface Fake { deps: DataDeps; lines: string[]; posts: unknown[]; stdout: string[] }
@@ -107,6 +107,6 @@ test('against the real daemon, then with it stopped: export and purge reach the 
   // with no daemon only its logs are left to empty (decision 142), and its endpoint file and socket go (decision 156);
   // the open request and its session stay
   assert.match(lines.at(-1)!, /^Removed 0 closed request\(s\) \(all of them\)(, the stopped daemon's endpoint file and socket \(\d\))? and \d+ log file\(s\) emptied\.$/);
-  assert.ok(!fs.existsSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'endpoint.json')), 'the endpoint file is gone');
+  assert.ok(!fs.existsSync(path.join(process.env.DO_IT_ALL_CLAUDE_CODE_HOME!, 'endpoint.json')), 'the endpoint file is gone');
   assert.match(lines.at(-2)!, /1 open or waiting request\(s\) and everything of their sessions are kept/);
 });

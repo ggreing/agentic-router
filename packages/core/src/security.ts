@@ -4,7 +4,9 @@ import path from 'node:path';
 /** Reads a subagent may never make (glob-like; `~` is the user's home, matched case-insensitively). */
 export const CREDENTIAL_PATHS = [
   '~/.claude/**', '~/.claude.json', '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.azure/**',
-  '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.agentic-router/token',
+  '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.do-it-all-claude-code/token',
+  // the home of the previous release (decision 161), until init moves it: its tokens, TLS key and ledger
+  '~/.agentic-router/**',
   '~/.config/gh/**', '~/.kube/**', '~/.gnupg/**', '~/.pgpass', '~/.pypirc', '~/.cargo/credentials*',
   '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json',
   // the macOS keychains, and the keyrings and password stores of a Linux desktop
@@ -36,6 +38,8 @@ export const PROTECTED_WRITE_PATHS = [
   '**/.env', '**/.env.*', '.claude/**', '**/.claude/**', '.github/workflows/**', '**/.github/workflows/**',
   '.gitlab-ci.yml', '**/.gitlab-ci.yml', '**/.npmrc', '.git/**', '**/.git/**',
   // project router config (verify.json, the Bash allowlist extension): a worker must not widen its own limits
+  '.do-it-all-claude-code/**', '**/.do-it-all-claude-code/**',
+  // the previous release's project folder, still read while a project has not renamed it (decision 161)
   '.agentic-router/**', '**/.agentic-router/**',
 ];
 
@@ -66,8 +70,8 @@ export const NETWORK_COMMANDS = ['curl', 'wget', 'Invoke-WebRequest', 'iwr', 'In
  * `>NUL`, leading VAR=value assignments, and wrappers (sudo, env, xargs, time, nohup, command).
  * Arguments are still checked: credential paths, the router home, secret variables ($ANTHROPIC_*,
  * $*_API_KEY, $*TOKEN*), `find -exec/-delete`, `git -c`, `sed -i`.
- * A project may extend the list in .agentic-router/policy.json { "bashAllow": [...] } (a protected path), but
- * that file counts only after the user accepts its exact content (agentic-router policy accept); until then it
+ * A project may extend the list in .do-it-all-claude-code/policy.json { "bashAllow": [...] } (a protected path), but
+ * that file counts only after the user accepts its exact content (do-it-all-claude-code policy accept); until then it
  * is ignored.
  */
 export const ROUTER_BASH_ALLOW = [
@@ -137,7 +141,7 @@ export const GUARD_EXTRA_DENY_OPTIONS: Record<string, string[]> = {
 /** Names that are a credential store or hold one, as a single path segment: for globs, which cannot be resolved to a path. Mirrored in the guard. */
 export const GUARD_SENSITIVE_SEGMENTS = [
   '.env', '.claude', '.claude.json', '.ssh', '.aws', '.azure', '.docker', '.npmrc', '.netrc', '_netrc', '.git-credentials',
-  '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
+  '.do-it-all-claude-code', '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
 ];
 /** Allowed commands that only read (and git, which has its own option list). Every other allowed command builds, tests or installs, and can write files. Mirrored in the guard. */
 export const GUARD_READ_ONLY_COMMANDS = ['cd', 'pwd', 'ls', 'dir', 'cat', 'type', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'echo', 'printf', 'diff', 'sort', 'uniq', 'cut', 'tr', 'which', 'where', 'true', 'false', 'test', 'set', 'git'];
@@ -158,8 +162,8 @@ export const SECRET_VAR_NAME_PATTERN = 'ANTHROPIC|API[_-]?KEY|TOKEN|SECRET|PASSW
  * SubagentStart, so that subagent's verify runs with the user's toolchain (decision 99, env audit #6):
  * the venv / conda / nvm / Java / Go / Rust selection of the terminal that launched Claude Code.
  * Names only; values are never logged. Secret-looking names are never forwarded even if listed.
- * A project may add names in .agentic-router/policy.json { "verifyEnv": [...] } (a protected path), but that
- * file counts only after the user accepts its exact content (agentic-router policy accept); until then it is
+ * A project may add names in .do-it-all-claude-code/policy.json { "verifyEnv": [...] } (a protected path), but that
+ * file counts only after the user accepts its exact content (do-it-all-claude-code policy accept); until then it is
  * ignored.
  */
 export const VERIFY_ENV_PASSTHROUGH = [

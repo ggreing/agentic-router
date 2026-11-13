@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-export const VAULT_SERVICE = 'agentic-router';
+export const VAULT_SERVICE = 'do-it-all-claude-code';
 export const VAULT_ACCOUNT = 'anthropic-api-key';
 
 /** D: a real upstream key is long; refuse an implausibly short one rather than accept an 8-character string. */
@@ -196,9 +196,9 @@ export function storePlan(platform: string, service: string, account: string, in
   if (platform === 'win32') return { command: 'powershell.exe', args: powershellArgs(windowsStoreScript(service, account, interactive), interactive) };
   if (platform === 'darwin') {
     // -w last with no value: security prompts for the password itself (never in argv)
-    return { command: '/usr/bin/security', args: ['add-generic-password', '-U', '-s', service, '-a', account, '-l', 'Agentic Router API key', '-w'] };
+    return { command: '/usr/bin/security', args: ['add-generic-password', '-U', '-s', service, '-a', account, '-l', 'Do It All Claude Code API key', '-w'] };
   }
-  return { command: 'secret-tool', args: ['store', '--label=Agentic Router API key', 'service', service, 'account', account] };
+  return { command: 'secret-tool', args: ['store', '--label=Do It All Claude Code API key', 'service', service, 'account', account] };
 }
 
 export function deletePlan(platform: string, service: string, account: string): Plan {
@@ -223,7 +223,7 @@ function failure(platform: string, r: RunResult, what: string): VaultError {
     return new VaultError('constrained_language', 'PowerShell runs in ConstrainedLanguage mode (device policy), which blocks both the PasswordVault and Credential Manager access: API-key mode is unavailable on this machine');
   }
   if (/AR_VAULT_NOT_FOUND/.test(r.stderr) || (platform === 'darwin' && r.code === 44) || (platform !== 'win32' && platform !== 'darwin' && r.code === 1 && !r.stdout)) {
-    return new VaultError('not_found', 'no API key in the OS keychain (run agentic-router key set)');
+    return new VaultError('not_found', 'no API key in the OS keychain (run do-it-all-claude-code key set)');
   }
   return new VaultError('failed', `${what} failed (exit ${r.code ?? 'none'})`);
 }

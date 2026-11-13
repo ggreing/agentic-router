@@ -2,7 +2,7 @@
 // Claude Code's apiKeyHelper; the token is never in settings.json).
 //
 // Every proxy start writes a new token (decision 156, freshAtStart): a token from before the restart gets 401.
-// Rotation (`agentic-router token rotate`) writes a new token to the file. The proxy notices on the next
+// Rotation (`do-it-all-claude-code token rotate`) writes a new token to the file. The proxy notices on the next
 // request and keeps accepting the previous token for a grace window, because Claude Code caches the helper's
 // output (CLAUDE_CODE_API_KEY_HELPER_TTL_MS: 5 min by default, 60 s in proxy mode, set by `mode api`). After the
 // window the old token gets 401.

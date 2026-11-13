@@ -9,7 +9,7 @@
 // its relay forwarded at SubagentStart (core VERIFY_ENV_PASSTHROUGH + the project's policy.json).
 
 const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSW(OR)?D|CREDENTIAL|AUTH(?!OR))/i;
-const KNOWN_SECRET = /^(ANTHROPIC_.*|CLAUDE_CODE_OAUTH.*|AGENTIC_ROUTER_.*|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|.*_API_KEY|NPM_CONFIG__?AUTH.*|.*COOKIE.*)$/i;
+const KNOWN_SECRET = /^(ANTHROPIC_.*|CLAUDE_CODE_OAUTH.*|DO_IT_ALL_CLAUDE_CODE_.*|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|.*_API_KEY|NPM_CONFIG__?AUTH.*|.*COOKIE.*)$/i;
 /** Never passed to verify commands or git: makes every node process load code (decision 99). */
 const NODE_PRELOAD = /^NODE_OPTIONS$/i;
 

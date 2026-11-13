@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Starts the API-key mode proxy (`agentic-router supervise` runs it; decision 130). Reads config.json from the
+// Starts the API-key mode proxy (`do-it-all-claude-code supervise` runs it; decision 130). Reads config.json from the
 // router home, loads the key from the OS keychain into memory, binds 127.0.0.1:<proxyPort>, and on SIGINT /
 // SIGTERM lets in-flight streams finish (up to 30 s) and flushes usage rows before it exits.
 import { checkTlsEnv, loadSettings } from './config.ts';
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     process.on('message', m => { if (m && typeof m === 'object' && (m as { type?: unknown }).type === 'stop') stop('supervisor'); });
   } catch (e) {
     log.error('proxy did not start', { error: errorText(e) });
-    process.stderr.write(`agentic-router proxy: ${errorText(e)}\n`);
+    process.stderr.write(`do-it-all-claude-code proxy: ${errorText(e)}\n`);
     process.exit(1);
   }
 }

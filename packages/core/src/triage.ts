@@ -372,7 +372,7 @@ export function uncertainLevel(presets: Record<Level, TeamPreset>): Level {
 
 const agentCalls = (preset: TeamPreset): string[] => preset.roles.map(r => {
   const s = ladderStep(r.start);
-  return `   - ${r.role}${r.count > 1 ? ` (up to ${r.count} in parallel, one subtask each)` : ''}: subagent_type "agentic-router:${r.role}", model "${s.alias}", effort "${s.effort}"`;
+  return `   - ${r.role}${r.count > 1 ? ` (up to ${r.count} in parallel, one subtask each)` : ''}: subagent_type "do-it-all-claude-code:${r.role}", model "${s.alias}", effort "${s.effort}"`;
 });
 
 /** The teams an uncertain lead-direct request can switch to. A `Record<Level, TeamPreset>` fits. */
@@ -418,7 +418,7 @@ export function formatTriageContext(t: TriageResult, preset: TeamPreset, escalat
   // Decision 83: a single writer works in the user's working tree (no merge step); only writers that
   // run at the same time get their own worktree, and the lead merges those branches.
   const parallel = preset.roles.some(r => r.count > 1);
-  const head = `[agentic-router] level ${t.level} (source=${t.source}, confidence=${t.confidence.toFixed(2)}): ${t.rationale}`;
+  const head = `[do-it-all-claude-code] level ${t.level} (source=${t.source}, confidence=${t.confidence.toFixed(2)}): ${t.rationale}`;
   if (preset.leadDirect) {
     // Decision 87: for the smallest changes the lead's own per-call overhead dominates, so a team costs more.
     if ((t as Partial<Stage1Result>).kind === 'uncertain' && !l2.leadDirect) {

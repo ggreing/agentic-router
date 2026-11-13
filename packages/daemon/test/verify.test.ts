@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { canonicalPath } from '../src/canonical.ts';
 import { scrubbedEnv } from '../src/env.ts';
 import { gitMetaChanges, gitMetaFingerprint, takeSnapshot } from '../src/git.ts';
@@ -171,13 +171,13 @@ test('project verify.json: role list wins over "*", kinds inferred or given', ()
 
 test('project file overrides the role file and is read from the start commit, not the edited work tree', async () => {
   const plugin = tmpDir('plugin');
-  const dir = makeRepo({ '.agentic-router/verify.json': JSON.stringify({ coder: ['node check.cjs'] }) });
+  const dir = makeRepo({ '.do-it-all-claude-code/verify.json': JSON.stringify({ coder: ['node check.cjs'] }) });
   try {
     write(plugin, 'agents/coder.md', '---\nname: coder\nx-router:\n  verify:\n    - npm test\n---\n');
     write(plugin, 'agents/tester.md', '---\nname: tester\nx-router:\n  verify:\n    - npm test\n---\n');
     const base = git(dir, 'rev-parse', 'HEAD').trim();
     // the subagent weakens the project file in its work tree
-    write(dir, '.agentic-router/verify.json', JSON.stringify({ coder: [] }));
+    write(dir, '.do-it-all-claude-code/verify.json', JSON.stringify({ coder: [] }));
     const coder = await resolveVerifyCommands({ role: 'coder', pluginDir: plugin, repoRoot: dir, baseRef: base });
     assert.deepEqual(coder, { commands: [{ kind: 'test', command: 'node check.cjs' }], source: 'project' });
     const tester = await resolveVerifyCommands({ role: 'tester', pluginDir: plugin, repoRoot: dir, baseRef: base });
@@ -228,7 +228,7 @@ test('ifExists in the project verify.json is kept; an escaping path makes the fi
   assert.deepEqual(projectCommands({ coder: [{ command: 'npm ci', kind: 'build', ifExists: 'package-lock.json' }] }, 'coder'),
     [{ kind: 'build', command: 'npm ci', ifExists: 'package-lock.json' }]);
   assert.throws(() => projectCommands({ coder: [{ command: 'x', ifExists: '../outside' }] }, 'coder'), /repo-relative/);
-  const dir = makeRepo({ '.agentic-router/verify.json': JSON.stringify({ coder: [{ command: 'x', ifExists: '/abs' }] }) });
+  const dir = makeRepo({ '.do-it-all-claude-code/verify.json': JSON.stringify({ coder: [{ command: 'x', ifExists: '/abs' }] }) });
   try {
     const r = await resolveVerifyCommands({ role: 'coder', repoRoot: dir });
     assert.equal(r.source, 'none');

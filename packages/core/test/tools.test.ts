@@ -9,14 +9,14 @@ import {
 const ok = (schema: { safeParse: (v: unknown) => { success: boolean } }, v: unknown) => schema.safeParse(v).success;
 
 test('tool names: the plugin prefix, the five tools, nothing else', () => {
-  assert.equal(ROUTER_TOOL_PREFIX, 'mcp__plugin_agentic-router_router__');
+  assert.equal(ROUTER_TOOL_PREFIX, 'mcp__plugin_do-it-all-claude-code_router__');
   assert.deepEqual(ROUTER_TOOLS.map(t => t.name), [...ROUTER_TOOL_NAMES]);
-  assert.equal(routerToolName('mcp__plugin_agentic-router_router__router_get_plan'), 'router_get_plan');
-  assert.equal(routerToolName('mcp__plugin_agentic-router_router__other'), undefined);
+  assert.equal(routerToolName('mcp__plugin_do-it-all-claude-code_router__router_get_plan'), 'router_get_plan');
+  assert.equal(routerToolName('mcp__plugin_do-it-all-claude-code_router__other'), undefined);
   assert.equal(routerToolName('mcp__router__router_get_plan'), undefined);   // not the plugin's server
   assert.equal(routerToolName('router_get_plan'), undefined);
   assert.equal(routerToolName(undefined), undefined);
-  assert.equal(isRouterToolName('mcp__plugin_agentic-router_router__other'), true);   // an unknown tool of the server is still the router's
+  assert.equal(isRouterToolName('mcp__plugin_do-it-all-claude-code_router__other'), true);   // an unknown tool of the server is still the router's
   assert.equal(isRouterToolName('Agent'), false);
   assert.equal(routerToolDef('router_request_scope')?.input, RequestScopeInput);
   assert.equal(routerToolDef('nope'), undefined);
@@ -130,9 +130,9 @@ test('the call envelope the server posts to the daemon', () => {
 });
 
 test('error text: a code the lead can act on', () => {
-  assert.equal(routerToolErrorText('daemon_unreachable'), `[agentic-router] daemon_unreachable: ${ROUTER_TOOL_ERRORS.daemon_unreachable}`);
+  assert.equal(routerToolErrorText('daemon_unreachable'), `[do-it-all-claude-code] daemon_unreachable: ${ROUTER_TOOL_ERRORS.daemon_unreachable}`);
   assert.match(routerToolErrorText('daemon_unreachable'), /do not retry/);
-  assert.equal(routerToolErrorText('invalid_input', 'files: expected a number'), '[agentic-router] invalid_input: files: expected a number');
+  assert.equal(routerToolErrorText('invalid_input', 'files: expected a number'), '[do-it-all-claude-code] invalid_input: files: expected a number');
   for (const text of Object.values(ROUTER_TOOL_ERRORS)) assert.ok(text.length <= 160 && !text.includes('\n'));
 });
 

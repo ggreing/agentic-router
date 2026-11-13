@@ -10,7 +10,7 @@ import {
   type LeadModelClass, type Level, type ReportResultInput, type ReportTriageInput, type RequestEscalationInput, type RequestScopeInput, type Role, type RouterDecision,
   type RouterEvent, type RouterToolErrorCode, type RouterToolName, type RouterToolResult, type Step, type TeamPreset, type TriageResult, type Usage,
   type VerifySignal,
-} from '@agentic-router/core';
+} from '@do-it-all-claude-code/core';
 import type { ConfigFile } from './config.ts';
 import { awaitsUser, classifyPrompt } from './continuation.ts';
 import { takeSnapshot } from './git.ts';
@@ -502,7 +502,7 @@ export class Router {
    * steps. Without one, <L> applies to the next request of the session.
    */
   #routerLevel(ev: RouterEvent, level: Level | null, latest: RequestRow | undefined, ctx: Ctx): RouterDecision {
-    if (!level) return { userMessage: '[agentic-router] usage: /router level L0|L1|L2|L3' };
+    if (!level) return { userMessage: '[do-it-all-claude-code] usage: /router level L0|L1|L2|L3' };
     if (latest && latest.status !== 'closed') {
       const { presets } = this.#resolver.resolve(ev.cwd, latest.leadModel ?? undefined);
       const t = this.#manualTriage(latest.triage, level, presets);
@@ -513,12 +513,12 @@ export class Router {
       return {
         context: [
           this.#triageContext(t, team, ev.cwd, latest.leadModel),
-          `[agentic-router] level set manually to ${level} for request ${latest.id} (was ${latest.level}). Subtasks already running keep their step; new Agent calls must use the steps above.`,
+          `[do-it-all-claude-code] level set manually to ${level} for request ${latest.id} (was ${latest.level}). Subtasks already running keep their step; new Agent calls must use the steps above.`,
         ].join('\n'),
       };
     }
     this.ledger.setPendingLevel(ev.sessionId, level, this.#at());
-    return { context: `[agentic-router] /router level ${level}: no request is in progress, so the next request in this session will run at level ${level} (manual).` };
+    return { context: `[do-it-all-claude-code] /router level ${level}: no request is in progress, so the next request in this session will run at level ${level} (manual).` };
   }
 
   /**
@@ -581,9 +581,9 @@ export class Router {
     const prompt = str(input.prompt);
     const deny = (reason: string): RouterDecision => {
       this.#log.info('agent call denied', { requestId: req.id, reason });
-      return { deny: { reason: `[agentic-router] ${reason}` } };
+      return { deny: { reason: `[do-it-all-claude-code] ${reason}` } };
     };
-    if (role === null) return deny(`unknown router agent type "${agentType}". Use agentic-router:architect, ui-designer, coder, reviewer or tester.`);
+    if (role === null) return deny(`unknown router agent type "${agentType}". Use do-it-all-claude-code:architect, ui-designer, coder, reviewer or tester.`);
     const tag = parseTag(prompt);
     if (!tag) {
       return deny('the Agent prompt must start with "[subtask:<ID>]" on its first line (ID: letters, digits, "_", "-", "."; for example "[subtask:A1]"). '
@@ -892,7 +892,7 @@ export class Router {
     const sub = this.ledger.getSubtask(agent.requestId, agent.subtaskId);
     if (!sub) return undefined;
     const st = ladderStep(sub.step);
-    const head = `[agentic-router] subtask ${sub.id} (${sub.role} @${sub.step}, model=${st.alias}, effort=${st.effort})`;
+    const head = `[do-it-all-claude-code] subtask ${sub.id} (${sub.role} @${sub.step}, model=${st.alias}, effort=${st.effort})`;
     const signals = this.ledger.listSignals(agent.requestId, sub.id).filter(x => x.agentId === agentId && x.attempt === agent.stopCount);
     const checks = signals.map(x => `${x.kind} ${!x.ok ? 'failed' : /: skipped \(/.test(x.detail ?? '') ? 'skipped' : 'ok'}`).join(', ');
     const scope = signals.find(x => x.kind === 'scope');
@@ -1278,7 +1278,7 @@ export class Router {
     };
     return {
       context: [
-        'Agentic Router: keep this team state in the compacted summary.',
+        'Do It All Claude Code: keep this team state in the compacted summary.',
         `- Request ${r.id}: level ${r.level} (source=${r.triage.source}), preset ${r.preset}, budget $${r.budgetUsd}, spent $${r.usedUsd.toFixed(4)}.`,
         ...(subs.length ? ['- Subtasks (ID: role#slot @step (model, effort) status; scope):', ...shown.map(line)] : ['- No subtasks dispatched yet.']),
         ...(subs.length > shown.length ? [`  (${subs.length - shown.length} earlier subtasks omitted)`] : []),
@@ -1302,7 +1302,7 @@ export class Router {
     const toolUseId = str(ev.raw.tool_use_id);
     const tool = routerToolName(ev.toolName);
     if (toolUseId && tool) this.#tickets.add(toolUseId, ev.sessionId, tool, this.#now().getTime());
-    return { allow: { reason: '[agentic-router] router tool call by the lead' } };
+    return { allow: { reason: '[do-it-all-claude-code] router tool call by the lead' } };
   }
 
   /**
@@ -1981,7 +1981,7 @@ export class Router {
     return routingView(this.ledger, this.#config, this.#at());
   }
 
-  /** `agentic-router routing reset`: every released level is delegated again; the records stay. */
+  /** `do-it-all-claude-code routing reset`: every released level is delegated again; the records stay. */
   routingReset(): { cleared: number } {
     const cleared = this.ledger.clearReleases();
     this.#log.info('auto-release state cleared', { cleared });
@@ -1999,7 +1999,7 @@ export class Router {
     });
     return [
       this.#triageContext(r.triage, r.team, undefined, r.leadModel),
-      `[agentic-router] ledger (${why}): request ${r.id}, spent $${r.usedUsd.toFixed(4)} of $${r.budgetUsd}.`,
+      `[do-it-all-claude-code] ledger (${why}): request ${r.id}, spent $${r.usedUsd.toFixed(4)} of $${r.budgetUsd}.`,
       subs.length ? `subtasks: ${subs.join('; ')}.` : 'no subtasks dispatched yet.',
       // decision 145: after a compaction or resume the lead's own copy of the plan may be gone; the router's is not
       ...(r.team.leadDirect ? [] : [`The router keeps this plan. To read it again (each slot's current model, effort and step, the subtasks and their verify results), call ${ROUTER_TOOL_PREFIX}router_get_plan (load it with ToolSearch first).`]),
@@ -2112,7 +2112,7 @@ function changedInScope(signals: VerifySignal[]): number | undefined {
 function blockReason(subtaskId: string, failed: VerifySignal[], shared: boolean): string {
   const lines = failed.map(f => `- ${f.kind}: ${(f.detail ?? 'failed').split('\n').join('\n  ')}`);
   return [
-    `[agentic-router] verification failed for subtask ${subtaskId}:`,
+    `[do-it-all-claude-code] verification failed for subtask ${subtaskId}:`,
     ...lines,
     ...(shared ? ['These checks ran in the shared work tree (the user\'s checkout). Changes that were already uncommitted when you started are not counted as yours; do not revert or commit them.'] : []),
     'Fix these, re-run the checks, then finish again. If the work needs files outside your scope, do not edit them: list them under "Scope request" in your report.',

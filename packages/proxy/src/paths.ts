@@ -1,12 +1,12 @@
 // Files of the proxy inside the router home. Same home rule as the rest of the router
-// ($AGENTIC_ROUTER_HOME when absolute, else ~/.agentic-router), kept here so the key-holding
+// ($DO_IT_ALL_CLAUDE_CODE_HOME when absolute, else ~/.do-it-all-claude-code), kept here so the key-holding
 // process loads no third-party code.
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 export function routerHome(env: NodeJS.ProcessEnv = process.env): string {
-  const v = env.AGENTIC_ROUTER_HOME;
-  return v && path.isAbsolute(v) ? v : path.join(homedir(), '.agentic-router');
+  const v = env.DO_IT_ALL_CLAUDE_CODE_HOME;
+  return v && path.isAbsolute(v) ? v : path.join(homedir(), '.do-it-all-claude-code');
 }
 
 export interface ProxyPaths {

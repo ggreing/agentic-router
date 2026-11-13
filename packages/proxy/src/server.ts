@@ -172,12 +172,12 @@ export function createProxy(o: ProxyOptions): Proxy {
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     res.socket?.setNoDelay(true);
     if (req.headers.origin !== undefined) {
-      localError(res, 403, 'permission_error', 'agentic-router proxy: requests from a web page are refused');
+      localError(res, 403, 'permission_error', 'do-it-all-claude-code proxy: requests from a web page are refused');
       drainLimited(req);
       return;
     }
     if (!hostOk(req.headers.host)) {
-      localError(res, 403, 'permission_error', 'agentic-router proxy: unexpected Host header');
+      localError(res, 403, 'permission_error', 'do-it-all-claude-code proxy: unexpected Host header');
       drainLimited(req);
       return;
     }
@@ -186,12 +186,12 @@ export function createProxy(o: ProxyOptions): Proxy {
     if (req.method === 'HEAD' && route === '/api/hello') { res.writeHead(200); res.end(); return; }
     // decision 156: the proof that this is the router's proxy, asked for before the token is handed over (proof.ts)
     if (route === PROOF_PATH) {
-      if (req.method !== 'POST') { drainLimited(req); localError(res, 405, 'invalid_request_error', 'agentic-router proxy: POST a nonce'); return; }
+      if (req.method !== 'POST') { drainLimited(req); localError(res, 405, 'invalid_request_error', 'do-it-all-claude-code proxy: POST a nonce'); return; }
       const read = await readBody(req, 1024);
       if (read === 'aborted') return;
       let nonce: unknown;
       try { nonce = read === 'too_large' ? undefined : (JSON.parse(read.toString('utf8')) as { nonce?: unknown }).nonce; } catch { nonce = undefined; }
-      if (typeof nonce !== 'string' || !NONCE_RE.test(nonce)) { localError(res, 400, 'invalid_request_error', 'agentic-router proxy: a nonce of 16 to 64 base64url characters is needed'); return; }
+      if (typeof nonce !== 'string' || !NONCE_RE.test(nonce)) { localError(res, 400, 'invalid_request_error', 'do-it-all-claude-code proxy: a nonce of 16 to 64 base64url characters is needed'); return; }
       const body = JSON.stringify({ v: 1, proof: proofOf(o.tokens.current(), listenPort, nonce) });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(body) });
       res.end(body);
@@ -201,7 +201,7 @@ export function createProxy(o: ProxyOptions): Proxy {
     const auth = o.tokens.accept(presented);
     if (route === '/proxy/v1/health') {
       req.resume();
-      if (!auth) { localError(res, 401, 'authentication_error', 'agentic-router proxy: invalid local token'); return; }
+      if (!auth) { localError(res, 401, 'authentication_error', 'do-it-all-claude-code proxy: invalid local token'); return; }
       const body = JSON.stringify({ ok: true, version: PROXY_VERSION, upstream: o.settings.upstream.origin, via: o.egress?.shown ?? null, uptimeMs: Date.now() - started, inflight });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(body);
@@ -209,8 +209,8 @@ export function createProxy(o: ProxyOptions): Proxy {
     }
     // A6: allowlist (method, canonical path); anything else under /v1 (batches, //, trailing slash) is refused.
     const kind = classifyRoute(req.method, canonicalPath(route));
-    if (!kind) { drainLimited(req); localError(res, 404, 'not_found_error', 'agentic-router proxy: this path is not proxied'); return; }
-    if (!auth) { drainLimited(req); localError(res, 401, 'authentication_error', 'agentic-router proxy: invalid local token'); return; }
+    if (!kind) { drainLimited(req); localError(res, 404, 'not_found_error', 'do-it-all-claude-code proxy: this path is not proxied'); return; }
+    if (!auth) { drainLimited(req); localError(res, 401, 'authentication_error', 'do-it-all-claude-code proxy: invalid local token'); return; }
 
     const att = attribution(req.headers);
     const messages = kind === 'messages';
@@ -220,7 +220,7 @@ export function createProxy(o: ProxyOptions): Proxy {
     if (messages) {
       // the body is read once, bounded by the API's own limit, to size the hold; it is forwarded as these bytes
       const tooLarge = () => {
-        localError(res, 413, 'request_too_large', `agentic-router proxy: the request body is over ${maxBody} bytes, more than the API accepts`, false);
+        localError(res, 413, 'request_too_large', `do-it-all-claude-code proxy: the request body is over ${maxBody} bytes, more than the API accepts`, false);
         res.once('finish', () => req.destroy());
       };
       const declared = Number(req.headers['content-length']);
@@ -269,7 +269,7 @@ export function createProxy(o: ProxyOptions): Proxy {
     } catch (e) {
       if (reservationId) budget.settle(reservationId, 0);   // internal error: release the reservation
       o.log.error('exchange failed', { error: errorText(e) });
-      localError(res, 502, 'api_error', 'agentic-router proxy: internal error', true);
+      localError(res, 502, 'api_error', 'do-it-all-claude-code proxy: internal error', true);
     } finally {
       inflight--;
     }
@@ -278,7 +278,7 @@ export function createProxy(o: ProxyOptions): Proxy {
   const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
     handle(req, res).catch(e => {
       o.log.error('request failed', { error: errorText(e) });
-      localError(res, 502, 'api_error', 'agentic-router proxy: internal error', true);
+      localError(res, 502, 'api_error', 'do-it-all-claude-code proxy: internal error', true);
     });
   };
   const serverOptions = { requestTimeout: REQUEST_TIMEOUT_MS, headersTimeout: 60_000, keepAliveTimeout: 65_000 };

@@ -12,7 +12,7 @@ import { testPort } from './ports.ts';
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-sup-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 

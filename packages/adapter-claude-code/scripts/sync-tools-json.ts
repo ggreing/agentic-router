@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { routerToolList } from '@agentic-router/core';
+import { routerToolList } from '@do-it-all-claude-code/core';
 
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'mcp', 'tools.json');
 fs.writeFileSync(out, JSON.stringify(routerToolList(), null, 2) + '\n');

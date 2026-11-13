@@ -5,7 +5,7 @@
 //   decision.allow       -> PreToolUse hookSpecificOutput.permissionDecision="allow" (skips the prompt; user deny/ask rules still apply); deny wins
 //   decision.block       -> SubagentStop/Stop top-level decision="block" + reason (keeps the agent working)
 //   decision.userMessage -> top-level systemMessage (a short notice shown to the user)
-import type { RouterDecision, RouterEventType } from '@agentic-router/core';
+import type { RouterDecision, RouterEventType } from '@do-it-all-claude-code/core';
 import { TYPE_TO_HOOK_EVENT, type ClaudeHookEventName } from './events.ts';
 
 /** The JSON object a hook writes to stdout. PreCompact uses plain stdout instead (see renderPreCompactStdout). */

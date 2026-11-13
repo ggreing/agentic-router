@@ -1,11 +1,11 @@
 // `init` building blocks: local state (config, token), Claude Code status line, project settings.
-// Every change to a file outside ~/.agentic-router is shown first and needs confirmation (or --yes).
+// Every change to a file outside ~/.do-it-all-claude-code is shown first and needs confirmation (or --yes).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { PROVISIONAL_BUDGET_USD, paths, redact, routerHome, type Level, type RouterConfig } from '@agentic-router/core';
+import { LEGACY_SLUG, PROVISIONAL_BUDGET_USD, ROUTER_PLUGIN_NAME, paths, redact, routerHome, type Level, type RouterConfig } from '@do-it-all-claude-code/core';
 
 /** Ports common dev servers use; the daemon never takes them (spec 2.1). */
 export const COMMON_DEV_PORTS = new Set([3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8081, 8443, 8787, 8888, 9000, 9229, 27017]);
@@ -106,7 +106,9 @@ export function writeConfig(c: CliConfig): void {
 
 /** Settings env names that look like credentials: a backup never keeps their values. */
 export const isCredentialName = (name: string): boolean => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH/i.test(name);
-export const backupFile = (settingsFile: string): string => `${settingsFile}.agentic-router.bak`;
+export const backupFile = (settingsFile: string): string => `${settingsFile}.${ROUTER_PLUGIN_NAME}.bak`;
+/** The previous release's backup (decision 161): init moves it to backupFile; uninstall reads it when it is the only one. */
+export const legacyBackupFile = (settingsFile: string): string => `${settingsFile}.${LEGACY_SLUG}.bak`;
 
 /** Env names a backup leaves out besides credential-looking ones (decision 149): headers can carry a credential. */
 const BACKUP_DROP_ENV = new Set(['ANTHROPIC_CUSTOM_HEADERS']);
@@ -146,6 +148,16 @@ export function writeBackup(settingsFile: string): void {
   const bak = backupFile(settingsFile);
   if (!fs.existsSync(settingsFile) || fs.existsSync(bak)) return;
   writeJsonAtomic(bak, withoutCredentials(readJsonFile<Record<string, any>>(settingsFile, {})), { mode: 0o600 });
+}
+
+/** Decision 161: the settings as they were right before init's move rewrote the router's entries. */
+export const moveBackupFile = (settingsFile: string): string => `${settingsFile}.${ROUTER_PLUGIN_NAME}.before-move.bak`;
+/** Writes that backup (0600, without credential values, as the one-time backup); its path, or null without a settings file. */
+export function writeMoveBackup(settingsFile: string): string | null {
+  if (!fs.existsSync(settingsFile)) return null;
+  const file = moveBackupFile(settingsFile);
+  writeJsonAtomic(file, withoutCredentials(readJsonFile<Record<string, any>>(settingsFile, {})), { mode: 0o600 });
+  return file;
 }
 
 /** The credential fields an existing backup still holds (made before decisions 142 and 149), as labels. */
@@ -203,7 +215,8 @@ export interface PlannedChange { file: string; summary: string; apply(): void }
 /**
  * True when a status line command runs this plugin's statusline.mjs, from any install location
  * (dev checkout, another --plugin-dir, marketplace cache). Such a command is never wrapped:
- * wrapping it would make the status line run itself recursively (review #1).
+ * wrapping it would make the status line run itself recursively (review #1). The previous release's
+ * name counts too (decision 161), so that init's move and uninstall find what it wrote.
  */
 export function isRouterStatusLine(command: string | undefined): boolean {
   if (!command) return false;
@@ -212,9 +225,9 @@ export function isRouterStatusLine(command: string | undefined): boolean {
   if (!file) return false;
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), '.claude-plugin', 'plugin.json'), 'utf8'));
-    if (manifest?.name === 'agentic-router') return true;
+    if (manifest?.name === ROUTER_PLUGIN_NAME || manifest?.name === LEGACY_SLUG) return true;
   } catch { /* file moved or not readable: fall back to the path */ }
-  return /agentic-router/i.test(file);
+  return /do-it-all-claude-code|agentic-router/i.test(file);
 }
 
 /**

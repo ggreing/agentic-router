@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS } from '@agentic-router/core';
+import { DEFAULT_PRESETS } from '@do-it-all-claude-code/core';
 import { applyBudgets, parseBudgets, readConfig } from '../src/config.ts';
 import type { StatusView } from '../src/router.ts';
 import { TEAM_L1_PRESETS, copyTranscript, getStatus, makeHome, postHook, rmrf, startTestDaemon, tmpDir } from './helpers.ts';
@@ -51,7 +51,7 @@ test('the daemon plans requests with the configured budget and denies once it is
     await postHook(d.port, { ...b, hook_event_name: 'SubagentStop', agent_id: 'x1', agent_type: 'Explore', stop_hook_active: false,
       agent_transcript_path: copyTranscript(home, 'x1') });
     const r = await postHook(d.port, { ...b, hook_event_name: 'PreToolUse', tool_name: 'Agent',
-      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
+      tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
     const out = r.body as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
     assert.equal(out.hookSpecificOutput?.permissionDecision, 'deny');
     assert.match(out.hookSpecificOutput?.permissionDecisionReason ?? '', /budget is used up .* of \$0\.002\)/);

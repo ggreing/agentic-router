@@ -33,13 +33,13 @@ async function fullFlow(config: Record<string, unknown>): Promise<{ db: string; 
   };
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT, prompt_id: 'p-1' });
   await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:A] add the audit log ${MARK}\n[scope: src/**]\nThe spec: ${MARK}`, model: 'haiku', effort: 'low' } });
-  await post({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'agentic-router:coder' });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:A] add the audit log ${MARK}\n[scope: src/**]\nThe spec: ${MARK}`, model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder' });
   // the async launch result: it repeats the spec and carries a description
-  await post({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:A] ${MARK}` },
+  await post({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:A] ${MARK}` },
     tool_response: { status: 'async_launched', agentId: 'a1', isAsync: true, description: `audit ${MARK}`, prompt: `[subtask:A] ${MARK}`, content: [{ type: 'text', text: `launched ${MARK}` }] } });
   fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'audited\n');
-  await post({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'agentic-router:coder', stop_hook_active: false, last_assistant_message: `- Changed files: src/a.ts ${MARK}` });
+  await post({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, last_assistant_message: `- Changed files: src/a.ts ${MARK}` });
   await post({ hook_event_name: 'UserPromptSubmit', prompt_id: 'p-2',
     prompt: `<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<result>done, as asked: ${MARK}</result>\n</task-notification>` });
   await post({ hook_event_name: 'PreCompact', trigger: 'manual', custom_instructions: `keep the audit log notes ${MARK}` });
@@ -144,10 +144,10 @@ test('decision 142: the minimal form keeps what routing and a replay need, nothi
   const spec = `[subtask:A] the spec ${MARK}\n[scope: src/**, test/**]\nthen ${MARK}`;
   const agent = minimalPayload({
     hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_use_id: 'toolu_1', cwd: '/repo',
-    tool_input: { subagent_type: 'agentic-router:coder', model: 'haiku', effort: 'low', description: `audit ${MARK}`, prompt: spec },
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', model: 'haiku', effort: 'low', description: `audit ${MARK}`, prompt: spec },
   });
   assert.deepEqual(agent, { _min: 1, hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_use_id: 'toolu_1', cwd: '/repo',
-    tool_input: { subagent_type: 'agentic-router:coder', model: 'haiku', effort: 'low', prompt_chars: spec.length, prompt: '[subtask:A]\n[scope: src/**, test/**]' } });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', model: 'haiku', effort: 'low', prompt_chars: spec.length, prompt: '[subtask:A]\n[scope: src/**, test/**]' } });
   // the positions the router parses by: a scope without a tag stays on line 2
   assert.equal((minimalPayload({ tool_name: 'Agent', tool_input: { prompt: `do it ${MARK}\n[scope: src/**]` } }) as Record<string, any>).tool_input.prompt, '\n[scope: src/**]');   // eslint-disable-line @typescript-eslint/no-explicit-any
   const tagged = minimalPayload({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { prompt: `[subtask:B]\n[scope: src/**]\n${MARK}` } }) as P;
@@ -185,7 +185,7 @@ test('decision 142: the relay\'s copy of the minimal form equals the daemon\'s o
   inputs.push(
     { hook_event_name: 'SubagentStart', agent_id: 'a', verifyEnv: { PATH: '/x', VIRTUAL_ENV: '/v' } },
     { hook_event_name: 'Stop', last_assistant_message: `x ${MARK} [router:awaiting-user]` },
-    { hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_agentic-router_router__router_report_result', tool_input: { subtaskId: 'A', verdict: 'accept' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_do-it-all-claude-code_router__router_report_result', tool_input: { subtaskId: 'A', verdict: 'accept' } },
   );
   assert.ok(inputs.length > 20, `recorded inputs: ${inputs.length}`);
   for (const i of inputs) {
@@ -224,7 +224,7 @@ test('decision 142: with the daemon down the relay spools the minimal form (0600
 });
 
 test('decision 142: the relay masks with the generated secret-patterns.json exactly as core redact does', async () => {
-  const { redact } = await import('@agentic-router/core');
+  const { redact } = await import('@do-it-all-claude-code/core');
   const relay = await import(new URL('../../../plugin/hooks/relay.mjs', import.meta.url).href) as { redact(s: string): string };
   const samples = [
     'key sk-ant-api03-AAAAAAAAAAAAAAAAAAAA and more', 'Authorization: Bearer abcdefghijklmnopqrstuvwx', '{"api_key":"0123456789abcdef"}',

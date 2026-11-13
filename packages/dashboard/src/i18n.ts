@@ -14,7 +14,7 @@ export type LocaleId = typeof LOCALES[number];
 export const LOCALE_NAMES: Record<LocaleId, string> = { en: 'English', ko: '한국어', ja: '日本語', 'zh-CN': '简体中文' };
 
 const en = {
-  'app.title': 'Agentic Router',
+  'app.title': 'Do It All Claude Code',
   'app.subtitle': 'read-only local dashboard · all data stays on this machine',
   'tab.overview': 'Overview', 'tab.requests': 'Requests', 'tab.learning': 'Learning', 'tab.routing': 'Routing', 'tab.now': 'Now',
 
@@ -22,9 +22,9 @@ const en = {
   'common.level': 'level', 'common.status': 'status', 'common.ok': 'ok', 'common.fail': 'fail', 'common.failed': 'failed',
 
   'banner.loading': 'Loading…', 'banner.cantLoad': "Can't load data", 'banner.retry': 'Retry',
-  'banner.daemonOff': 'The router daemon is not running. Start it with `agentic-router start`, then retry.',
+  'banner.daemonOff': 'The router daemon is not running. Start it with `do-it-all-claude-code start`, then retry.',
   'banner.timeout': 'The daemon did not respond in time. It may be busy — retry in a moment.',
-  'banner.unauthorized': 'This dashboard session has expired. Reopen it with `agentic-router dashboard`.',
+  'banner.unauthorized': 'This dashboard session has expired. Reopen it with `do-it-all-claude-code dashboard`.',
   'banner.httpError': 'The daemon returned an error. Retry, and check the daemon log if it persists.',
 
   'ov.requests': 'Requests', 'ov.noObjection': 'No objection seen', 'ov.acceptancePending': 'verify verdict (acceptance pending)',
@@ -74,7 +74,7 @@ export type MessageKey = keyof typeof en;
 type Dict = Record<MessageKey, string>;
 
 const ko: Dict = {
-  'app.title': 'Agentic Router',
+  'app.title': 'Do It All Claude Code',
   'app.subtitle': '읽기 전용 로컬 대시보드 · 모든 데이터는 이 기기에만 남습니다',
   'tab.overview': '개요', 'tab.requests': '요청', 'tab.learning': '학습', 'tab.routing': '라우팅', 'tab.now': '현재',
 
@@ -82,9 +82,9 @@ const ko: Dict = {
   'common.level': '레벨', 'common.status': '상태', 'common.ok': 'ok', 'common.fail': '실패', 'common.failed': '실패',
 
   'banner.loading': '불러오는 중…', 'banner.cantLoad': '데이터를 불러올 수 없습니다', 'banner.retry': '다시 시도',
-  'banner.daemonOff': '라우터 데몬이 실행 중이 아닙니다. `agentic-router start`로 시작한 뒤 다시 시도하세요.',
+  'banner.daemonOff': '라우터 데몬이 실행 중이 아닙니다. `do-it-all-claude-code start`로 시작한 뒤 다시 시도하세요.',
   'banner.timeout': '데몬이 제때 응답하지 않았습니다. 바쁠 수 있으니 잠시 후 다시 시도하세요.',
-  'banner.unauthorized': '대시보드 세션이 만료되었습니다. `agentic-router dashboard`로 다시 여세요.',
+  'banner.unauthorized': '대시보드 세션이 만료되었습니다. `do-it-all-claude-code dashboard`로 다시 여세요.',
   'banner.httpError': '데몬이 오류를 반환했습니다. 다시 시도하고, 계속되면 데몬 로그를 확인하세요.',
 
   'ov.requests': '요청', 'ov.noObjection': '이의 없음', 'ov.acceptancePending': 'verify 판정 (수용 집계 준비 중)',
@@ -131,7 +131,7 @@ const ko: Dict = {
 };
 
 const ja: Dict = {
-  'app.title': 'Agentic Router',
+  'app.title': 'Do It All Claude Code',
   'app.subtitle': '読み取り専用のローカルダッシュボード · すべてのデータはこの端末内に留まります',
   'tab.overview': '概要', 'tab.requests': 'リクエスト', 'tab.learning': '学習', 'tab.routing': 'ルーティング', 'tab.now': '現在',
 
@@ -139,9 +139,9 @@ const ja: Dict = {
   'common.level': 'レベル', 'common.status': '状態', 'common.ok': 'ok', 'common.fail': '失敗', 'common.failed': '失敗',
 
   'banner.loading': '読み込み中…', 'banner.cantLoad': 'データを読み込めません', 'banner.retry': '再試行',
-  'banner.daemonOff': 'ルーターデーモンが起動していません。`agentic-router start` で起動してから再試行してください。',
+  'banner.daemonOff': 'ルーターデーモンが起動していません。`do-it-all-claude-code start` で起動してから再試行してください。',
   'banner.timeout': 'デーモンが時間内に応答しませんでした。混み合っている可能性があります。少し待って再試行してください。',
-  'banner.unauthorized': 'このダッシュボードのセッションは期限切れです。`agentic-router dashboard` で開き直してください。',
+  'banner.unauthorized': 'このダッシュボードのセッションは期限切れです。`do-it-all-claude-code dashboard` で開き直してください。',
   'banner.httpError': 'デーモンがエラーを返しました。再試行し、続く場合はデーモンのログを確認してください。',
 
   'ov.requests': 'リクエスト', 'ov.noObjection': '異議なし', 'ov.acceptancePending': 'verify 判定（受容集計は準備中）',
@@ -188,7 +188,7 @@ const ja: Dict = {
 };
 
 const zhCN: Dict = {
-  'app.title': 'Agentic Router',
+  'app.title': 'Do It All Claude Code',
   'app.subtitle': '只读本地仪表板 · 所有数据都留在本机',
   'tab.overview': '概览', 'tab.requests': '请求', 'tab.learning': '学习', 'tab.routing': '路由', 'tab.now': '当前',
 
@@ -196,9 +196,9 @@ const zhCN: Dict = {
   'common.level': '级别', 'common.status': '状态', 'common.ok': 'ok', 'common.fail': '失败', 'common.failed': '失败',
 
   'banner.loading': '加载中…', 'banner.cantLoad': '无法加载数据', 'banner.retry': '重试',
-  'banner.daemonOff': '路由守护进程未运行。请用 `agentic-router start` 启动后重试。',
+  'banner.daemonOff': '路由守护进程未运行。请用 `do-it-all-claude-code start` 启动后重试。',
   'banner.timeout': '守护进程未在限定时间内响应。可能正忙，请稍后重试。',
-  'banner.unauthorized': '此仪表板会话已过期。请用 `agentic-router dashboard` 重新打开。',
+  'banner.unauthorized': '此仪表板会话已过期。请用 `do-it-all-claude-code dashboard` 重新打开。',
   'banner.httpError': '守护进程返回了错误。请重试；若持续出现，请查看守护进程日志。',
 
   'ov.requests': '请求', 'ov.noObjection': '未见异议', 'ov.acceptancePending': 'verify 判定（受理统计准备中）',

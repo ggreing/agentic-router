@@ -12,7 +12,7 @@ import path from 'node:path';
 
 const LOW = 21000;
 const SPAN = 8000;
-const CLAIMS = path.join(os.tmpdir(), 'agentic-router-test-ports');
+const CLAIMS = path.join(os.tmpdir(), 'do-it-all-claude-code-test-ports');
 const STALE_MS = 30 * 60_000;
 
 const free = (port: number) => new Promise<boolean>(resolve => {

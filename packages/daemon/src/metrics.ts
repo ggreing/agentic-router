@@ -9,7 +9,7 @@
 // Phase-0 OFF baseline is undetermined (Appendix B), so baseline deltas are null until it is measured.
 // No prompt text is ever returned unless request_records.prompt is set (config.recordPrompts, decision 109).
 import type { SQLInputValue } from 'node:sqlite';
-import { redact, type Level } from '@agentic-router/core';
+import { redact, type Level } from '@do-it-all-claude-code/core';
 import type { Ledger } from './ledger.ts';
 import { recordVerifyOk, routingView, type RoutingConfig, type RoutingView } from './routing.ts';
 

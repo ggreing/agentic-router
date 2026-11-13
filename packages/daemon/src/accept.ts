@@ -4,7 +4,7 @@
 // never written anywhere; what is recorded is the similarity (two numbers) and, for a dissatisfaction
 // phrase, the id of the rule that matched. A daemon restart loses them; the re-ask signal is then missing
 // for the requests that were open, and the record says so.
-import { ACCEPT_WINDOW_PROMPTS, acceptanceVerdict, type AcceptSignal, type Acceptance } from '@agentic-router/core';
+import { ACCEPT_WINDOW_PROMPTS, acceptanceVerdict, type AcceptSignal, type Acceptance } from '@do-it-all-claude-code/core';
 import type { AcceptState } from './ledger.ts';
 
 export const PROMPT_MEMORY_TTL_MS = 2 * 60 * 60 * 1000;

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileFingerprint, filterOverrides, git, headRef, repoRoot } from './git.ts';
 import { normalizeEol, sameContent } from './tree.ts';
-import { ABSENT, MAX_END_STATE_FILES, fileSignals, type FileEnd, type FileNow, type FileSignals } from '@agentic-router/core';
+import { ABSENT, MAX_END_STATE_FILES, fileSignals, type FileEnd, type FileNow, type FileSignals } from '@do-it-all-claude-code/core';
 
 export const MAX_SNAPSHOT_FILES = 5000;
 const MAX_COUNT_BYTES = 8 * 1024 * 1024;

@@ -1,7 +1,7 @@
-// Proxy settings from config.json (written by `agentic-router init`), with the upstream allowlist.
+// Proxy settings from config.json (written by `do-it-all-claude-code init`), with the upstream allowlist.
 //   config.json: { "proxyPort", "daemonPort", "proxy": { "upstream", "allowedUpstreams", "tokenDailyCapUsd", "dailyCapUsd" } }
 // The upstream is where the real key is sent, so it must be an https origin on the built-in list or one the
-// user added with `agentic-router proxy allow-upstream` (config.json is in the router home, never a project
+// user added with `do-it-all-claude-code proxy allow-upstream` (config.json is in the router home, never a project
 // file). Only tests may use a plain-http loopback upstream.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ export const DEFAULT_DAILY_CAP_USD = 300;
 export const HEADERS_TIMEOUT_MS = 30_000;
 
 /** Tests only: a plain-http upstream on the loopback address (the fake upstream). */
-export const TEST_UPSTREAM_ENV = 'AGENTIC_ROUTER_PROXY_TEST_UPSTREAM';
+export const TEST_UPSTREAM_ENV = 'DO_IT_ALL_CLAUDE_CODE_PROXY_TEST_UPSTREAM';
 const LOOPBACK_HTTP = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/;
 
 export interface ProxySettings {
@@ -49,7 +49,7 @@ export function checkUpstream(raw: string, allowed: readonly string[], testUpstr
   }
   const origin = url.origin;
   const list = [...BUILTIN_UPSTREAMS, ...allowed].map(o => { try { return new URL(o).origin; } catch { return ''; } });
-  if (!list.includes(origin)) throw new ConfigError(`upstream ${origin} is not on the allowlist (add it with agentic-router proxy allow-upstream)`);
+  if (!list.includes(origin)) throw new ConfigError(`upstream ${origin} is not on the allowlist (add it with do-it-all-claude-code proxy allow-upstream)`);
   return { url: new URL(origin), test: false };
 }
 
@@ -70,7 +70,7 @@ export function loadSettings(configFile: string, warnings: string[] = []): Proxy
   }
   const p = raw.proxy && typeof raw.proxy === 'object' && !Array.isArray(raw.proxy) ? raw.proxy as Record<string, unknown> : {};
   const port = raw.proxyPort;
-  if (!Number.isInteger(port) || (port as number) <= 0 || (port as number) > 65535) throw new ConfigError('config.proxyPort must be a port number (run agentic-router init --mode api)');
+  if (!Number.isInteger(port) || (port as number) <= 0 || (port as number) > 65535) throw new ConfigError('config.proxyPort must be a port number (run do-it-all-claude-code init --mode api)');
   const allowed = Array.isArray(p.allowedUpstreams) ? p.allowedUpstreams.filter((x): x is string => typeof x === 'string') : [];
   // B1: the settings loader never honours a test-upstream environment switch in production. Tests inject a
   // loopback http upstream by constructing ProxySettings with checkUpstream('', [], 'http://127.0.0.1:<port>').
@@ -82,7 +82,7 @@ export function loadSettings(configFile: string, warnings: string[] = []): Proxy
   if (p.tls === true) {
     const dir = path.join(path.dirname(configFile), 'tls');
     tls = { certFile: path.join(dir, 'proxy-cert.pem'), keyFile: path.join(dir, 'proxy-key.pem') };
-    for (const f of [tls.certFile, tls.keyFile]) if (!fs.existsSync(f)) throw new ConfigError(`proxy.tls is on but ${f} is missing: run agentic-router mode api`);
+    for (const f of [tls.certFile, tls.keyFile]) if (!fs.existsSync(f)) throw new ConfigError(`proxy.tls is on but ${f} is missing: run do-it-all-claude-code mode api`);
   }
   return {
     port: port as number,

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Agentic Router status line for Claude Code (dependency-free, single file).
+// Do It All Claude Code status line for Claude Code (dependency-free, single file).
 //
 // Reads the status line input JSON on stdin, asks the local daemon for the session's request
 // (GET /router/v1/status?session_id=..., port from config.json, Bearer token from the token file)
@@ -9,7 +9,7 @@
 // Daemon down, slow (> 1 s) or unauthorised: [Router] OFF.  No request yet in the session: [Router] idle.
 // If config.json has `wrappedStatusLine` (the user's previous status line command), it runs with the
 // same stdin and its output is appended after " | "; its failure is ignored. The wrapped command gets
-// AGENTIC_ROUTER_STATUSLINE=1; a status line started with it set prints the router segment only, so
+// DO_IT_ALL_CLAUDE_CODE_STATUSLINE=1; a status line started with it set prints the router segment only, so
 // a configuration that wraps this script itself cannot recurse.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -21,11 +21,11 @@ import { fileURLToPath } from 'node:url';
 
 export const DAEMON_TIMEOUT_MS = 1000;
 export const WRAPPED_TIMEOUT_MS = 2000;
-export const NESTED_ENV = 'AGENTIC_ROUTER_STATUSLINE';
+export const NESTED_ENV = 'DO_IT_ALL_CLAUDE_CODE_STATUSLINE';
 const MAX_STDIN = 256 * 1024;
 
 export function routerHome(env = process.env) {
-  return env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
+  return env.DO_IT_ALL_CLAUDE_CODE_HOME || path.join(os.homedir(), '.do-it-all-claude-code');
 }
 
 // ---------------------------------------------------------------- subscription limit capture (spec 3.8)

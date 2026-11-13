@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-router/core",
+  "name": "@do-it-all-claude-code/core",
   "version": "0.2.0",
   "private": true,
   "description": "Client-neutral core: types, ladder, presets, triage rules, adjustment rules",

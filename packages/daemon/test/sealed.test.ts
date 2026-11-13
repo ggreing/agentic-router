@@ -9,7 +9,7 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SEALED_PATH, SEAL_WINDOW_MS, SealError, sealRequest, sealedCall } from '@agentic-router/core';
+import { SEALED_PATH, SEAL_WINDOW_MS, SealError, sealRequest, sealedCall } from '@do-it-all-claude-code/core';
 import { TOKEN, makeHome, request, rmrf, startTestDaemon, type TestDaemon } from './helpers.ts';
 
 const here = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
@@ -32,7 +32,7 @@ const raw = (port: number, envelope: string, headers: Record<string, string> = {
 /** Runs a node program with stdin, returns its stdout. */
 function run(file: string, args: string[], home: string, stdin = '', extraEnv: Record<string, string> = {}, cwd?: string): Promise<{ out: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const c = spawn(process.execPath, [file, ...args], { env: { ...process.env, AGENTIC_ROUTER_HOME: home, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}) });
+    const c = spawn(process.execPath, [file, ...args], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}) });
     let out = '';
     c.stdout.on('data', x => { out += x; });
     c.stderr.on('data', x => { out += x; });
@@ -67,7 +67,7 @@ test('a sealed call reaches every route and answers as a direct call does; nothi
   assert.deepEqual([health.status, JSON.parse(health.body).ok], [200, true]);
   const hook = await sealed(d, 'POST', HOOK, prompt(`Fix the typo in README.md ${MARKER}`));
   assert.equal(hook.status, 200);
-  assert.match(JSON.parse(hook.body).hookSpecificOutput.additionalContext, /agentic-router/);
+  assert.match(JSON.parse(hook.body).hookSpecificOutput.additionalContext, /do-it-all-claude-code/);
   assert.equal((await sealed(d, 'GET', '/router/v1/status?session_id=s-sealed')).status, 200);
   // the daemon's own answers pass through with their status: an unknown route, a wrong method, a bad body
   assert.equal((await sealed(d, 'GET', '/router/v1/nope')).status, 404);
@@ -171,7 +171,7 @@ test('squatter: no client sends it the token or the hook data, and none takes it
 /** One tools/call through the plugin's MCP server as Claude Code runs it. */
 function mcpCall(home: string, tool: string): Promise<{ isError?: boolean; content?: unknown }> {
   return new Promise((resolve, reject) => {
-    const c = spawn(process.execPath, [MCP], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'] });
+    const c = spawn(process.execPath, [MCP], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'] });
     let buf = '';
     const timer = setTimeout(() => { c.kill(); reject(new Error('the MCP server did not answer')); }, 20_000);
     c.stdout.on('data', x => {
@@ -213,11 +213,11 @@ test('relay attack: a listener that passes everything on to the real daemon sees
   try {
     const out = await run(RELAY, ['UserPromptSubmit'], home, prompt(`Fix the typo in README.md ${MARKER}`, 's-relayed'));
     // the call went through (the real daemon answered, sealed end to end) ...
-    assert.match(JSON.parse(out.out).hookSpecificOutput.additionalContext, /agentic-router/);
+    assert.match(JSON.parse(out.out).hookSpecificOutput.additionalContext, /do-it-all-claude-code/);
     // ... and the listener in the middle read nothing: no token, no prompt, no answer text
     const all = seen.join('\n');
     assert.ok(seen.length >= 2);
-    assert.ok(!all.includes(TOKEN) && !all.includes(MARKER) && !all.includes('agentic-router]') && !/authorization/i.test(all));
+    assert.ok(!all.includes(TOKEN) && !all.includes(MARKER) && !all.includes('do-it-all-claude-code]') && !/authorization/i.test(all));
     // and what it recorded is worth nothing later: the request cannot be sent again
     const recorded = /\{"v":1,"n":"[^"]+","t":\d+,"c":"[^"]+"\}/.exec(seen[0]!)![0];
     assert.equal((await raw(d.port, recorded)).status, 401);

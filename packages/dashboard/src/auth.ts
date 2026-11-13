@@ -1,4 +1,4 @@
-// One-time login bootstrap (decision 132). `agentic-router dashboard` opens the page with a one-time code
+// One-time login bootstrap (decision 132). `do-it-all-claude-code dashboard` opens the page with a one-time code
 // in the URL fragment (…/dashboard#code=<code>). The page reads it, POSTs it once to /dashboard/auth to
 // receive the HttpOnly session cookie, then clears the fragment with history.replaceState so the code never
 // lingers in the address bar or history. The code is single-use and short-lived; the long-lived token

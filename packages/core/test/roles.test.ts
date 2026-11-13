@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORBIDDEN_ROLE_TOOLS, parseRoleFile } from '@agentic-router/core';
+import { FORBIDDEN_ROLE_TOOLS, parseRoleFile } from '@do-it-all-claude-code/core';
 
 const sample = `---
 name: coder

@@ -2,17 +2,17 @@
 // lead's model (decisions 117-118: an Opus-class lead delegates from L1, others from L2; config
 // delegateFrom may change that), or the presets the daemon was started with as they are; then the
 // user's <routerHome>/teams.yaml, then the project's
-// .agentic-router/teams.yaml (a protected path; read from the work tree when the request starts), then
+// .do-it-all-claude-code/teams.yaml (a protected path; read from the work tree when the request starts), then
 // the per-level budgets of config.json. Each file may set any field of a level; what it leaves out
 // comes from the layer below (core loadPresets with a base). An invalid file is logged and ignored.
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS, loadPresets, withLeadModel, type Level, type LeadModelClass, type TeamPreset } from '@agentic-router/core';
+import { DEFAULT_PRESETS, PROJECT_DIR, loadPresets, projectFile, withLeadModel, type Level, type LeadModelClass, type TeamPreset } from '@do-it-all-claude-code/core';
 import { applyBudgets } from './config.ts';
 import { errorText, type Logger } from './log.ts';
 
 export const TEAMS_FILE = 'teams.yaml';
-export const PROJECT_TEAMS_FILE = '.agentic-router/teams.yaml';
+export const PROJECT_TEAMS_FILE = `${PROJECT_DIR}/teams.yaml`;
 
 export type PresetSource = 'default' | 'user' | 'project' | 'user+project';
 
@@ -58,7 +58,8 @@ export class PresetResolver {
     const user = this.#load(this.#userFile, presets);
     if (user) { presets = user; used.push('user'); }
     const root = cwd ? workTreeRoot(cwd) : undefined;
-    const project = root ? this.#load(path.join(root, PROJECT_TEAMS_FILE), presets) : undefined;
+    // the previous release's folder (.agentic-router) is read when the new one has no teams.yaml (decision 161)
+    const project = root ? this.#load(projectFile(root, TEAMS_FILE, fs.existsSync).file, presets) : undefined;
     if (project) { presets = project; used.push('project'); }
     return { presets: applyBudgets(presets, this.#budgets), source: (used.join('+') || 'default') as PresetSource };
   }

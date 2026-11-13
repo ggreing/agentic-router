@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agentic-router MCP server: a dependency-free stdio JSON-RPC relay between Claude Code and the local
+// do-it-all-claude-code MCP server: a dependency-free stdio JSON-RPC relay between Claude Code and the local
 // daemon (decision 127). Same single-file, no-dependency style as relay.mjs.
 //
 // Framing: one JSON-RPC 2.0 message per line on stdin/stdout, UTF-8, '\n' only. Nothing but JSON lines
@@ -37,7 +37,7 @@ function serverVersion() {
 
 // ---------------------------------------------------------------- config / token (mirrors relay.mjs)
 function routerHome() {
-  return process.env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
+  return process.env.DO_IT_ALL_CLAUDE_CODE_HOME || path.join(os.homedir(), '.do-it-all-claude-code');
 }
 function readConfig(home) {
   try { return JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')); } catch { return null; }
@@ -48,7 +48,7 @@ function readToken(home) {
 
 // tools.json sits beside this file (written from core's schemas by a build step); an env var overrides it.
 function toolsPath() {
-  return process.env.AGENTIC_ROUTER_TOOLS || path.join(HERE, 'tools.json');
+  return process.env.DO_IT_ALL_CLAUDE_CODE_TOOLS || path.join(HERE, 'tools.json');
 }
 function loadTools() {
   try {
@@ -56,7 +56,7 @@ function loadTools() {
     const arr = Array.isArray(j) ? j : Array.isArray(j?.tools) ? j.tools : [];
     return arr.filter(t => t && typeof t.name === 'string');
   } catch (e) {
-    process.stderr.write(`[agentic-router mcp] tools.json unreadable: ${e?.message ?? e}\n`);
+    process.stderr.write(`[do-it-all-claude-code mcp] tools.json unreadable: ${e?.message ?? e}\n`);
     return [];
   }
 }
@@ -74,7 +74,7 @@ function textResult(obj, isError = false) {
   return { content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }], isError };
 }
 function unreachableResult() {
-  return textResult('[agentic-router] daemon_unreachable: the router is not running. Continue without this tool; do not retry.', true);
+  return textResult('[do-it-all-claude-code] daemon_unreachable: the router is not running. Continue without this tool; do not retry.', true);
 }
 
 /**
@@ -83,14 +83,14 @@ function unreachableResult() {
  */
 function mapDaemonReply(data) {
   let body;
-  try { body = JSON.parse(data); } catch { return textResult('[agentic-router] internal: invalid daemon response', true); }
+  try { body = JSON.parse(data); } catch { return textResult('[do-it-all-claude-code] internal: invalid daemon response', true); }
   if (body && Array.isArray(body.content)) return { content: body.content, isError: !!body.isError };
   return textResult(body, !!(body && body.isError));
 }
 
 async function callTool(params) {
   const name = params && typeof params.name === 'string' ? params.name : '';
-  if (!name) return textResult('[agentic-router] invalid_input: a tool name is required', true);
+  if (!name) return textResult('[do-it-all-claude-code] invalid_input: a tool name is required', true);
   const input = params && params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {};
   const home = routerHome();
   const cfg = readConfig(home);
@@ -121,7 +121,7 @@ function negotiate(params) {
 }
 
 export async function handleMessage(msg) {
-  if (Array.isArray(msg)) { process.stderr.write('[agentic-router mcp] JSON-RPC batches are not supported\n'); return; }
+  if (Array.isArray(msg)) { process.stderr.write('[do-it-all-claude-code mcp] JSON-RPC batches are not supported\n'); return; }
   if (!msg || typeof msg !== 'object') return;
   const isRequest = Object.prototype.hasOwnProperty.call(msg, 'id') && msg.id !== null && msg.id !== undefined;
   const method = typeof msg.method === 'string' ? msg.method : null;
@@ -131,7 +131,7 @@ export async function handleMessage(msg) {
 
   switch (method) {
     case 'initialize':
-      return reply(msg.id, { protocolVersion: negotiate(msg.params), capabilities: { tools: {} }, serverInfo: { name: 'agentic-router', version: serverVersion() } });
+      return reply(msg.id, { protocolVersion: negotiate(msg.params), capabilities: { tools: {} }, serverInfo: { name: 'do-it-all-claude-code', version: serverVersion() } });
     case 'ping':
       return reply(msg.id, {});
     case 'tools/list':

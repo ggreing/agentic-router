@@ -1,14 +1,14 @@
 // Agent-call rules for the lead (decisions Q3 and Q5, 2026-11-10).
-// - Only subagent types `agentic-router:<role>` are managed; others pass untouched.
+// - Only subagent types `do-it-all-claude-code:<role>` are managed; others pass untouched.
 // - First prompt line must be `[subtask:<ID>]`; optional second line `[scope: glob, glob]`.
 // - model/effort must equal the slot's ladder step (Phase 1: the preset start step); otherwise deny
 //   with the expected values. A role the preset lacks: deny when the lead may not adjust the team
 //   (L0), else expect the role's default start step for that level.
 // - s7 needs fableOptIn; usedUsd >= budgetUsd denies.
-import { DEFAULT_LADDER, PROTECTED_WRITE_PATHS } from '@agentic-router/core';
-import type { LadderStep, Level, Role, Step, TeamPreset } from '@agentic-router/core';
+import { DEFAULT_LADDER, PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
+import type { LadderStep, Level, Role, Step, TeamPreset } from '@do-it-all-claude-code/core';
 
-export const MANAGED_PREFIX = 'agentic-router:';
+export const MANAGED_PREFIX = 'do-it-all-claude-code:';
 export const ROLES: readonly Role[] = ['architect', 'ui-designer', 'coder', 'reviewer', 'tester'];
 
 /** Role of a managed agent type; null for a managed type with an unknown role; undefined when unmanaged. */

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { costUsd } from '@agentic-router/core';
+import { costUsd } from '@do-it-all-claude-code/core';
 import { git, makeRepo, postHook, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
 
 const L1_PROMPT = 'Fix the bug where parse() fails on empty input in src/parse.ts';
@@ -24,12 +24,12 @@ const session = (d: TestDaemon, sid: string, cwd: string) => async (h: HookInput
   return r.body as Out;
 };
 let seq = 0;
-const call = (tag: string, scope: string | null, type = 'agentic-router:coder', model = 'haiku', effort = 'low'): HookInput => ({
+const call = (tag: string, scope: string | null, type = 'do-it-all-claude-code:coder', model = 'haiku', effort = 'low'): HookInput => ({
   hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_c${++seq}`,
   tool_input: { subagent_type: type, prompt: `[subtask:${tag}] work${scope === null ? '' : `\n[scope: ${scope}]`}`, model, effort },
 });
-const start = (agentId: string, type = 'agentic-router:coder'): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: type });
-const stop = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'agentic-router:coder', stop_hook_active: false, ...extra });
+const start = (agentId: string, type = 'do-it-all-claude-code:coder'): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: type });
+const stop = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, ...extra });
 
 test('E13 / #14: a zero-usage "<synthetic>" line is skipped, and a later notification does not overwrite a known cost', () => withDaemon(async d => {
   const repo = makeRepo({ 'src/a/x.ts': 'a\n' });
@@ -86,8 +86,8 @@ test('E2 / #6: in a shared tree, only a scoped, writing sibling running at the s
     await post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT });
     assert.equal(rows(d, 'SELECT level FROM requests')[0]!.level, 'L2');
     // an unscoped reviewer (read-only role, whole repo) runs alongside coder A
-    await post(call('R', null, 'agentic-router:reviewer', 'sonnet', 'medium'));
-    await post(start('r1', 'agentic-router:reviewer'));
+    await post(call('R', null, 'do-it-all-claude-code:reviewer', 'sonnet', 'medium'));
+    await post(start('r1', 'do-it-all-claude-code:reviewer'));
     await post(call('A', 'src/a/**'));
     await post(start('a1'));
     write(repo, 'other/y.ts', 'changed by coder A, outside its scope\n');

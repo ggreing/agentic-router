@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toRouterEvent, leadModelFromTranscript } from '@agentic-router/adapter-claude-code';
-import { leadModelClass, withLeadModel, DEFAULT_PRESETS } from '@agentic-router/core';
+import { toRouterEvent, leadModelFromTranscript } from '@do-it-all-claude-code/adapter-claude-code';
+import { leadModelClass, withLeadModel, DEFAULT_PRESETS } from '@do-it-all-claude-code/core';
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const readUtf8 = (p: string) => fs.readFileSync(p, 'utf8');

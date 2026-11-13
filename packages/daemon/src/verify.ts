@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RELATED_TESTS_PLACEHOLDER, type SignalKind, type VerifySignal } from '@agentic-router/core';
+import { RELATED_TESTS_PLACEHOLDER, type SignalKind, type VerifySignal } from '@do-it-all-claude-code/core';
 import { verifyEnv } from './env.ts';
 import {
   changedFiles, differsFromIndex, eolOnlyVsRef, fileFingerprint, flaggedFiles, gitMetaChanges, gitMetaOf, headRef, repoRoot,

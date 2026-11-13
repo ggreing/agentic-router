@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { scopeKey } from '@agentic-router/core';
+import { scopeKey } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { REQUEST_TABLES, exportLines, isoTime, purge } from '../src/data.ts';
 import { homeLayout } from '../src/home.ts';

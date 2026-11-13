@@ -1,8 +1,8 @@
-// config.json and token, both written by `agentic-router init` (CLI).
+// config.json and token, both written by `do-it-all-claude-code init` (CLI).
 import fs from 'node:fs';
-import { MAX_HOLDOUT_RATE, holdoutRate } from '@agentic-router/core';
+import { MAX_HOLDOUT_RATE, holdoutRate } from '@do-it-all-claude-code/core';
 import { DEFAULT_EVENT_RETENTION_DAYS, MAX_EVENT_RETENTION_DAYS } from './data.ts';
-import type { Level, RouterConfig, TeamPreset } from '@agentic-router/core';
+import type { Level, RouterConfig, TeamPreset } from '@do-it-all-claude-code/core';
 
 /** config.json as read: every field may be missing (tests and fresh homes pass the port explicitly). */
 export type ConfigFile = Partial<RouterConfig>;
@@ -99,7 +99,7 @@ export function readConfig(file: string, warnings: string[] = []): ConfigFile {
 export const MIN_TOKEN_LENGTH = 16;
 
 export function readToken(file: string): string {
-  if (!fs.existsSync(file)) throw new Error(`token file not found: ${file} (run \`agentic-router init\`)`);
+  if (!fs.existsSync(file)) throw new Error(`token file not found: ${file} (run \`do-it-all-claude-code init\`)`);
   const token = fs.readFileSync(file, 'utf8').trim();
   if (token.length < MIN_TOKEN_LENGTH) throw new Error(`token file is too short: ${file}`);
   return token;

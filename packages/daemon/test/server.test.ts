@@ -92,7 +92,7 @@ test('hook response is the adapter-rendered output of the decision', async () =>
   const r = await postHook(d.port, { ...prompt, session_id: 'srv-2' });
   assert.equal(r.status, 200);
   const out = r.body as { hookSpecificOutput?: { additionalContext?: string } };
-  assert.match(out.hookSpecificOutput?.additionalContext ?? '', /^\[agentic-router\] level L\d/);
+  assert.match(out.hookSpecificOutput?.additionalContext ?? '', /^\[do-it-all-claude-code\] level L\d/);
 });
 
 test('server binds to 127.0.0.1 only (a wildcard bind would also answer on ::1)', async () => {

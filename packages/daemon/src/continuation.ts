@@ -2,19 +2,19 @@
 // is not a new request).
 //
 // Decision Q1 (2026-11-10): explicit markers only.
-//   - `/router resume` (or `/agentic-router:router resume`) continues the session's latest request.
+//   - `/router resume` (or `/do-it-all-claude-code:router resume`) continues the session's latest request.
 //   - When the lead asks the user something it ends its message with AWAITING_USER_MARKER; Stop then
 //     parks the request as `awaiting_user` and the next prompt continues it (no triage, no team brief).
 //   - `/router level <L0-L3>` sets the level manually (see Router#routerLevel).
 //   - Any other slash command is not triaged.
 //   - A background-task notification (Claude Code delivers an async subagent's result as a prompt that
 //     starts with `<task-notification>`) is not a new request (decision after integration run 2).
-import type { Level } from '@agentic-router/core';
+import type { Level } from '@do-it-all-claude-code/core';
 import type { RequestStatus } from './ledger.ts';
 
 export const AWAITING_USER_MARKER = '[router:awaiting-user]';
 
-const ROUTER_CMD = /^\s*\/(?:agentic-router:)?router\s+(\S+)(?:\s+(\S+))?/i;
+const ROUTER_CMD = /^\s*\/(?:do-it-all-claude-code:)?router\s+(\S+)(?:\s+(\S+))?/i;
 const SLASH_COMMAND = /^\s*\/[A-Za-z][\w-]*(?::[\w-]+)?(?:\s|$)/;
 
 export const TASK_NOTIFICATION = /^\s*<task-notification[\s>]/;

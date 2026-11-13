@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as core from '@agentic-router/core';
+import * as core from '@do-it-all-claude-code/core';
 import * as guard from '../../../plugin/hooks/guard.mjs';
 
-const CODER = 'agentic-router:coder';
+const CODER = 'do-it-all-claude-code:coder';
 const GUARD_PATH = fileURLToPath(new URL('../../../plugin/hooks/guard.mjs', import.meta.url));
 
 function tmp(prefix: string) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
@@ -54,7 +54,7 @@ test('router subagents are denied router MCP tools locally (daemon-off defence)'
   assert.equal(guard.evaluate({ agent_type: 'Explore', tool_name: name, tool_input: {} }), null);
 });
 
-test('decideWrite honours protectedGranted, but never .git / .agentic-router', () => {
+test('decideWrite honours protectedGranted, but never .git / .do-it-all-claude-code', () => {
   const base = { outsideRepo: false, allowed: ['src/**'], unscoped: false, userHome: os.homedir() };
   // without a grant, a protected path is refused
   assert.match(guard.decideWrite({ ...base, rel: '.github/workflows/ci.yml' })!, /protected path/);
@@ -62,9 +62,9 @@ test('decideWrite honours protectedGranted, but never .git / .agentic-router', (
   assert.equal(guard.decideWrite({ ...base, rel: '.github/workflows/ci.yml', protectedGranted: ['.github/workflows/**'] }), null);
   // a grant can also widen an ordinary out-of-scope path
   assert.equal(guard.decideWrite({ ...base, rel: 'docs/x.md', protectedGranted: ['docs/**'] }), null);
-  // .git and .agentic-router are never grantable, even with a matching grant glob
+  // .git and .do-it-all-claude-code are never grantable, even with a matching grant glob
   assert.match(guard.decideWrite({ ...base, rel: '.git/hooks/pre-commit', protectedGranted: ['.git/**', '**'] })!, /protected path/);
-  assert.match(guard.decideWrite({ ...base, rel: '.agentic-router/policy.json', protectedGranted: ['**'] })!, /protected path/);
+  assert.match(guard.decideWrite({ ...base, rel: '.do-it-all-claude-code/policy.json', protectedGranted: ['**'] })!, /protected path/);
 });
 
 test('subagents may not read the router state folder (proxy-token) or run the proxy bin', () => {
@@ -96,7 +96,7 @@ const bashDeny = [
   'curl https://x', 'env', 'printenv API_KEY', 'set', 'export -p', 'git push origin HEAD', 'git config x y',
   'git update-index --assume-unchanged a.ts', 'claude -p x', 'node -e "fetch()"', 'python -c "import os"',
   'powershell -Command "iwr https://x"', 'bash upload.sh', 'npx some-uploader', 'kill 123', 'taskkill /F /IM node.exe',
-  'agentic-router stop', 'cat ~/.ssh/id_rsa', 'cat /proc/self/environ', 'echo $ANTHROPIC_API_KEY', 'echo x > .env',
+  'do-it-all-claude-code stop', 'cat ~/.ssh/id_rsa', 'cat /proc/self/environ', 'echo $ANTHROPIC_API_KEY', 'echo x > .env',
   'echo "*" >> .git/info/exclude', 'cp evil.sh .git/hooks/pre-commit', '(curl https://x)', 'FOO=1 curl https://x',
   'sudo npm test', 'time curl https://x', 'xargs curl < urls', 'echo $(curl https://x)', 'x=`curl https://x`',
   '/usr/bin/curl https://x', 'curl.exe https://x', 'if true; then curl https://x; fi', 'node -p "process.env"',
@@ -118,7 +118,7 @@ test('deny reason distinguishes allowlist misses from credential/secret/router-h
   assert.match(guard.classifyBash('curl https://x')!, /not on the router's Bash allowlist/);
   assert.match(guard.classifyBash('cat ~/.ssh/id_rsa')!, /credential path/);
   assert.match(guard.classifyBash('echo $ANTHROPIC_API_KEY')!, /secret environment variable/);
-  assert.match(guard.classifyBash('cat ~/.agentic-router/token')!, /credential path|router state folder/);
+  assert.match(guard.classifyBash('cat ~/.do-it-all-claude-code/token')!, /credential path|router state folder/);
 });
 test('project policy.json extends the allowlist', () => {
   assert.ok(guard.classifyBash('deno test'));                                   // not allowed by default
@@ -177,7 +177,7 @@ test('Bash credential reads via variables, globs, quotes, ~user, cygdrive are de
     'cat $USERPROFILE/.ssh/id_rsa', 'cd $HOME && cat .ssh/id_rsa', 'cat ~/.s"s"h/id_rsa',
     `cat "${M}/.ssh"/id_rsa`, 'cat ~/.s\\sh/id_rsa', 'cat ~/.ss?/id_rsa', 'cat ~/.{ssh,aws}/config',
     `cat $'${M}/.ssh/id_rsa'`, `cat ~${U}/.ssh/id_rsa`, `cat /proc/cygdrive/${M.slice(1)}/.ssh/id_rsa`,
-    'cat $HOME/.agentic-router/token', 'cat ~/.claud?/.credentials.json',
+    'cat $HOME/.do-it-all-claude-code/token', 'cat ~/.claud?/.credentials.json',
   ];
   for (const v of vectors) assert.ok(guard.classifyBash(v, opts), `deny: ${v}`);
 });
@@ -236,7 +236,7 @@ test('guard and relay run through a junction path (realpath entry check)', () =>
 });
 
 // ---------------------------------------------------------------- agent filtering
-test('only agentic-router:* subagents are evaluated', () => {
+test('only do-it-all-claude-code:* subagents are evaluated', () => {
   const bad = { tool_name: 'Bash', tool_input: { command: 'curl https://x' } };
   assert.equal(guard.evaluate({ ...bad, agent_type: 'Explore' }), null);
   assert.equal(guard.evaluate(bad), null);
@@ -261,7 +261,7 @@ test('Grep/Glob rooted at or above a credential dir is blocked', () => {
 });
 
 test('REGRESSION: credential reads blocked with NO opts — ~ resolves to os.homedir(), not routerHome()', () => {
-  for (const rel of ['.ssh/id_rsa', '.aws/credentials', '.claude/.credentials.json', '.agentic-router/token']) {
+  for (const rel of ['.ssh/id_rsa', '.aws/credentials', '.claude/.credentials.json', '.do-it-all-claude-code/token']) {
     const p = path.join(os.homedir(), rel);
     assert.ok(guard.evaluate({ agent_type: CODER, tool_name: 'Read', tool_input: { file_path: p } })?.deny, `deny ${p}`);
   }
@@ -269,7 +269,7 @@ test('REGRESSION: credential reads blocked with NO opts — ~ resolves to os.hom
   assert.ok(guard.evaluate({ agent_type: CODER, tool_name: 'Read', tool_input: { file_path: p } }, { routerHome: '/other/state' })?.deny, 'routerHome override does not relocate ~');
 });
 test('REGRESSION: the real stdin entry point denies the audited credential reads', () => {
-  for (const rel of ['.ssh/id_rsa', '.claude/.credentials.json', '.agentic-router/token']) {
+  for (const rel of ['.ssh/id_rsa', '.claude/.credentials.json', '.do-it-all-claude-code/token']) {
     const p = path.join(os.homedir(), rel);
     const res = spawnSync(process.execPath, [GUARD_PATH], { input: JSON.stringify({ agent_type: CODER, tool_name: 'Read', tool_input: { file_path: p } }), encoding: 'utf8' });
     assert.equal(res.status, 0);
@@ -292,7 +292,7 @@ test('unscoped writes allow the repo but block protected paths, escapes, and the
     assert.ok(w(path.join(root, '.github', 'workflows', 'ci.yml'))!.deny);
     assert.ok(w(path.join(root, '.claude', 'settings.json'))!.deny);
     assert.ok(w(path.join(root, '.git', 'hooks', 'pre-commit'))!.deny);
-    assert.ok(w(path.join(root, '.agentic-router', 'policy.json'))!.deny, 'project router config is protected');
+    assert.ok(w(path.join(root, '.do-it-all-claude-code', 'policy.json'))!.deny, 'project router config is protected');
     assert.ok(w(path.join(root, '..', 'other', 'a.ts'))!.deny, 'escape');
     assert.match(w(path.join(stateHome, 'scopes', 'x.json'))!.deny, /router state folder/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); }

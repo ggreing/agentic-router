@@ -40,9 +40,9 @@ test('shutdown kills a running verify command; the waiting stop gets {} and no v
     const b = { session_id: 'sd', cwd: repo, transcript_path: path.join(repo, 't.jsonl') };
     const post = (h: HookInput) => postHook(d.port, { ...b, ...h });
     await post({ hook_event_name: 'UserPromptSubmit', prompt: 'Fix the bug where parse() fails on empty input in src/parse.ts' });
-    await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
-    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-h', agent_type: 'agentic-router:coder' });
-    const stopping = post({ hook_event_name: 'SubagentStop', agent_id: 'ag-h', agent_type: 'agentic-router:coder', stop_hook_active: false })
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-h', agent_type: 'do-it-all-claude-code:coder' });
+    const stopping = post({ hook_event_name: 'SubagentStop', agent_id: 'ag-h', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false })
       .then(r => r.body, e => `error: ${String(e)}`);
 
     const pidFile = path.join(repo, 'hang.pid');

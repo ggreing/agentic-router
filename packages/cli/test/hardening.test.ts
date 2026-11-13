@@ -5,18 +5,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { SettingsParseError, ensureLocalState, isRouterStatusLine, planProject, planStatusLine, readConfig, validBudgets } from 'agentic-router';
+import { SettingsParseError, ensureLocalState, isRouterStatusLine, planProject, planStatusLine, readConfig, validBudgets } from 'do-it-all-claude-code';
 import { commandLineOf, isAlive, isOurDaemon } from '../src/daemonctl.ts';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-h-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 
 function fakePlugin(dir: string): string {
   fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'agentic-router' }));
+  fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'do-it-all-claude-code' }));
   fs.writeFileSync(path.join(dir, 'statusline.mjs'), '');
   return path.join(dir, 'statusline.mjs');
 }
@@ -27,20 +27,20 @@ test('re-running init from another plugin path never wraps the router itself; ba
   fs.writeFileSync(settings, JSON.stringify({ statusLine: { type: 'command', command: 'my-status --fancy' } }));
   planStatusLine(settings, fakePlugin(path.join(tmp, 'plugA')), config)!.apply();
   assert.equal(readConfig()?.wrappedStatusLine?.command, 'my-status --fancy');
-  const bak = fs.readFileSync(settings + '.agentic-router.bak', 'utf8');
+  const bak = fs.readFileSync(settings + '.do-it-all-claude-code.bak', 'utf8');
 
   const c2 = readConfig()!;
   const second = planStatusLine(settings, fakePlugin(path.join(tmp, 'other', 'plugB')), c2)!;
   assert.match(second.summary, /point the router status line/);
   second.apply();
   assert.equal(readConfig()?.wrappedStatusLine?.command, 'my-status --fancy', 'original kept, not replaced by the old router command');
-  assert.equal(fs.readFileSync(settings + '.agentic-router.bak', 'utf8'), bak, 'backup not overwritten');
+  assert.equal(fs.readFileSync(settings + '.do-it-all-claude-code.bak', 'utf8'), bak, 'backup not overwritten');
   assert.match(JSON.parse(fs.readFileSync(settings, 'utf8')).statusLine.command, /plugB/);
 });
 
 test('router status line is recognised by manifest or path', () => {
   assert.ok(isRouterStatusLine(`node "${fakePlugin(path.join(tmp, 'x'))}"`));
-  assert.ok(isRouterStatusLine('node "/home/u/.claude/plugins/cache/agentic-router/0.1.0/statusline.mjs"'));
+  assert.ok(isRouterStatusLine('node "/home/u/.claude/plugins/cache/do-it-all-claude-code/0.1.0/statusline.mjs"'));
   assert.ok(!isRouterStatusLine('node "/home/u/tools/statusline.mjs"'));
   assert.ok(!isRouterStatusLine('ccstatusline'));
 });

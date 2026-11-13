@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { COMMON_DEV_PORTS, ensureLocalState, ladderBreakers, planProject, planStatusLine, readConfig, versionAtLeast } from 'agentic-router';
-import { paths } from '@agentic-router/core';
+import { COMMON_DEV_PORTS, ensureLocalState, ladderBreakers, planProject, planStatusLine, readConfig, versionAtLeast } from 'do-it-all-claude-code';
+import { paths } from '@do-it-all-claude-code/core';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 
 test('init creates config and a token once, on a port outside common dev ports', async () => {
@@ -36,7 +36,7 @@ test('status line wraps an existing one and backs up the settings file', async (
   assert.equal(after.model, 'opus');
   assert.match(after.statusLine.command, /statusline\.mjs/);
   assert.equal(readConfig()?.wrappedStatusLine?.command, 'my-line.sh');
-  assert.ok(fs.existsSync(settings + '.agentic-router.bak'));
+  assert.ok(fs.existsSync(settings + '.do-it-all-claude-code.bak'));
   assert.equal(planStatusLine(settings, '/plugin/statusline.mjs', readConfig()!), null);   // idempotent
 });
 

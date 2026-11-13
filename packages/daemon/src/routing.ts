@@ -11,7 +11,7 @@
 import {
   DEFAULT_AUTO_RELEASE, DEFAULT_DELEGATE_FROM, RELEASE_RULE, costPerAccepted, countsAsAccepted, decideRelease, effectiveDelegateFrom, holdoutRate,
   releasedFrom, type Acceptance, type Arm, type AutoReleaseMode, type LeadModelClass, type Level, type ReleaseDecision,
-} from '@agentic-router/core';
+} from '@do-it-all-claude-code/core';
 import type { Ledger } from './ledger.ts';
 
 const ORDER: readonly Level[] = ['L0', 'L1', 'L2', 'L3'];
@@ -175,8 +175,8 @@ export function releaseNotice(c: ReleaseChange): string {
   const d = c.decision;
   const nums = `the last ${d.need.delegated[0]} delegated ${c.level} requests cost ${usd(d.delegatedCost)} against ${usd(d.directCost)} for ${d.need.direct[0]} handled directly`;
   return c.kind === 'release'
-    ? `[agentic-router] ${c.level} requests with a ${c.leadClass} lead are now handled directly: ${nums}. Undo: agentic-router routing reset`
-    : `[agentic-router] ${c.level} requests with a ${c.leadClass} lead go to a team again: ${nums}.`;
+    ? `[do-it-all-claude-code] ${c.level} requests with a ${c.leadClass} lead are now handled directly: ${nums}. Undo: do-it-all-claude-code routing reset`
+    : `[do-it-all-claude-code] ${c.level} requests with a ${c.leadClass} lead go to a team again: ${nums}.`;
 }
 
 /** Applies a change (mode 'on'): the new start level and a notice for the next prompt of that lead class. */

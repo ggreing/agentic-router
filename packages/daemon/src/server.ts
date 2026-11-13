@@ -17,7 +17,7 @@
 //   rejected }); GET /router/v1/budget?session_id=&prompt_id= answers { requestId, budgetUsd, spentUsd } or 404.
 // - POST /router/v1/limits takes the status line's rate_limits and model.id for a session (spec 3.8, decision
 //   144): { stored, model }.
-// - POST /router/v1/routing/reset (`agentic-router routing reset`, decision 138): every released level is
+// - POST /router/v1/routing/reset (`do-it-all-claude-code routing reset`, decision 138): every released level is
 //   delegated again; answers { cleared }. No body.
 // - Data management (spec 3.7, 4.4; data.ts): GET /router/v1/data/export?since=&until= answers JSON lines
 //   (application/x-ndjson); POST /router/v1/data/purge { before | all, dryRun? } answers the counts.
@@ -27,7 +27,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { NonceWindow, SEALED_PATH, SealError, openRequest, sealResponse } from '@agentic-router/core';
+import { NonceWindow, SEALED_PATH, SealError, openRequest, sealResponse } from '@do-it-all-claude-code/core';
 import type { ClientAdapter } from './adapter.ts';
 import { createDashboard, type Dashboard } from './dashboard.ts';
 import { exportLines, isoTime, liveSessions, purge, purgeFiles, type DataHome } from './data.ts';

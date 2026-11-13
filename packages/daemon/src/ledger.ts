@@ -9,8 +9,8 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
   Level, RequestRecord, Role, SignalKind, Step, SubtaskRecord, SubtaskStatus, TeamPreset, TriageResult, Verdict,
   UsageRow, VerifySignal,
-} from '@agentic-router/core';
-import type { AcceptSignal } from '@agentic-router/core';
+} from '@do-it-all-claude-code/core';
+import type { AcceptSignal } from '@do-it-all-claude-code/core';
 import type { Snapshot } from './git.ts';
 import { LIMITS_SCHEMA } from './limits.ts';
 import { scrubProse, scrubStoredPrompts } from './data.ts';

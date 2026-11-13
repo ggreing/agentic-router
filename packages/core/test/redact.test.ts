@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { redact, redactJson } from '@agentic-router/core';
+import { redact, redactJson } from '@do-it-all-claude-code/core';
 
 // The 17 shapes from the pre-release audit (A5). Each entry: a line, and the secret substring that must
 // NOT survive redaction. The first seven already masked before A5; the last ten were the misses.

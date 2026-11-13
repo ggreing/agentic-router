@@ -9,13 +9,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as guard from '../../../plugin/hooks/guard.mjs';
 
-const CODER = 'agentic-router:coder';
+const CODER = 'do-it-all-claude-code:coder';
 const WIN = process.platform === 'win32';
 
 interface World { base: string; repo: string; home: string; state: string; opts: { userHome: string; routerHome: string } }
 function world(): World {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ar-guard-')));
-  const repo = path.join(base, 'repo'), home = path.join(base, 'home'), state = path.join(home, '.agentic-router');
+  const repo = path.join(base, 'repo'), home = path.join(base, 'home'), state = path.join(home, '.do-it-all-claude-code');
   for (const d of [path.join(repo, 'src'), path.join(home, '.ssh'), path.join(state, 'agents'), path.join(state, 'scopes')]) fs.mkdirSync(d, { recursive: true });
   spawnSync('git', ['-C', repo, 'init', '-q']);
   fs.writeFileSync(path.join(repo, '.env'), 'FAKE=1\n');
@@ -83,10 +83,10 @@ test('A1: every argument is looked at as a path, in the directory the command ru
       ['sort .env', /credential path/],
       ['cd src && cat ../.env', /credential path/],
       ['cd ~/.ssh && cat id_rsa', /credential directory/],
-      ['cd ~/.agentic-router && cat token', /router state folder/],
+      ['cd ~/.do-it-all-claude-code && cat token', /router state folder/],
       ['cd ~ && cat .ssh/id_rsa', /credential path/],
       ['cd && cat .ssh/id_rsa', /credential path/],
-      ['cat ~/.agentic-router/token', /router state folder|credential path/],
+      ['cat ~/.do-it-all-claude-code/token', /router state folder|credential path/],
       ['cd -', /cd target that cannot be checked/],
       ['cd $HOME', /cd target that cannot be checked/],
       ['cd a b', /more than one argument/],
@@ -243,8 +243,8 @@ test('A2: spellings Windows resolves to another file are refused', () => {
 test('A3: a project policy.json counts only after the user accepted that exact content', () => {
   const w = world();
   try {
-    fs.mkdirSync(path.join(w.repo, '.agentic-router'));
-    const file = path.join(w.repo, '.agentic-router', 'policy.json');
+    fs.mkdirSync(path.join(w.repo, '.do-it-all-claude-code'));
+    const file = path.join(w.repo, '.do-it-all-claude-code', 'policy.json');
     fs.writeFileSync(file, JSON.stringify({ bashAllow: ['deno test', 'curl'], verifyEnv: ['DATABASE_URL'] }));
     // shipped with the repository, not accepted: ignored
     let s = guard.policyStatus(w.repo, w.state);
@@ -289,10 +289,10 @@ test('A3: a project policy.json counts only after the user accepted that exact c
     assert.deepEqual((x => [x.present, x.accepted])(guard.policyStatus(w.repo, w.state)), [false, false]);
     // an acceptance belongs to one repository
     const other = path.join(w.base, 'other');
-    fs.mkdirSync(path.join(other, '.agentic-router'), { recursive: true });
+    fs.mkdirSync(path.join(other, '.do-it-all-claude-code'), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ bashAllow: ['deno test'] }));
     guard.acceptPolicy(w.repo, w.state);
-    fs.copyFileSync(file, path.join(other, '.agentic-router', 'policy.json'));
+    fs.copyFileSync(file, path.join(other, '.do-it-all-claude-code', 'policy.json'));
     assert.equal(guard.readAcceptedPolicy(other, w.state), null);
     // a worker can change neither file
     assert.ok(call(w, 'Write', { file_path: file, content: '{}' }, 'ag2')!.deny);
@@ -472,7 +472,7 @@ test('Git Bash paths in Bash commands are checked in every reading (Windows)', {
     // a native program reads /tmp/../home/.ssh/id_rsa as <tmp>\..\home\.ssh\id_rsa
     assert.match(c('rg x /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
     assert.match(c('git grep x /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
-    assert.match(c('cat /tmp/../home/.agentic-router/token') ?? '', /credential path|router state folder/);
+    assert.match(c('cat /tmp/../home/.do-it-all-claude-code/token') ?? '', /credential path|router state folder/);
     assert.match(c('head --lines=3 /tmp/../home/.ssh/id_rsa') ?? '', /credential path/);
     assert.match(c('cat /tmp/.env') ?? '', /credential path/);
     assert.match(c('grep --file=/tmp/../home/.ssh/id_rsa x src/a.ts') ?? '', /credential path/);
@@ -542,7 +542,9 @@ test('quotes and escapes inside a word do not hide a credential file or a refuse
     const H = w.home.replace(/\\/g, '/');
     const denied: Array<[string, RegExp]> = [
       ['cat .e\\nv', /credential/], ['cat \\.env', /credential/], ['cat .en""v', /credential/], ["cat .e'n'v", /credential/], ['cat ".e"nv', /credential/],
-      [`cat ${H}/.s""sh/id_rsa`, /credential/], [`cat ${H}/.agentic-rou""ter/token`, /credential|state folder/],
+      [`cat ${H}/.s""sh/id_rsa`, /credential/], [`cat ${H}/.do-it-all-clau""de-code/token`, /credential|state folder/],
+      // the home of the previous release (decision 161) stays protected until it is moved
+      [`cat ${H}/.agentic-rou""ter/token`, /credential|state folder/],
       ['git show HEAD:.e""nv', /credential/], ['git show :.e\\nv', /credential/],
       ['git commit --no-ver""ify -m x', /option/], ['git commit --no-verif\\y -m x', /option/], ['git commit "--no-verify" -m x', /option/],
       ['sort -""o out.txt src/a.ts', /option/], ['sort --out""put=out.txt src/a.ts', /option/], ['sort --outpu\\t=out.txt src/a.ts', /option/],
@@ -622,7 +624,7 @@ test('a build, test or install command may not name a protected path', () => {
     for (const command of [
       'go build -o .git/hooks/pre-commit ./cmd/x', 'npx tsc --outDir .git/hooks', 'npx tsc --outFile .github/workflows/x.js', 'npx eslint -o .github/workflows/ci.yml src',
       'npx prettier --write .github/workflows/ci.yml', 'cargo build --target-dir .git/hooks', 'pytest --junitxml=.github/workflows/x.xml', 'npx tsc --outDir=.claude',
-      'go build -o.git/hooks/pre-commit ./cmd/x', 'npx prettier --write .agentic-router/policy.json', 'cd src && npx tsc --outDir ../.git/hooks', 'make build -C .git', 'npx jest --outputFile=.claude/settings.json',
+      'go build -o.git/hooks/pre-commit ./cmd/x', 'npx prettier --write .do-it-all-claude-code/policy.json', 'cd src && npx tsc --outDir ../.git/hooks', 'make build -C .git', 'npx jest --outputFile=.claude/settings.json',
     ]) assert.match(bash(w, command)?.deny ?? '(not denied)', /a protected path .* can write files/, command);
     // the same commands on ordinary paths, and readers on protected paths, are not refused
     for (const command of ['go build ./...', 'go test ./...', 'go build -o bin/app ./cmd/x', 'npx tsc --outDir dist', 'npx tsc --noEmit', 'npx eslint src', 'npx prettier --check .', 'npx prettier --write src/a.ts',
@@ -640,7 +642,7 @@ test('path spellings for Bash arguments (Windows)', { skip: !WIN }, () => {
       `cat //localhost/${H[0]}$/${H.slice(3)}/.ssh/id_rsa`, `cat //127.0.0.1/${H[0]}$/${H.slice(3)}/.ssh/id_rsa`, `cat '\\\\?\\${w.home}\\.ssh\\id_rsa'`, `cat '\\\\.\\${w.home}\\.ssh\\id_rsa'`,
       `cat ${H}/.SSH/ID_RSA`, `cat ${H}//.ssh///id_rsa`, `cat '${w.home}\\.ssh\\id_rsa'`, `cat ${H.replace(/^([A-Za-z]):/, (_m, d) => `/${d.toLowerCase()}`)}/.ssh/id_rsa`,
       `cat ${H}/.ssh./id_rsa`, `grep --file=${H}/.SSH/id_rsa x src/a.ts`, `sort --files0-from=${H}/.ssh/id_rsa`, `wc --files0-from='${w.home}\\.ssh\\id_rsa'`,
-      `git blame --contents ${H}/.ssh/id_rsa src/a.ts`, `head -n1 ${H}/.agentic-router/TOKEN`, `cat ${H}/.AGENTIC-ROUTER/token`,
+      `git blame --contents ${H}/.ssh/id_rsa src/a.ts`, `head -n1 ${H}/.do-it-all-claude-code/TOKEN`, `cat ${H}/.AGENTIC-ROUTER/token`,
     ]) assert.ok(bash(w, command)?.deny, command);
   } finally { done(w); }
 });
@@ -667,7 +669,7 @@ test('path spellings for the file tools: UNC, extended-length, short names, stre
     const reads = [
       path.join(w.repo, '.ENV'), `\\\\localhost\\${D}$\\${rest}\\.env`, `\\\\?\\${w.repo}\\.env`, path.join(w.repo, '.env.'), path.join(w.repo, '.env::$DATA'), path.join(w.repo, 'src', '..', '.env'),
       path.join(w.home, '.SSH', 'ID_RSA'), `\\\\127.0.0.1\\${D}$\\${hrest}\\.ssh\\id_rsa`, `//localhost/${D}$/${fwd(hrest)}/.ssh/id_rsa`, `\\\\?\\${w.home}\\.ssh\\id_rsa`, path.join(w.home, 'SSH~1', 'id_rsa'),
-      path.join(w.state, 'Token'), `\\\\localhost\\${D}$\\${hrest}\\.agentic-router\\token`, fwd(w.home) + '/.ssh\\id_rsa',
+      path.join(w.state, 'Token'), `\\\\localhost\\${D}$\\${hrest}\\.do-it-all-claude-code\\token`, fwd(w.home) + '/.ssh\\id_rsa',
     ];
     for (const p of reads) assert.ok(call(w, 'Read', { file_path: p })?.deny, `read ${p}`);
     for (const p of [path.join(w.home, '.ssh'), `\\\\localhost\\${D}$\\${hrest}\\.ssh`, w.state, w.home])
@@ -688,25 +690,25 @@ test('a home reached through a link: credentials and the state folder are refuse
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ar-guard-home-')));
   try {
     const realHome = path.join(base, 'data', 'home', 'u'), linkHome = path.join(base, 'home-link'), repo = path.join(base, 'repo');
-    for (const d of [path.join(realHome, '.ssh'), path.join(realHome, '.agentic-router', 'agents'), path.join(repo, 'src')]) fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(path.join(realHome, '.agentic-router', 'agents', 'ag.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', pairing: 'confirmed', scope: { allowed: ['**'], protected: guard.PROTECTED_WRITE_PATHS, unscoped: true } }));
+    for (const d of [path.join(realHome, '.ssh'), path.join(realHome, '.do-it-all-claude-code', 'agents'), path.join(repo, 'src')]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(realHome, '.do-it-all-claude-code', 'agents', 'ag.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', pairing: 'confirmed', scope: { allowed: ['**'], protected: guard.PROTECTED_WRITE_PATHS, unscoped: true } }));
     spawnSync('git', ['-C', repo, 'init', '-q']);
     if (!linkDir(realHome, linkHome)) return;   // no permission to create links here
     const sh = (p: string) => p.replace(/\\/g, '/');
     // the router is configured with either name of the home; a path may use either name too
     for (const home of [linkHome, realHome]) {
-      const opts = { userHome: home, routerHome: path.join(home, '.agentic-router') };
+      const opts = { userHome: home, routerHome: path.join(home, '.do-it-all-claude-code') };
       const ev = (tool: string, input: Record<string, unknown>) => guard.evaluate({ agent_type: CODER, agent_id: 'ag', session_id: 's', tool_name: tool, cwd: repo, tool_input: input }, opts) as { deny?: string; allow?: string } | null;
       const b = (command: string) => guard.classifyBash(command, { ...opts, cwd: repo, root: repo });
       for (const h of [realHome, linkHome]) {
         const how = `configured ${home === linkHome ? 'through the link' : 'by the real path'}, used ${h === linkHome ? 'through the link' : 'by the real path'}`;
         assert.ok(ev('Read', { file_path: path.join(h, '.ssh', 'id_rsa') })?.deny, `Read key: ${how}`);
-        assert.ok(ev('Read', { file_path: path.join(h, '.agentic-router', 'token') })?.deny, `Read token: ${how}`);
-        assert.ok(ev('Write', { file_path: path.join(h, '.agentic-router', 'agents', 'ag.json'), content: '{}' })?.deny, `Write scope record: ${how}`);
+        assert.ok(ev('Read', { file_path: path.join(h, '.do-it-all-claude-code', 'token') })?.deny, `Read token: ${how}`);
+        assert.ok(ev('Write', { file_path: path.join(h, '.do-it-all-claude-code', 'agents', 'ag.json'), content: '{}' })?.deny, `Write scope record: ${how}`);
         assert.ok(ev('Write', { file_path: path.join(h, '.ssh', 'authorized_keys'), content: 'x' })?.deny, `Write authorized_keys: ${how}`);
         assert.ok(ev('Grep', { pattern: 'x', path: path.join(h, '.ssh') })?.deny, `Grep: ${how}`);
         assert.ok(ev('Glob', { pattern: '**/*', path: h })?.deny, `Glob over the home: ${how}`);
-        for (const c of [`cat ${sh(h)}/.ssh/id_rsa`, `cat ${sh(h)}/.agentic-router/token`, `cd ${sh(h)} && cat .ssh/id_rsa`, `cd ${sh(h)}/.ssh && cat id_rsa`, `ls ${sh(h)}/.agentic-router`])
+        for (const c of [`cat ${sh(h)}/.ssh/id_rsa`, `cat ${sh(h)}/.do-it-all-claude-code/token`, `cd ${sh(h)} && cat .ssh/id_rsa`, `cd ${sh(h)}/.ssh && cat id_rsa`, `ls ${sh(h)}/.do-it-all-claude-code`])
           assert.ok(b(c), `${c}: ${how}`);
       }
     }
@@ -716,7 +718,7 @@ test('a home reached through a link: credentials and the state folder are refuse
 test('a project opened through a link: the scope applies to both names of the repository', () => {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ar-guard-proj-')));
   try {
-    const realRepo = path.join(base, 'vol', 'repo'), linkRepo = path.join(base, 'repo-link'), home = path.join(base, 'home'), state = path.join(home, '.agentic-router');
+    const realRepo = path.join(base, 'vol', 'repo'), linkRepo = path.join(base, 'repo-link'), home = path.join(base, 'home'), state = path.join(home, '.do-it-all-claude-code');
     for (const d of [path.join(realRepo, 'src'), path.join(realRepo, '.github', 'workflows'), path.join(state, 'agents')]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(realRepo, 'src', 'a.ts'), 'a\n');
     fs.writeFileSync(path.join(state, 'agents', 'ag.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', pairing: 'confirmed', scope: { allowed: ['src/**'], protected: guard.PROTECTED_WRITE_PATHS } }));
@@ -744,7 +746,7 @@ test('case: refusing ignores it everywhere; allowing follows the file system', (
     assert.ok(call(w, 'Read', { file_path: path.join(w.home, '.SSH', 'id_rsa') })?.deny);
     assert.ok(call(w, 'Read', { file_path: path.join(w.repo, '.ENV') })?.deny);
     assert.ok(call(w, 'Write', { file_path: path.join(w.repo, '.GitHub', 'Workflows', 'x.yml'), content: 'x' }, 'ag2')?.deny);
-    assert.ok(call(w, 'Write', { file_path: path.join(w.home, '.Agentic-Router', 'agents', 'ag1.json'), content: '{}' }, 'ag2')?.deny);
+    assert.ok(call(w, 'Write', { file_path: path.join(w.home, '.Do-It-All-Claude-Code', 'agents', 'ag1.json'), content: '{}' }, 'ag2')?.deny);
     assert.ok(bash(w, `cat ${w.home.replace(/\\/g, '/')}/.SSH/ID_RSA`)?.deny);
     // "inside the repository" and the scope allow: a name that differs by case is another directory on Linux only
     const sibling = path.join(path.dirname(w.repo), path.basename(w.repo).toUpperCase(), 'x.ts');
@@ -795,14 +797,14 @@ test('a working directory, home or temp directory given by its 8.3 name is not h
     const shortBase = shortNameOf(longBase);
     if (!shortBase || !fs.existsSync(shortBase)) return;   // this volume makes no short names
     assert.match(path.basename(shortBase), /~\d/);
-    for (const d of ['repo/src', 'repo/.github/workflows', 'home/.ssh', 'home/.agentic-router/agents']) fs.mkdirSync(path.join(longBase, ...d.split('/')), { recursive: true });
+    for (const d of ['repo/src', 'repo/.github/workflows', 'home/.ssh', 'home/.do-it-all-claude-code/agents']) fs.mkdirSync(path.join(longBase, ...d.split('/')), { recursive: true });
     spawnSync('git', ['-C', path.join(longBase, 'repo'), 'init', '-q']);
     fs.writeFileSync(path.join(longBase, 'repo', 'src', 'a.ts'), 'a\n');
     fs.writeFileSync(path.join(longBase, 'repo', '.env'), 'X=1\n');
-    fs.writeFileSync(path.join(longBase, 'home', '.agentic-router', 'agents', 'ag.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', pairing: 'confirmed', scope: { allowed: ['src/**'], protected: guard.PROTECTED_WRITE_PATHS } }));
+    fs.writeFileSync(path.join(longBase, 'home', '.do-it-all-claude-code', 'agents', 'ag.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', pairing: 'confirmed', scope: { allowed: ['src/**'], protected: guard.PROTECTED_WRITE_PATHS } }));
     // every combination: the session's directories given short or long, the path given short or long
     for (const given of [shortBase, longBase]) {
-      const repo = path.join(given, 'repo'), home = path.join(given, 'home'), state = path.join(home, '.agentic-router');
+      const repo = path.join(given, 'repo'), home = path.join(given, 'home'), state = path.join(home, '.do-it-all-claude-code');
       const ev = (tool: string, input: Record<string, unknown>) => guard.evaluate({ agent_type: CODER, agent_id: 'ag', session_id: 's', tool_name: tool, cwd: repo, tool_input: input }, { userHome: home, routerHome: state }) as { deny?: string; allow?: string } | null;
       const sh = (c: string) => guard.classifyBash(c, { userHome: home, routerHome: state, cwd: repo, root: repo });
       /** A path for a shell command: forward slashes, quoted (the long name has spaces). */
@@ -824,8 +826,8 @@ test('a working directory, home or temp directory given by its 8.3 name is not h
         // whatever the spelling, credentials and the state folder are refused
         assert.ok(ev('Read', { file_path: path.join(r, '.env') })?.deny, `read .env: ${how}`);
         assert.ok(ev('Read', { file_path: path.join(h, '.ssh', 'id_rsa') })?.deny, `read the key: ${how}`);
-        assert.ok(ev('Read', { file_path: path.join(h, '.agentic-router', 'token') })?.deny, `read the token: ${how}`);
-        assert.ok(ev('Write', { file_path: path.join(h, '.agentic-router', 'agents', 'ag.json'), content: '{}' })?.deny, `write the scope record: ${how}`);
+        assert.ok(ev('Read', { file_path: path.join(h, '.do-it-all-claude-code', 'token') })?.deny, `read the token: ${how}`);
+        assert.ok(ev('Write', { file_path: path.join(h, '.do-it-all-claude-code', 'agents', 'ag.json'), content: '{}' })?.deny, `write the scope record: ${how}`);
         assert.ok(sh(`cat ${q(path.join(h, '.ssh', 'id_rsa'))}`), `cat the key: ${how}`);
         assert.ok(sh(`cd ${q(h)} && cat .ssh/id_rsa`), `cd home, cat the key: ${how}`);
         assert.ok(sh(`npx tsc --outDir ${q(path.join(r, '.git', 'hooks'))}`), `build output into .git/hooks: ${how}`);

@@ -1,7 +1,7 @@
-// Auto-release (decision 138) in the CLI: `agentic-router routing reset`, the doctor lines, and the line init
+// Auto-release (decision 138) in the CLI: `do-it-all-claude-code routing reset`, the doctor lines, and the line init
 // prints about the holdout (requests at a delegated level handled lead-direct on purpose, as the baseline).
-import { holdoutRate } from '@agentic-router/core';
-import type { StatusView } from '@agentic-router/daemon';
+import { holdoutRate } from '@do-it-all-claude-code/core';
+import type { StatusView } from '@do-it-all-claude-code/daemon';
 import type { Check } from './doctor.ts';
 import { daemonRequest } from './daemonctl.ts';
 import type { CliConfig } from './setup.ts';
@@ -16,7 +16,7 @@ const usd = (v: number | null | undefined) => (typeof v === 'number' && Number.i
 export function autoReleaseSummary(mode: Mode, rate: number): string {
   if (mode === 'off') return 'off: delegated levels stay as configured and no request is held out';
   const what = mode === 'on'
-    ? 'on: a delegated level whose subagents cost more per accepted task than the lead alone is handled directly (agentic-router routing reset undoes it)'
+    ? 'on: a delegated level whose subagents cost more per accepted task than the lead alone is handled directly (do-it-all-claude-code routing reset undoes it)'
     : 'observe: the comparison is kept and shown, nothing is switched';
   if (!(rate > 0)) return `${what}; holdout off (set holdoutRate above 0 in config.json for the baseline)`;
   return `${what}; holdout ${Math.round(rate * 100)}% (about 1 in ${Math.round(1 / rate)} requests at a delegated level is handled directly on purpose, as the baseline; set holdoutRate 0 or autoRelease "off" in config.json to stop)`;
@@ -36,7 +36,7 @@ export function routingChecks(r: Routing | undefined): Check[] {
     const released = c.levels.filter(l => l.released).map(l => l.level);
     if (released.length) {
       out.push({ name: `routing: ${c.leadClass} lead`, ok: true, blocking: false,
-        detail: `${released.join(', ')} requests are handled directly (released; undo: agentic-router routing reset)` });
+        detail: `${released.join(', ')} requests are handled directly (released; undo: do-it-all-claude-code routing reset)` });
     }
     if (r.mode !== 'observe') continue;
     for (const l of c.levels.filter(x => x.candidate && x.decision.action === 'release')) {
@@ -54,12 +54,12 @@ export interface ResetDeps {
   out?: (line: string) => void;
 }
 
-/** `agentic-router routing reset`: every released level is delegated again; the request records stay. */
+/** `do-it-all-claude-code routing reset`: every released level is delegated again; the request records stay. */
 export async function routingReset(d: ResetDeps): Promise<number> {
   const out = d.out ?? (line => console.log(line));
   const r = await (d.post ?? ((port, token) => daemonRequest(port, 'POST', ROUTING_RESET_PATH, { token, timeoutMs: 3000 })))(d.port, d.token);
-  if (!r) { out('The daemon is not running: start it with `agentic-router start` and run this again.'); return 1; }
-  if (r.status === 404) { out('This daemon has no auto-release: restart it with `agentic-router stop` and `agentic-router start` after updating.'); return 1; }
+  if (!r) { out('The daemon is not running: start it with `do-it-all-claude-code start` and run this again.'); return 1; }
+  if (r.status === 404) { out('This daemon has no auto-release: restart it with `do-it-all-claude-code stop` and `do-it-all-claude-code start` after updating.'); return 1; }
   let cleared: number | undefined;
   try { const o = JSON.parse(r.body) as { cleared?: unknown }; if (r.status === 200 && Number.isInteger(o.cleared)) cleared = o.cleared as number; } catch { /* below */ }
   if (cleared === undefined) { out(`Unexpected answer from the daemon (HTTP ${r.status}).`); return 1; }

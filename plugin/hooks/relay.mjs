@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agentic-router relay: forwards a Claude Code hook event to the local daemon and writes the
+// do-it-all-claude-code relay: forwards a Claude Code hook event to the local daemon and writes the
 // daemon's response to stdout verbatim. Dependency-free single file (decisions 54, 55).
 //
 // Fail-open: if the daemon is down, slow, or errors, the event is appended to the local spool
@@ -26,7 +26,7 @@ const TIMEOUTS = { SubagentStop: 300_000 };
 const DEFAULT_TIMEOUT = 10_000;
 
 function routerHome() {
-  return process.env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
+  return process.env.DO_IT_ALL_CLAUDE_CODE_HOME || path.join(os.homedir(), '.do-it-all-claude-code');
 }
 
 // ---------------------------------------------------------------- masking (core/security.ts redact, redactJson)
@@ -124,7 +124,7 @@ const KEEP = ['hook_event_name', 'session_id', 'agent_id', 'agent_type', 'prompt
 const AGENT_INPUT = ['subagent_type', 'model', 'effort', 'isolation', 'run_in_background'];
 const AGENT_RESPONSE = ['status', 'agentId', 'agentType', 'resolvedModel', 'isAsync', 'totalTokens', 'totalDurationMs', 'totalToolUseCount',
   'worktreePath', 'worktreeBranch', 'outputFile', 'usage'];
-const ROUTER_TOOL = /^mcp__plugin_agentic-router_router__/;
+const ROUTER_TOOL = /^mcp__plugin_do-it-all-claude-code_router__/;
 const EDIT_TOOL_PATH = { Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
 // the dispatch lines the router parses (daemon policy.ts): the tag that starts line 1, the scope that is line 2
 const TAG_LINE = /^\s*\[subtask:\s*([A-Za-z0-9_.-]{1,64})\s*\]/;

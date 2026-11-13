@@ -5,7 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, type Level, type TeamPreset } from '@agentic-router/core';
+import { DEFAULT_PRESETS, type Level, type TeamPreset } from '@do-it-all-claude-code/core';
 import { loadClaudeCodeAdapter, type ClientAdapter } from '../src/adapter.ts';
 import { createDaemon, type Daemon, type DaemonOptions } from '../src/index.ts';
 
@@ -65,7 +65,7 @@ export function loadSpike(name: 's1' | 's2' | 's5'): HookInput[] {
     .map(l => JSON.parse(l) as { input?: HookInput }).filter(o => o.input).map(o => o.input!);
 }
 
-const AGENT_TYPES: Record<string, string> = { 'probe:coder': 'agentic-router:coder', 'probe:coder-2': 'agentic-router:coder', 'probe:wt-coder': 'agentic-router:coder' };
+const AGENT_TYPES: Record<string, string> = { 'probe:coder': 'do-it-all-claude-code:coder', 'probe:coder-2': 'do-it-all-claude-code:coder', 'probe:wt-coder': 'do-it-all-claude-code:coder' };
 
 /** Points a spike run at `root` (paths rewritten) and maps the probe agents to router agents. */
 export function retarget(inputs: HookInput[], root: string): HookInput[] {

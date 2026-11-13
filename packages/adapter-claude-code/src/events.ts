@@ -2,7 +2,7 @@
 // Field names follow the Claude Code 2.1.319-2.1.322 hook payloads recorded in test/fixtures/*.jsonl.
 // The main-session model field and its transcript fallback (decision 117) are fixed by
 // test/fixtures/spike-leadmodel.jsonl and test/fixtures/transcript-main.jsonl.
-import type { RouterEvent, RouterEventType } from '@agentic-router/core';
+import type { RouterEvent, RouterEventType } from '@do-it-all-claude-code/core';
 
 /** Claude Code hook event names this adapter understands. */
 export type ClaudeHookEventName =
@@ -151,12 +151,12 @@ export function hookEffort(ev: RouterEvent): string | undefined {
   return isRecord(e) ? str(e.level) : undefined;
 }
 
-/** True for a subagent launched from this plugin's role files (`agentic-router:<role>`). */
-export const ROUTER_AGENT_PREFIX = 'agentic-router:';
+/** True for a subagent launched from this plugin's role files (`do-it-all-claude-code:<role>`). */
+export const ROUTER_AGENT_PREFIX = 'do-it-all-claude-code:';
 export function isRouterAgent(agentType: string | undefined): boolean {
   return typeof agentType === 'string' && agentType.startsWith(ROUTER_AGENT_PREFIX);
 }
-/** `agentic-router:coder` -> `coder`; undefined for other agent types. */
+/** `do-it-all-claude-code:coder` -> `coder`; undefined for other agent types. */
 export function routerRole(agentType: string | undefined): string | undefined {
   return isRouterAgent(agentType) ? agentType!.slice(ROUTER_AGENT_PREFIX.length) : undefined;
 }

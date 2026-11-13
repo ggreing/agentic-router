@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PROTECTED_WRITE_PATHS, redact, scopeKey } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS, redact, scopeKey } from '@do-it-all-claude-code/core';
 
 test('redact masks the credential forms found in review #6', () => {
   const samples = [
@@ -33,7 +33,7 @@ test('.git internals are protected (review #3)', () => {
 });
 
 test('environment-dependent credential paths (env audit #8)', async () => {
-  const { envCredentialPaths } = await import('@agentic-router/core');
+  const { envCredentialPaths } = await import('@do-it-all-claude-code/core');
   const p = envCredentialPaths({ CLAUDE_CONFIG_DIR: String.raw`D:\cc`, APPDATA: String.raw`C:\Users\u\AppData\Roaming`, HOME: 'H:/' });
   assert.ok(p.includes('D:/cc/**'));
   assert.ok(p.includes('C:/Users/u/AppData/Roaming/gcloud/**'));
@@ -41,11 +41,11 @@ test('environment-dependent credential paths (env audit #8)', async () => {
   assert.deepEqual(envCredentialPaths({ CLAUDE_CONFIG_DIR: 'relative/dir', HOME: '' }), []);
 });
 
-test('a relative AGENTIC_ROUTER_HOME is ignored (env audit #7)', async () => {
-  const { routerHome } = await import('@agentic-router/core');
-  const prev = process.env.AGENTIC_ROUTER_HOME;
+test('a relative DO_IT_ALL_CLAUDE_CODE_HOME is ignored (env audit #7)', async () => {
+  const { routerHome } = await import('@do-it-all-claude-code/core');
+  const prev = process.env.DO_IT_ALL_CLAUDE_CODE_HOME;
   try {
-    process.env.AGENTIC_ROUTER_HOME = 'rel/home';
-    assert.ok(routerHome().endsWith('.agentic-router'));
-  } finally { if (prev === undefined) delete process.env.AGENTIC_ROUTER_HOME; else process.env.AGENTIC_ROUTER_HOME = prev; }
+    process.env.DO_IT_ALL_CLAUDE_CODE_HOME = 'rel/home';
+    assert.ok(routerHome().endsWith('.do-it-all-claude-code'));
+  } finally { if (prev === undefined) delete process.env.DO_IT_ALL_CLAUDE_CODE_HOME; else process.env.DO_IT_ALL_CLAUDE_CODE_HOME = prev; }
 });

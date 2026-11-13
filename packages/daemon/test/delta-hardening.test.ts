@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import { redact, redactJson } from '@agentic-router/core';
+import { redact, redactJson } from '@do-it-all-claude-code/core';
 import { exportLines, purgeFiles } from '../src/data.ts';
 import { homeLayout } from '../src/home.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -76,12 +76,12 @@ test('audit N1: with the daemon down an Agent result is spooled as valid JSON, r
   };
   await hook({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT, prompt_id: 'p-1' });
   await hook({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] add the audit log\n[scope: src/**]\nThe spec.', model: 'haiku', effort: 'low' } });
-  await hook({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'agentic-router:coder' });
-  await hook({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] add the audit log' },
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] add the audit log\n[scope: src/**]\nThe spec.', model: 'haiku', effort: 'low' } });
+  await hook({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder' });
+  await hook({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] add the audit log' },
     tool_response: { status: 'async_launched', agentId: 'a1', isAsync: true, content: [{ type: 'text', text: TRICKY }] } });
   fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'audited\n');
-  await hook({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'agentic-router:coder', stop_hook_active: false, last_assistant_message: `- Changed files: src/a.ts\n${TRICKY}` });
+  await hook({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, last_assistant_message: `- Changed files: src/a.ts\n${TRICKY}` });
   await hook({ hook_event_name: 'UserPromptSubmit', prompt_id: 'p-2',
     prompt: `<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<result>${TRICKY}</result>\n</task-notification>` });
   await hook({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: `Done. ${TRICKY}` });

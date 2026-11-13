@@ -1,7 +1,7 @@
 // Masked JSON-lines log at <home>/logs/daemon.log. The daemon never writes to the console.
 import fs from 'node:fs';
 import path from 'node:path';
-import { redact } from '@agentic-router/core';
+import { redact } from '@do-it-all-claude-code/core';
 
 export interface Logger {
   info(msg: string, data?: Record<string, unknown>): void;

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   toRouterEvent, agentResult, isAgentToolEvent, isTaskNotification, parseTaskNotification, taskNotification, promptOrigin, subtaskTagFromTranscript,
-} from '@agentic-router/adapter-claude-code';
+} from '@do-it-all-claude-code/adapter-claude-code';
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 function hookInputs(file: string): Record<string, unknown>[] {

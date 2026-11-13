@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { costUsd } from '@agentic-router/core';
+import { costUsd } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import type { StatusView } from '../src/router.ts';
 import { getStatus, makeRepo, postHook, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
@@ -178,10 +178,10 @@ test('T7: triage, plan (T6 re-plan) and subtasks; a request reopened by a notifi
     const post = session(d, 'plan', repo);
     await post({ hook_event_name: 'UserPromptSubmit', prompt: L0_PROMPT });
     await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_r1',
-      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] fix it\n[scope: README.md]', model: 'haiku', effort: 'low' } });
-    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag1', agent_type: 'agentic-router:coder' });
+      tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] fix it\n[scope: README.md]', model: 'haiku', effort: 'low' } });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag1', agent_type: 'do-it-all-claude-code:coder' });
     write(repo, 'README.md', 'the\n');
-    await post({ hook_event_name: 'SubagentStop', agent_id: 'ag1', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    await post({ hook_event_name: 'SubagentStop', agent_id: 'ag1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     await post(stop('Started subtask A.'));
     await d.router.drain();
     let rec = record(d, 'plan');
@@ -229,10 +229,10 @@ test('costs: a subagent\'s and the lead\'s last line written after their stop ar
     const post = session(d, 'late', repo, main);
     await post({ hook_event_name: 'UserPromptSubmit', prompt: L0_PROMPT, prompt_id: 'p-late' });
     await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_late',
-      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x\n[scope: src/**]', model: 'haiku', effort: 'low' } });
-    await post({ hook_event_name: 'SubagentStart', agent_id: 'l1', agent_type: 'agentic-router:coder' });
+      tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] x\n[scope: src/**]', model: 'haiku', effort: 'low' } });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'l1', agent_type: 'do-it-all-claude-code:coder' });
     write(repo, 'src/a.ts', 'b\n');
-    const stopped = post({ hook_event_name: 'SubagentStop', agent_id: 'l1', agent_type: 'agentic-router:coder', stop_hook_active: false, agent_transcript_path: sub });
+    const stopped = post({ hook_event_name: 'SubagentStop', agent_id: 'l1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, agent_transcript_path: sub });
     setTimeout(() => fs.appendFileSync(sub, call('s2', 'claude-haiku-5-5', 20)), 150);
     await stopped;
     assert.deepEqual(rows(d, "SELECT calls FROM costs WHERE agent_id = 'l1' AND source = 'transcript'"), [{ calls: 2 }]);
@@ -253,8 +253,8 @@ test('costs: a subagent that never stopped is counted from its transcript next t
   const post = session(d, 'cut', d.home, main);
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L0_PROMPT });
   await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_cut',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
-  await post({ hook_event_name: 'SubagentStart', agent_id: 'c1', agent_type: 'agentic-router:coder' });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'SubagentStart', agent_id: 'c1', agent_type: 'do-it-all-claude-code:coder' });
   await post(stop('Started A in the background.'));                     // the session ends before A does
   await d.router.drain();
   const cost = rows(d, "SELECT calls, usd, note FROM costs WHERE agent_id = 'c1' AND source = 'transcript'");

@@ -16,7 +16,7 @@
 //                table for this request (decision 103).
 // Settle replaces the hold with the actual cost (server.ts).
 import zlib from 'node:zlib';
-import { CACHE_MULTIPLIER, PRICING_PER_MTOK, type ModelPrice } from '@agentic-router/core/pricing';
+import { CACHE_MULTIPLIER, PRICING_PER_MTOK, type ModelPrice } from '@do-it-all-claude-code/core/pricing';
 
 /** The Messages API's request size limit (32 MB, read as MiB so a body the API accepts is never refused here). */
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;

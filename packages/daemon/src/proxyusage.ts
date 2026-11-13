@@ -9,7 +9,7 @@
 // and recorded as a cost row of source 'proxy' (an agent's row is subtask cost, a main-conversation row the
 // lead's). Once a request has proxy rows they are its cost source: the transcript rows stay next to them as
 // the cross-check (Ledger recount). Rows carry no body, prompt or credential.
-import type { BudgetAnswer, UsageRow } from '@agentic-router/core';
+import type { BudgetAnswer, UsageRow } from '@do-it-all-claude-code/core';
 import type { Ledger } from './ledger.ts';
 import type { Logger } from './log.ts';
 

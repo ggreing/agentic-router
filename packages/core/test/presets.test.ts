@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_PRESETS, loadPresets } from '@agentic-router/core';
+import { DEFAULT_PRESETS, loadPresets } from '@do-it-all-claude-code/core';
 
 const tmp = (name: string, text: string) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-presets-')); const f = path.join(d, name); fs.writeFileSync(f, text); return f; };
 
@@ -29,7 +29,7 @@ test('invalid teams.yaml throws', () => {
 });
 
 test('delegation starts at L1 for an Opus-class lead and at L2 otherwise (decisions 117-118)', async () => {
-  const { withLeadModel, leadModelClass } = await import('@agentic-router/core');
+  const { withLeadModel, leadModelClass } = await import('@do-it-all-claude-code/core');
   assert.equal(leadModelClass('claude-opus-5-5'), 'opus');
   assert.equal(leadModelClass('claude-fable-5-1'), 'opus');
   assert.equal(leadModelClass('claude-sonnet-5-5'), 'sonnet');

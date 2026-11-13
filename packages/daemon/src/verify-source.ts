@@ -1,5 +1,5 @@
 // Where verify commands come from (decision Q2): the role file's `x-router.verify` is the default;
-// the project's `.agentic-router/verify.json` overrides it. Role files live in
+// the project's `.do-it-all-claude-code/verify.json` overrides it. Role files live in
 // <config.pluginDir>/agents/<role>.md and are parsed by core's parseRoleFile (decision 64);
 // without pluginDir only the scope check runs.
 //
@@ -7,11 +7,13 @@
 // cannot weaken its own verification by editing the file.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseRoleFile, type Role, type SignalKind } from '@agentic-router/core';
+import { LEGACY_PROJECT_DIR, PROJECT_DIR, parseRoleFile, type Role, type SignalKind } from '@do-it-all-claude-code/core';
 import { showFile } from './git.ts';
 import { validTreePath, type VerifyCommand } from './verify.ts';
 
-export const PROJECT_VERIFY_FILE = '.agentic-router/verify.json';
+export const PROJECT_VERIFY_FILE = `${PROJECT_DIR}/verify.json`;
+/** The previous release's place (decision 161): read when the project has no file at the new one. */
+export const LEGACY_PROJECT_VERIFY_FILE = `${LEGACY_PROJECT_DIR}/verify.json`;
 
 export type VerifySource = 'project' | 'role' | 'none';
 
@@ -28,13 +30,17 @@ export async function resolveVerifyCommands(i: VerifySourceInput): Promise<{ com
   const warnings: string[] = [];
   const done = (commands: VerifyCommand[], source: VerifySource) => ({ commands, source, ...(warnings.length ? { warning: warnings.join('; ') } : {}) });
   if (i.repoRoot) {
-    const text = i.baseRef ? await showFile(i.repoRoot, i.baseRef, PROJECT_VERIFY_FILE) : readIfExists(path.join(i.repoRoot, PROJECT_VERIFY_FILE));
+    const root = i.repoRoot;
+    const read = (rel: string) => (i.baseRef ? showFile(root, i.baseRef, rel) : Promise.resolve(readIfExists(path.join(root, rel))));
+    let rel = PROJECT_VERIFY_FILE;
+    let text = await read(rel);
+    if (text === undefined) { text = await read(LEGACY_PROJECT_VERIFY_FILE); if (text !== undefined) rel = LEGACY_PROJECT_VERIFY_FILE; }
     if (text !== undefined) {
       try {
         const cmds = projectCommands(JSON.parse(text), i.role);
         if (cmds) return done(cmds, 'project');
       } catch (e) {
-        warnings.push(`${PROJECT_VERIFY_FILE} ignored: ${why(e)}`);
+        warnings.push(`${rel} ignored: ${why(e)}`);
       }
     }
   }

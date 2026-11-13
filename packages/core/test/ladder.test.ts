@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRESETS, crossesTier, redact, stepDown, stepUp, topStep } from '@agentic-router/core';
+import { DEFAULT_PRESETS, crossesTier, redact, stepDown, stepUp, topStep } from '@do-it-all-claude-code/core';
 
 test('ladder moves one step at a time and stops at the top', () => {
   assert.equal(stepUp('s1'), 's2');

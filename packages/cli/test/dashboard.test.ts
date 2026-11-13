@@ -1,4 +1,4 @@
-// `agentic-router dashboard` (decision 132): one-time code for the local token, browser opened with the
+// `do-it-all-claude-code dashboard` (decision 132): one-time code for the local token, browser opened with the
 // code in the fragment, the URL printed when no browser opens; the token never in a URL, argument or line.
 // Fake openers only; the last test runs the real daemon in a temp home (loopback).
 import { test, beforeEach } from 'node:test';
@@ -7,14 +7,14 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { paths } from '@agentic-router/core';
+import { paths } from '@do-it-all-claude-code/core';
 import { browserCommand, openDashboard } from '../src/dashboard.ts';
 import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-dash-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 
 const TOKEN = 'local-token-0123456789abcdef0123456789';
@@ -48,7 +48,7 @@ test('opened, printed or refused: the code is shown only when it has to be typed
   assert.match(noBrowser.text, /Could not open a browser[\s\S]*#code=Q2hh/);
   const noOpen = await run({ noOpen: true, open: async () => { throw new Error('must not open'); } });
   assert.match(noOpen.text, /^Open this address within a minute/);
-  assert.match((await run({ register: async () => null })).text, /not running: start it with `agentic-router start`/);
+  assert.match((await run({ register: async () => null })).text, /not running: start it with `do-it-all-claude-code start`/);
   assert.equal((await run({ register: async () => null })).code, 1);
   assert.match((await run({ register: async () => ({ status: 401, body: '{}' }) })).text, /refused the local token/);
   assert.match((await run({ register: async () => ({ status: 404, body: '{}' }) })).text, /no dashboard/);

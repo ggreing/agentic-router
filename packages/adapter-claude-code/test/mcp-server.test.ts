@@ -53,7 +53,7 @@ function makeHome(daemonPort: number | null): string {
 
 function spawnServer(home: string, extraEnv: Record<string, string> = {}): Client {
   const child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, AGENTIC_ROUTER_HOME: home, AGENTIC_ROUTER_TOOLS: TOOLS, CLAUDE_CODE_SESSION_ID: 'sess-1', CLAUDE_PROJECT_DIR: '/proj', ...extraEnv },
+    env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home, DO_IT_ALL_CLAUDE_CODE_TOOLS: TOOLS, CLAUDE_CODE_SESSION_ID: 'sess-1', CLAUDE_PROJECT_DIR: '/proj', ...extraEnv },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
   const msgs: Json[] = [];
@@ -99,7 +99,7 @@ test('initialize negotiates the protocol version and advertises the tools capabi
     const res1 = r1.result as Json;
     assert.equal(res1.protocolVersion, '2025-06-18');                 // listed -> echoed
     assert.deepEqual((res1.capabilities as Json).tools, {});
-    assert.equal((res1.serverInfo as Json).name, 'agentic-router');
+    assert.equal((res1.serverInfo as Json).name, 'do-it-all-claude-code');
 
     c.send({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: 'nope-9999', capabilities: {} } });
     const r2 = await c.waitFor(hasId(2));

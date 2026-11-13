@@ -4,7 +4,7 @@
 // pieces: the certificate made by the CLI's localtls.ts (openssl), the real proxy (packages/proxy createProxy) serving
 // HTTPS with it, and the real apiKeyHelper (packages/proxy/bin/local-token.mjs), which checks the proxy's proof before
 // it prints the local token. The proxy forwards to a fake Messages API on 127.0.0.1 with a dummy key that only the fake
-// accepts. No API call is made and nothing is billed; your own ~/.claude and ~/.agentic-router are not read or changed.
+// accepts. No API call is made and nothing is billed; your own ~/.claude and ~/.do-it-all-claude-code are not read or changed.
 //
 // Cases through the router's proxy (one tiny prompt each):
 //   tls          settings env: https base URL + NODE_EXTRA_CA_CERTS = the router's leaf certificate -> connected; also
@@ -145,7 +145,7 @@ function cleanEnv(extra) {
   for (const [k, v] of Object.entries(process.env)) {
     // a prefix match, as in scripts/guard-e2e: nothing of a surrounding Claude Code session (CLAUDECODE, CLAUDE_*),
     // no credential, no TLS override (NODE_TLS_REJECT_UNAUTHORIZED) and no ambient proxy reaches the child
-    if (/^(?:CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|AGENTIC_ROUTER|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT|HTTPS?_PROXY|NO_PROXY)/i.test(k)) continue;
+    if (/^(?:CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|DO_IT_ALL_CLAUDE_CODE|AGENTIC_ROUTER|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT|HTTPS?_PROXY|NO_PROXY)/i.test(k)) continue;
     out[k] = v;
   }
   return { ...out, NO_PROXY: '127.0.0.1,localhost,::1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1', ENABLE_TOOL_SEARCH: 'false', ...extra };
@@ -230,7 +230,7 @@ const port = await new Promise(r => { const s = http.createServer(); s.listen(0,
 const writeRouterConfig = tls => fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ proxyPort: port, daemonPort: 1, apiMode: 'proxy', proxy: { tls } }));
 const only = arg('only');
 const results = [];
-const childEnv = (dir, extra = {}) => cleanEnv({ CLAUDE_CONFIG_DIR: dir, AGENTIC_ROUTER_HOME: home, ...extra });
+const childEnv = (dir, extra = {}) => cleanEnv({ CLAUDE_CONFIG_DIR: dir, DO_IT_ALL_CLAUDE_CODE_HOME: home, ...extra });
 async function step(name, expect, fn) {
   if (only && only !== name) return;
   fake.seen.length = 0;
@@ -251,7 +251,7 @@ try {
   await step('tls', r => r.answered && r.fakeKeys.includes('dummy'), async () => {
     // the helper writes its probe line into the router home (a fixed file; no path is taken from the environment)
     const probe = path.join(home, 'helper-probe.jsonl');
-    const s = summarize(await runClaude(childEnv(cfgTls, { AGENTIC_ROUTER_HELPER_PROBE: '1' })));
+    const s = summarize(await runClaude(childEnv(cfgTls, { DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: '1' })));
     let seen = 'the helper did not run';
     try { const lines = fs.readFileSync(probe, 'utf8').trim().split('\n').map(l => JSON.parse(l)); seen = [...new Set(lines.map(l => `${l.baseUrl}${l.matches === null ? '' : l.matches ? ', matches' : ', does not match'}`))].join(' / '); } catch { /* none */ }
     return { ...s, fakeKeys: [...new Set(fake.seen.map(e => e.key))], helperSawBaseUrl: seen };

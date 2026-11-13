@@ -1,6 +1,6 @@
 ---
 name: lead-orchestrator
-description: Mandatory whenever your context contains a line starting "[agentic-router] level …" — routing is ON and you are the lead. At level L0 the lead makes the small change itself (the router only records it); at L1 and above the lead delegates to the team instead of editing, stays light, and does not read source files to plan. Covers the L0/L1+ split, keeping the lead light, the exact Agent call shape, write scopes, the worktree rule, trusting the router's verify result, step changes, HITL, and merging.
+description: Mandatory whenever your context contains a line starting "[do-it-all-claude-code] level …" — routing is ON and you are the lead. At level L0 the lead makes the small change itself (the router only records it); at L1 and above the lead delegates to the team instead of editing, stays light, and does not read source files to plan. Covers the L0/L1+ split, keeping the lead light, the exact Agent call shape, write scopes, the worktree rule, trusting the router's verify result, step changes, HITL, and merging.
 ---
 
 # Lead orchestrator
@@ -8,7 +8,7 @@ description: Mandatory whenever your context contains a line starting "[agentic-
 Routing is ON when your context holds a brief like:
 
 ```
-[agentic-router] level L2 (source=rule, confidence=0.72): <one line>
+[do-it-all-claude-code] level L2 (source=rule, confidence=0.72): <one line>
 team preset L2: architect x1 @s3 (model=sonnet, effort=medium); coder x2 @s1 (model=haiku, effort=low); reviewer x1 @s3 (model=sonnet, effort=medium); tester x1 @s1 (model=haiku, effort=low). budget $5.
 Routing is ON for this request. You are the lead: read only what you need to plan, then delegate.
 Do not edit or write files yourself (unless the user explicitly asks you to); the team below does the changes.
@@ -29,7 +29,7 @@ Sometimes the brief says the router **could not tell the size** of the request f
 - **Otherwise handle it yourself**, minimally. Don't switch for something you can finish in a few edits.
 - **Don't explore just to decide.** Looking at one or two files to gauge the scope is fine; opening many files to plan is not — that is the lead cost the router is trying to avoid.
 
-The injected brief already names the roles and the exact `model`/`effort` for each; this skill is the full procedure behind it. If no `[agentic-router] level …` line is present, routing is off (daemon down) — just do the work yourself.
+The injected brief already names the roles and the exact `model`/`effort` for each; this skill is the full procedure behind it. If no `[do-it-all-claude-code] level …` line is present, routing is off (daemon down) — just do the work yourself.
 
 ## The three steps
 
@@ -43,7 +43,7 @@ The injected brief already names the roles and the exact `model`/`effort` for ea
 
 ```
 Agent(
-  subagent_type: "agentic-router:coder",
+  subagent_type: "do-it-all-claude-code:coder",
   description: "Subtask A: fix off-by-one in paginate()",
   model: "haiku",
   effort: "low",
@@ -60,15 +60,15 @@ Acceptance: npm test passes, including a new case for an exact-multiple total.
 **Parallel — two or more writers at the same time** each get an isolated git worktree, so add `isolation: "worktree"` to every one of them and launch them in a single message:
 
 ```
-Agent(subagent_type: "agentic-router:coder", description: "Subtask A", model: "haiku", effort: "low",
+Agent(subagent_type: "do-it-all-claude-code:coder", description: "Subtask A", model: "haiku", effort: "low",
       isolation: "worktree",
       prompt: "[subtask:A]\n[scope: src/api/**]\n…")
-Agent(subagent_type: "agentic-router:coder", description: "Subtask B", model: "haiku", effort: "low",
+Agent(subagent_type: "do-it-all-claude-code:coder", description: "Subtask B", model: "haiku", effort: "low",
       isolation: "worktree",
       prompt: "[subtask:B]\n[scope: src/web/**]\n…")
 ```
 
-- `subagent_type` is `agentic-router:<role>` — one of `agentic-router:architect`, `agentic-router:ui-designer`, `agentic-router:coder`, `agentic-router:reviewer`, `agentic-router:tester`.
+- `subagent_type` is `do-it-all-claude-code:<role>` — one of `do-it-all-claude-code:architect`, `do-it-all-claude-code:ui-designer`, `do-it-all-claude-code:coder`, `do-it-all-claude-code:reviewer`, `do-it-all-claude-code:tester`.
 - Line 2 `[scope: …]` sets the write scope. If you omit it, the whole repository is writable and only protected paths (`.env`, CI config, `.claude/`, `.git/`) are blocked — prefer to always set it.
 - A read-only role (reviewer, architect reviewing) still gets `[subtask:<ID>]`; its scope may be empty, and it never needs `isolation`.
 - **`isolation` rule (decision 83):** pass `isolation: "worktree"` **only** when two or more writers run concurrently; a writer that runs alone gets **no** `isolation` and edits the working tree directly (no merge step for it). Keep concurrent scopes disjoint.
@@ -115,10 +115,10 @@ The user's next message is then treated as the answer to this request, not a new
 
 ## Router tools (optional)
 
-The router exposes five MCP tools for **you, the lead** (never the workers). Tool search defers them, so load one with ToolSearch, then call it by its full name (`mcp__plugin_agentic-router_router__…`); they are optional — the hooks are the system of record and everything works if you never call one, and if the daemon is down a tool just returns an error and you continue.
+The router exposes five MCP tools for **you, the lead** (never the workers). Tool search defers them, so load one with ToolSearch, then call it by its full name (`mcp__plugin_do-it-all-claude-code_router__…`); they are optional — the hooks are the system of record and everything works if you never call one, and if the daemon is down a tool just returns an error and you continue.
 
 - **`router_get_plan`** — re-read the current plan (level, team, each slot's model/effort/step, the subtasks and their verify results). Use it after a compaction or resume, or before you dispatch a subtask again.
 - **`router_report_triage`** — report your own size judgement (`direct`/`team`, level, files, confidence) **before** the first subtask is dispatched. The router records it and re-plans upward if you judge the request larger than planned.
 - **`router_report_result`** — accept or reject a finished subtask. A reviewer's or tester's verdict and margin are read by the router from their report; call `router_report_result` only for your own judgement, or when the router's notification asks for it. Two easy results in a row let the router run that slot one step lower. Use `reject` when the result is wrong even though verify passed; a reject counts as one failure of that slot.
 - **`router_request_escalation`** — raise a finished subtask's slot one step when verify passed but the result is wrong. Granted at once on a reviewer/tester reject; on your judgement alone once per slot within a model tier, otherwise it answers `needs_user` (ask the user, then call again with `userConfirmed: true`).
-- **`router_request_scope`** — change a pending/running subtask's write paths (add/remove globs). A protected path needs the user's confirmation first; `.git`, `.agentic-router` and credential paths are never grantable.
+- **`router_request_scope`** — change a pending/running subtask's write paths (add/remove globs). A protected path needs the user's confirmation first; `.git`, `.do-it-all-claude-code` and credential paths are never grantable.

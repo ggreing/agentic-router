@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROUTER_TOOL_PREFIX } from '@agentic-router/core';
+import { ROUTER_TOOL_PREFIX } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import { MAX_TICKETS, TICKET_TTL_MS, TOOL_USE_ID_META, TicketStore, addGlobs, removeGlobs, sortScopeGlobs, toolUseIdOf } from '../src/tools.ts';
 import { TOKEN, makeRepo, postHook, request, rmrf, rows, startTestDaemon, write, type HookInput, type TestDaemon } from './helpers.ts';
@@ -46,10 +46,10 @@ function session(d: TestDaemon, sid: string, cwd: string) {
   };
   const call = (tag: string, role: string, model: string, effort: string, scope: string | null = 'src/**'): HookInput => ({
     hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_a${++seq}`,
-    tool_input: { subagent_type: `agentic-router:${role}`, prompt: `[subtask:${tag}] work${scope === null ? '' : `\n[scope: ${scope}]`}`, model, effort },
+    tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: `[subtask:${tag}] work${scope === null ? '' : `\n[scope: ${scope}]`}`, model, effort },
   });
-  const start = (id: string, role = 'coder'): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: id, agent_type: `agentic-router:${role}` });
-  const stop = (id: string, role = 'coder'): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: id, agent_type: `agentic-router:${role}`, stop_hook_active: false });
+  const start = (id: string, role = 'coder'): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: id, agent_type: `do-it-all-claude-code:${role}` });
+  const stop = (id: string, role = 'coder'): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: id, agent_type: `do-it-all-claude-code:${role}`, stop_hook_active: false });
   /** Dispatches a subtask and lets it finish with a passing verify. */
   const pass = async (tag: string, agent: string, model = 'haiku', effort = 'low', role = 'coder'): Promise<void> => {
     assert.deepEqual(await post(call(tag, role, model, effort)), {}, `dispatch ${tag}`);
@@ -114,7 +114,7 @@ test('a tool call is bound to the session of its PreToolUse; a subagent call is 
   assert.equal((await a.raw({ tool: 'router_get_plan', input: {}, meta: meta('toolu_once'), bind })).ok, true);
   const again = await a.raw({ tool: 'router_get_plan', input: {}, meta: meta('toolu_once'), bind });
   assert.deepEqual([again.ok, again.code], [false, 'not_bound']);
-  assert.match(again.message ?? '', /^\[agentic-router\] not_bound: /);
+  assert.match(again.message ?? '', /^\[do-it-all-claude-code\] not_bound: /);
   await a.post({ hook_event_name: 'PreToolUse', tool_name, tool_use_id: 'toolu_other', tool_input: {} });
   assert.equal((await a.raw({ tool: 'router_report_triage', input: { kind: 'team', level: 'L2', files: 5, confidence: 0.8 }, meta: meta('toolu_other'), bind })).code, 'not_bound');
 
@@ -179,7 +179,7 @@ test('router_report_triage re-plans upward exactly as the first Agent call does,
   const r = await s.tool('router_report_triage', { kind: 'team', level: 'L2', files: 6, confidence: 0.8 });
   assert.equal(r.ok, true);
   assert.deepEqual([r.result?.recorded, r.result?.replanned, r.result?.level, r.result?.leadDirect], [true, true, 'L2', false]);
-  assert.match(r.result?.brief, /subagent_type "agentic-router:coder", model "haiku", effort "low"/);
+  assert.match(r.result?.brief, /subagent_type "do-it-all-claude-code:coder", model "haiku", effort "low"/);
   const row = rows(d, "SELECT level, preset, budget_usd, team, triage, replanned_from, lead_triage FROM requests WHERE session_id = 'tri'")[0]!;
   assert.deepEqual([row.level, row.preset, row.budget_usd, row.team], [refRow.level, refRow.preset, refRow.budget_usd, refRow.team]);
   assert.match(JSON.parse(String(row.triage)).rationale, /^re-planned at L2: the lead judged the request as L2 \(about 6 files, confidence 0\.80\) in a lead-direct L1 request/);
@@ -360,7 +360,7 @@ test('router_request_escalation: a reviewer reject raises at once, also across a
 test('scope globs are sorted by what they name', () => {
   assert.deepEqual(sortScopeGlobs(['src/**', '.\\test\\**', '**', 'docs/.envoy.md']), { ordinary: ['src/**', 'test/**', '**'], protectedPaths: ['docs/.envoy.md'], never: [] });
   assert.deepEqual(sortScopeGlobs(['.env.example', 'app/.env', '.github/workflows/**', '.github/workflows/ci.yml', 'pkg/.npmrc', '.claude/**', '.gitlab-ci.yml']).ordinary, []);
-  assert.deepEqual(sortScopeGlobs(['.git/**', 'sub/.git/hooks/**', '.agentic-router/**', '.agentic-router/policy.json', '.GIT/config']).never.length, 5);
+  assert.deepEqual(sortScopeGlobs(['.git/**', 'sub/.git/hooks/**', '.do-it-all-claude-code/**', '.do-it-all-claude-code/policy.json', '.GIT/config']).never.length, 5);
   assert.deepEqual(sortScopeGlobs(['.github/ISSUE_TEMPLATE/**', '.gitignore', 'environment/**']).ordinary.length, 3);
   assert.deepEqual(addGlobs(['src/**'], ['./src/**', 'test\\**']), ['src/**', 'test/**']);
   assert.deepEqual(removeGlobs(['src/**', 'test/**'], ['./test/**', 'nope/**']), ['src/**']);

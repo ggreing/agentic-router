@@ -2,7 +2,7 @@
 // dependency-free copy (plugin/hooks/seal.mjs) is the same thing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NonceWindow, SEALED_PATH, SEAL_WINDOW_MS, SealError, openRequest, openResponse, sealRequest, sealResponse } from '@agentic-router/core';
+import { NonceWindow, SEALED_PATH, SEAL_WINDOW_MS, SealError, openRequest, openResponse, sealRequest, sealResponse } from '@do-it-all-claude-code/core';
 import * as plugin from '../../../plugin/hooks/seal.mjs';
 
 const SECRET = 'test-token-0123456789abcdef0123456789abcdef';

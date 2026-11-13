@@ -1,4 +1,4 @@
-// `agentic-router data export` / `data purge` (spec 3.7 data management, 4.4 data minimisation). One
+// `do-it-all-claude-code data export` / `data purge` (spec 3.7 data management, 4.4 data minimisation). One
 // implementation for the daemon routes and for the CLI when the daemon is not running.
 //
 // export: one JSON line per closed request (its T7 record, its verify signals and its acceptance), after a
@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { redact, safeName } from '@agentic-router/core';
+import { redact, safeName } from '@do-it-all-claude-code/core';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { MINIMAL_MARK, minimalPayload } from './payload.ts';
 

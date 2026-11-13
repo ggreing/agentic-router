@@ -1,5 +1,5 @@
 // Shared contracts for all packages.
-// Spec references are to "Agentic Router Proxy.docx" (docs/spec).
+// Spec references are to "Do It All Claude Code.docx" (docs/spec).
 
 export type Level = 'L0' | 'L1' | 'L2' | 'L3';
 export type Step = 's1' | 's2' | 's3' | 's4' | 's5' | 's6' | 's7';
@@ -86,7 +86,7 @@ export interface RouterEvent {
   type: RouterEventType;
   sessionId: string;
   agentId?: string;          // set for events raised inside a subagent
-  agentType?: string;        // e.g. "agentic-router:coder"; empty for the main session and internal agents
+  agentType?: string;        // e.g. "do-it-all-claude-code:coder"; empty for the main session and internal agents
   cwd?: string;              // worktree root for isolated subagents
   toolName?: string;
   toolInput?: Record<string, unknown>;

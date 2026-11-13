@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   toRouterEvent, renderHookOutput, renderPreCompactStdout, HookInputError,
   isRouterAgent, routerRole, agentCall, agentResult, hookEffort, isAgentToolEvent,
-} from '@agentic-router/adapter-claude-code';
+} from '@do-it-all-claude-code/adapter-claude-code';
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -131,8 +131,8 @@ test('toRouterEvent rejects malformed payloads', () => {
 });
 
 test('isRouterAgent / routerRole only match this plugin\'s subagents', () => {
-  assert.equal(isRouterAgent('agentic-router:coder'), true);
-  assert.equal(routerRole('agentic-router:reviewer'), 'reviewer');
+  assert.equal(isRouterAgent('do-it-all-claude-code:coder'), true);
+  assert.equal(routerRole('do-it-all-claude-code:reviewer'), 'reviewer');
   assert.equal(isRouterAgent('probe:coder'), false);
   assert.equal(isRouterAgent(''), false);
   assert.equal(routerRole(undefined), undefined);

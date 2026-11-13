@@ -78,8 +78,10 @@ if (flag('dry-run')) { printEstimate(); process.exit(0); }
 fs.writeFileSync(path.join(OUT, 'tasks.jsonl'), '');      // rewritten with prompts as workspaces are prepared
 if (!HELPER && !flag('setup-only')) { console.error('pass --api-key-helper "<command>" (keychain helper)'); process.exit(2); }
 
+// AGENTIC_ROUTER_HOME (the previous release) is left out: with it, init would move that folder into the temp home
+const { AGENTIC_ROUTER_HOME: _previousHome, ...inherited } = process.env;
 const cli = (home: string, ...a: string[]) => execFileSync(process.execPath, [path.join(ROOT, 'packages/cli/src/index.ts'), ...a],
-  { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, encoding: 'utf8' });
+  { env: { ...inherited, DO_IT_ALL_CLAUDE_CODE_HOME: home }, encoding: 'utf8' });
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8', maxBuffer: 64 << 20 });
 
 function settingsFor(): string {
@@ -100,7 +102,7 @@ function runClaude(repo: string, configDir: string, prompt: string, a: Arrangeme
     // launching a background worker, which was then cut off. Interactive sessions do not have this problem.
     args.push('--append-system-prompt', 'This is a non-interactive run: before you give your final answer, wait until every subagent you started has finished and you have read its result.');
   }
-  const env = { ...childEnv(configDir, { kind: 'api-key-helper' } as never), ...(home ? { AGENTIC_ROUTER_HOME: home } : {}) };
+  const env = { ...childEnv(configDir, { kind: 'api-key-helper' } as never), ...(home ? { DO_IT_ALL_CLAUDE_CODE_HOME: home } : {}) };
   return new Promise(resolve => {
     const t0 = Date.now();
     const p = spawn('claude', args, { cwd: repo, env, windowsHide: true });

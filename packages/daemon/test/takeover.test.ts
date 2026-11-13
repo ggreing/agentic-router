@@ -27,13 +27,13 @@ async function withRepo(fn: (d: TestDaemon, repo: string, post: (h: HookInput) =
 let seq = 0;
 const dispatch = (tag: string, role = 'coder'): HookInput => ({
   hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_t${++seq}`,
-  tool_input: { subagent_type: `agentic-router:${role}`, prompt: `[subtask:${tag}] work\n[scope: src/**]`, model: role === 'coder' ? 'haiku' : 'sonnet', effort: role === 'coder' ? 'low' : 'medium' },
+  tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: `[subtask:${tag}] work\n[scope: src/**]`, model: role === 'coder' ? 'haiku' : 'sonnet', effort: role === 'coder' ? 'low' : 'medium' },
 });
 const run = async (post: (h: HookInput) => Promise<Rec>, tag: string, agent: string, role: string, edit?: () => void): Promise<Rec> => {
   assert.deepEqual(await post(dispatch(tag, role)), {});
-  await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `agentic-router:${role}` });
+  await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `do-it-all-claude-code:${role}` });
   edit?.();
-  await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `agentic-router:${role}`, stop_hook_active: false });
+  await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `do-it-all-claude-code:${role}`, stop_hook_active: false });
   return post({ hook_event_name: 'UserPromptSubmit', prompt: `<task-notification>\n<task-id>${agent}</task-id>\n<status>completed</status>\n</task-notification>` });
 };
 const sub = (d: TestDaemon, id: string) => rows(d, 'SELECT status, verdict FROM subtasks WHERE id = ?', id)[0];
@@ -58,7 +58,7 @@ test('decision 145: a coder that changed no file in its scope is no_changes, not
 
 test('decision 145: the lead editing files after it delegated makes the request a lead takeover; before a dispatch, or by a subagent, it does not', () => withRepo(async (d, repo, post) => {
   const edit = (file: string, agent?: string): HookInput => ({
-    hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: `toolu_e${++seq}`, ...(agent ? { agent_id: agent, agent_type: 'agentic-router:coder' } : {}),
+    hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: `toolu_e${++seq}`, ...(agent ? { agent_id: agent, agent_type: 'do-it-all-claude-code:coder' } : {}),
     tool_input: { file_path: path.join(repo, file), old_string: 'a', new_string: `${MARK} a` }, tool_response: { filePath: path.join(repo, file), structuredPatch: [MARK] },
   });
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT });

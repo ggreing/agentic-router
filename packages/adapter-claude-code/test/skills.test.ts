@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, formatTriageContext, triage, L3_SIZE_RULE, L3_SIGNS, l3SignalRoles } from '@agentic-router/core';
+import { DEFAULT_PRESETS, formatTriageContext, triage, L3_SIZE_RULE, L3_SIGNS, l3SignalRoles } from '@do-it-all-claude-code/core';
 
 const pluginDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin');
 const read = (p: string) => fs.readFileSync(path.join(pluginDir, p), 'utf8');
@@ -19,7 +19,7 @@ test('lead-orchestrator skill: front matter names the trigger and the delegate-e
   assert.match(fm, /^name:\s*lead-orchestrator/m);
   assert.match(fm, /description:/);
   // description must make the trigger and the "don't do it yourself, even small" point discoverable
-  assert.match(fm, /\[agentic-router\] level/);
+  assert.match(fm, /\[do-it-all-claude-code\] level/);
   assert.match(fm, /small/i);
   assert.match(fm, /delegat/i);
 });
@@ -32,7 +32,7 @@ test('lead-orchestrator skill: body spells out the Agent call with the real para
   assert.ok(!/run_in_background:\s*false/.test(body), 'skill no longer mandates foreground (run_in_background: false)');
   assert.match(body, /\[subtask:<ID>\]/);
   assert.match(body, /\[scope:/);
-  assert.match(body, /agentic-router:coder/);
+  assert.match(body, /do-it-all-claude-code:coder/);
   assert.match(body, /\[router:awaiting-user\]/);
   // the later detail sections are retained
   for (const re of [/verify/i, /step/i, /HITL/i, /merge/i])
@@ -90,7 +90,7 @@ test('skill subagent types line up with every role the presets can assign', () =
   const roles = new Set<string>();
   for (const preset of Object.values(DEFAULT_PRESETS)) for (const r of preset.roles) roles.add(r.role);
   for (const role of roles)
-    assert.ok(body.includes(`agentic-router:${role}`), `skill lists agentic-router:${role}`);
+    assert.ok(body.includes(`do-it-all-claude-code:${role}`), `skill lists do-it-all-claude-code:${role}`);
 });
 
 test('the injected brief and the skill share the same prompt-line markers', () => {
@@ -98,12 +98,12 @@ test('the injected brief and the skill share the same prompt-line markers', () =
   // Use a DELEGATING preset (some levels are lead-direct, decision 87+); the markers only appear there.
   const delegating = Object.values(DEFAULT_PRESETS).find(p => !p.leadDirect);
   const body = read('skills/lead-orchestrator/SKILL.md');
-  assert.ok(body.includes('[subtask:<ID>]') && body.includes('[scope:') && body.includes('agentic-router:'), 'skill documents the markers');
+  assert.ok(body.includes('[subtask:<ID>]') && body.includes('[scope:') && body.includes('do-it-all-claude-code:'), 'skill documents the markers');
   if (!delegating) { assert.ok(true, 'all presets are lead-direct; no delegating brief to compare'); return; }
   const brief = formatTriageContext({ ...triage({ prompt: 'x' }), level: delegating.level, preset: delegating.id }, delegating);
   assert.ok(brief.includes('[subtask:<ID>]'), 'brief has [subtask:<ID>]');
   assert.ok(brief.includes('[scope:'), 'brief has [scope:');
-  assert.ok(brief.includes('agentic-router:'), 'brief has agentic-router:');
+  assert.ok(brief.includes('do-it-all-claude-code:'), 'brief has do-it-all-claude-code:');
   assert.match(brief, /Do not edit or write files yourself/);
 });
 
@@ -136,7 +136,7 @@ test('skill covers the uncertain-size escalation and shares the brief\'s rubric/
   assert.ok(body.includes(signal[0]!), 'skill mentions the first-call L3 role');
 
   // the escalation brief carries the team Agent-call markers the skill also documents
-  assert.ok(brief.includes('agentic-router:') && body.includes('agentic-router:'));
+  assert.ok(brief.includes('do-it-all-claude-code:') && body.includes('do-it-all-claude-code:'));
   assert.ok(brief.includes('[subtask:<ID>]') && brief.includes('[scope:'));
   assert.match(body, /re-plans|re-plan/i);
 });

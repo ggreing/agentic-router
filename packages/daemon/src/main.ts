@@ -1,4 +1,4 @@
-// Process entry point (started by `agentic-router start`). Logs only to <home>/logs/daemon.log,
+// Process entry point (started by `do-it-all-claude-code start`). Logs only to <home>/logs/daemon.log,
 // masked; never to the console. The CLI owns the PID file.
 import { homeLayout } from './home.ts';
 import { errorText, fileLogger } from './log.ts';

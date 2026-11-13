@@ -23,6 +23,12 @@ export interface DaemonEndpoint { version: 1; pid: number; startedAt: string; po
 
 /** The longest socket path the system takes (sun_path without its terminator). */
 export const sunPathMax = (platform: NodeJS.Platform = process.platform): number => (platform === 'darwin' ? 103 : 107);
+/**
+ * The fallback socket directory's name starts with this, then the uid and a hash of the home. Short on purpose:
+ * under the default macOS temp directory (49 bytes) with a ten-digit uid, the prefix has 17 bytes at most, so
+ * the full product name does not fit.
+ */
+export const SOCKET_DIR_PREFIX = 'do-it-all-cc';
 
 export interface SocketEnv { platform?: NodeJS.Platform; env?: Record<string, string | undefined>; uid?: number; tmpdir?: string }
 export interface SocketLocation { dir: string; path: string; fallback: boolean }
@@ -42,7 +48,7 @@ export function socketCandidates(home: string, o: SocketEnv = {}): SocketLocatio
   if (fits(primary)) out.push({ dir: home, path: primary, fallback: false });
   // a name of its own per user and per home, so two homes do not share a socket
   const uid = o.uid ?? process.getuid?.() ?? 0;
-  const name = `agentic-router-${uid}-${createHash('sha256').update(home).digest('hex').slice(0, 12)}`;
+  const name = `${SOCKET_DIR_PREFIX}-${uid}-${createHash('sha256').update(home).digest('hex').slice(0, 12)}`;
   const env = o.env ?? process.env;
   const bases = [env.XDG_RUNTIME_DIR, o.tmpdir ?? os.tmpdir()].filter((b): b is string => typeof b === 'string' && path.posix.isAbsolute(b));
   for (const base of bases) {

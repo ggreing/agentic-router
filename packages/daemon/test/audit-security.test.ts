@@ -22,9 +22,9 @@ async function startCoder(d: TestDaemon, repo: string, sid: string, agentId: str
     return r.body as Out;
   };
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L1_PROMPT });
-  await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:A] work\n[scope: ${scope}]`, model: 'haiku', effort: 'low' } });
-  await post({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'agentic-router:coder' });
-  const stop = (extra: HookInput = {}) => post({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'agentic-router:coder', stop_hook_active: false, ...extra });
+  await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:A] work\n[scope: ${scope}]`, model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder' });
+  const stop = (extra: HookInput = {}) => post({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, ...extra });
   return { post, stop };
 }
 
@@ -178,7 +178,7 @@ test('decision 89 / #2: a router subagent\'s stop replayed from the spool is unv
     const { post } = await startCoder(d, repo, 'offline', 'ag-off');
     write(repo, 'src/a/x.ts', 'edited while the router was down\n');
     // the relay spooled the stop during an outage; the daemon replays it on start (spooled: true)
-    const replayed = claudeAdapter.toRouterEvent({ session_id: 'offline', cwd: repo, hook_event_name: 'SubagentStop', agent_id: 'ag-off', agent_type: 'agentic-router:coder', stop_hook_active: false }, { spooled: true });
+    const replayed = claudeAdapter.toRouterEvent({ session_id: 'offline', cwd: repo, hook_event_name: 'SubagentStop', agent_id: 'ag-off', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false }, { spooled: true });
     assert.deepEqual(await d.router.process(replayed), {});
     assert.deepEqual(rows(d, 'SELECT status, verdict FROM subtasks'), [{ status: 'hitl', verdict: 'unverified' }]);
     assert.equal(rows(d, 'SELECT COUNT(*) AS c FROM signals')[0]!.c, 0, 'no verification ran');

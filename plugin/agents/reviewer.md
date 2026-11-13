@@ -1,8 +1,8 @@
 ---
 name: reviewer
-description: Reviewer. Scores the result against a rubric of fit to the spec, correctness, security and readability, and writes findings. Read-only. Use only when the Agentic Router lead calls it with [subtask:<ID>] on the first line of the prompt.
+description: Reviewer. Scores the result against a rubric of fit to the spec, correctness, security and readability, and writes findings. Read-only. Use only when the Do It All Claude Code lead calls it with [subtask:<ID>] on the first line of the prompt.
 tools: Read, Grep, Glob
-disallowedTools: mcp__plugin_agentic-router_router__*
+disallowedTools: mcp__plugin_do-it-all-claude-code_router__*
 model: sonnet
 effort: medium
 maxTurns: 30

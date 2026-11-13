@@ -3,8 +3,8 @@ import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { paths, routerHome } from '@agentic-router/core';
-import { keyStatus, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy, type VaultErrorCode } from '@agentic-router/proxy';
+import { paths, routerHome } from '@do-it-all-claude-code/core';
+import { keyStatus, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy, type VaultErrorCode } from '@do-it-all-claude-code/proxy';
 import { HINT_HEADERS_ENV, claudeCodeProxy, isRouterHelper, proxyBaseUrl, uncoveredNoProxy } from './apimode.ts';
 import { SettingsParseError, backupCredentials, backupFile, defaultClaudeSettings, promptStorageSummary, readConfig, readJsonFile, type CliConfig } from './setup.ts';
 import { daemonIdentity, daemonRequest, otherOnPort } from './daemonctl.ts';
@@ -12,9 +12,10 @@ import { portOwner } from './portowner.ts';
 import { proxyHolder, type ProxyHolder } from './proxyholder.ts';
 import { RENEW_WITHIN_DAYS, WARN_WITHIN_DAYS, bundleSources, bundleStatus, certInfo, certProblems, pairMatches, pemFingerprints, tlsPaths } from './localtls.ts';
 import { proxyHealth, readSuperviseStatus, type ProxyHealth, type SuperviseStatus } from './supervise.ts';
-import type { StatusView } from '@agentic-router/daemon';
+import type { StatusView } from '@do-it-all-claude-code/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks } from './routing.ts';
-import { loadGuard, policyCheck } from './policy.ts';
+import { loadGuard, policyCheck, projectFolderCheck } from './policy.ts';
+import { legacyHomeCheck } from './migrate.ts';
 
 export interface Check { name: string; ok: boolean; detail: string; blocking: boolean }
 
@@ -61,8 +62,10 @@ export function environmentChecks(env: NodeJS.ProcessEnv = process.env, platform
   }
   if (/[\\/](\.?nvm|nvm4w|fnm|\.volta|\.asdf|\.nodenv|n[\\/]versions)[\\/]/i.test(execPath)) out.push({ name: 'node from a version manager', ok: false, blocking: false,
     detail: `${execPath}: hooks run \`node\` from the PATH Claude Code sees. A desktop app or IDE started outside your shell may not have it, and then every hook fails (the guard blocks tool calls). Make node available system-wide or start Claude Code from this shell.` });
-  const rh = env.AGENTIC_ROUTER_HOME;
-  if (rh && !path.isAbsolute(rh)) out.push({ name: 'AGENTIC_ROUTER_HOME', ok: false, blocking: false, detail: `relative value "${rh}" is ignored; using ${routerHome()}` });
+  const rh = env.DO_IT_ALL_CLAUDE_CODE_HOME;
+  if (rh && !path.isAbsolute(rh)) out.push({ name: 'DO_IT_ALL_CLAUDE_CODE_HOME', ok: false, blocking: false, detail: `relative value "${rh}" is ignored; using ${routerHome()}` });
+  // decision 161: the previous release's variable is read only to find the folder init moves
+  if (env.AGENTIC_ROUTER_HOME && !rh) out.push({ name: 'AGENTIC_ROUTER_HOME', ok: false, blocking: false, detail: `no longer read (the product was renamed): the router uses ${routerHome()}; set DO_IT_ALL_CLAUDE_CODE_HOME to keep a folder of your own` });
   if (env.CLAUDE_CONFIG_DIR) out.push({ name: 'CLAUDE_CONFIG_DIR', ok: path.isAbsolute(env.CLAUDE_CONFIG_DIR), blocking: false,
     detail: path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? `status line goes to ${path.join(env.CLAUDE_CONFIG_DIR, 'settings.json')}; the guard protects this folder` : 'not an absolute path: ignored' });
   // NODE_USE_ENV_PROXY gives Node's global agent the environment's proxy: then the hooks' and this CLI's calls to
@@ -94,7 +97,7 @@ export function homeAccessCheck(home = routerHome(), platform: NodeJS.Platform =
     }
     const mode = fs.statSync(home).mode & 0o777;
     return { name: 'router home access', ok: (mode & 0o077) === 0, blocking: false,
-      detail: (mode & 0o077) === 0 ? 'mode 0700' : `mode 0${mode.toString(8)}: other users can read prompts; run agentic-router init to fix` };
+      detail: (mode & 0o077) === 0 ? 'mode 0700' : `mode 0${mode.toString(8)}: other users can read prompts; run do-it-all-claude-code init to fix` };
   } catch { return { name: 'router home access', ok: false, blocking: false, detail: 'could not read the permissions' }; }
 }
 
@@ -107,7 +110,7 @@ export interface HookClient { sessionId?: string; node?: string; nodeVersion?: s
 export function compareHookClient(c: HookClient, home: string, port: number): Check {
   const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
   const problems: string[] = [];
-  if (c.routerHome && norm(c.routerHome) !== norm(home)) problems.push(`hooks use router home ${c.routerHome}, the CLI uses ${home} (set the same AGENTIC_ROUTER_HOME for both, or neither)`);
+  if (c.routerHome && norm(c.routerHome) !== norm(home)) problems.push(`hooks use router home ${c.routerHome}, the CLI uses ${home} (set the same DO_IT_ALL_CLAUDE_CODE_HOME for both, or neither)`);
   if (c.port && c.port !== port) problems.push(`hooks use port ${c.port}, the daemon listens on ${port}`);
   if (c.nodeVersion && Number(c.nodeVersion.replace(/^v/, '').split('.')[0]) < 24) problems.push(`hooks run node ${c.nodeVersion} (${c.node ?? '?'}); need >= 24`);
   return { name: 'hooks seen from Claude Code', ok: problems.length === 0, blocking: false,
@@ -158,7 +161,7 @@ export interface ApiCheckInput {
  */
 export function localTlsChecks(cfg: CliConfig, settingsEnv: Record<string, unknown>, env: NodeJS.ProcessEnv, now = new Date()): Check[] {
   if (cfg.proxy?.tls !== true) {
-    return [{ name: 'local TLS', ok: false, blocking: false, detail: `off: ${cfg.localTls?.off ?? 'not set up (run agentic-router mode api)'}; the helper still checks the proxy before it gives out the token` }];
+    return [{ name: 'local TLS', ok: false, blocking: false, detail: `off: ${cfg.localTls?.off ?? 'not set up (run do-it-all-claude-code mode api)'}; the helper still checks the proxy before it gives out the token` }];
   }
   const p = tlsPaths();
   let pem = '';
@@ -170,10 +173,10 @@ export function localTlsChecks(cfg: CliConfig, settingsEnv: Record<string, unkno
   if (!key) problems.push('its key is missing');
   else if (info && !pairMatches(pem, key)) problems.push('its key does not match it');
   const out: Check[] = [];
-  if (problems.length) out.push({ name: 'local TLS', ok: false, blocking: true, detail: `${p.cert}: ${problems.join('; ')}. Run agentic-router mode api (it makes a new pair)` });
-  else if (info!.ca) out.push({ name: 'local TLS', ok: false, blocking: false, detail: `${p.cert} is a CA certificate (the older shape, whose key could make certificates Claude Code would accept for any name): it is remade as a leaf at the next agentic-router start or mode api` });
+  if (problems.length) out.push({ name: 'local TLS', ok: false, blocking: true, detail: `${p.cert}: ${problems.join('; ')}. Run do-it-all-claude-code mode api (it makes a new pair)` });
+  else if (info!.ca) out.push({ name: 'local TLS', ok: false, blocking: false, detail: `${p.cert} is a CA certificate (the older shape, whose key could make certificates Claude Code would accept for any name): it is remade as a leaf at the next do-it-all-claude-code start or mode api` });
   else out.push({ name: 'local TLS', ok: daysLeft > WARN_WITHIN_DAYS, blocking: false,
-    detail: `on: certificate for 127.0.0.1 and localhost, valid until ${info!.notAfter.toISOString().slice(0, 10)} (${daysLeft} days)${daysLeft <= RENEW_WITHIN_DAYS ? '; renewed at the next agentic-router start or mode api (restart Claude Code sessions after it)' : daysLeft <= WARN_WITHIN_DAYS ? `; renewed when ${RENEW_WITHIN_DAYS} days are left` : ''}` });
+    detail: `on: certificate for 127.0.0.1 and localhost, valid until ${info!.notAfter.toISOString().slice(0, 10)} (${daysLeft} days)${daysLeft <= RENEW_WITHIN_DAYS ? '; renewed at the next do-it-all-claude-code start or mode api (restart Claude Code sessions after it)' : daysLeft <= WARN_WITHIN_DAYS ? `; renewed when ${RENEW_WITHIN_DAYS} days are left` : ''}` });
   if (!info) return out;
   const holds = (file: string) => { try { return pemFingerprints(fs.readFileSync(file, 'utf8')).includes(info.fingerprint); } catch { return false; } };
   const shell = env.NODE_EXTRA_CA_CERTS?.trim();
@@ -181,21 +184,21 @@ export function localTlsChecks(cfg: CliConfig, settingsEnv: Record<string, unkno
   // what Claude Code uses: the settings value (it replaces the launch one)
   out.push(set && holds(set)
     ? { name: 'local TLS trust', ok: true, blocking: false, detail: `NODE_EXTRA_CA_CERTS in Claude Code's settings (${set}) holds the router's certificate` }
-    : { name: 'local TLS trust', ok: false, blocking: true, detail: `NODE_EXTRA_CA_CERTS in Claude Code's settings ${set ? `(${set}) does not hold` : 'does not name'} the router's certificate: requests to the proxy fail. Run agentic-router mode api` });
+    : { name: 'local TLS trust', ok: false, blocking: true, detail: `NODE_EXTRA_CA_CERTS in Claude Code's settings ${set ? `(${set}) does not hold` : 'does not name'} the router's certificate: requests to the proxy fail. Run do-it-all-claude-code mode api` });
   // the bundle against its sources (review L5): a source that changed or cannot be read is reported; mode api rebuilds
   const sources = bundleSources(cfg.localTls?.bundleFrom);
   const usesBundle = !!set && path.resolve(set) === path.resolve(p.bundle);
   if (usesBundle) {
     const b = bundleStatus(routerHome(), sources);
-    if (b.unreadable.length) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${b.unreadable.join(', ')} (combined into ${p.bundle}) cannot be read, so its certificates are not trusted now. Fix it, then run agentic-router mode api` });
-    else if (!b.current) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${p.bundle} is out of date: ${sources.length ? `${sources.join(', ')} changed since it was written` : 'its sources are not recorded'}. Run agentic-router mode api (it rebuilds it)` });
+    if (b.unreadable.length) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${b.unreadable.join(', ')} (combined into ${p.bundle}) cannot be read, so its certificates are not trusted now. Fix it, then run do-it-all-claude-code mode api` });
+    else if (!b.current) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${p.bundle} is out of date: ${sources.length ? `${sources.join(', ')} changed since it was written` : 'its sources are not recorded'}. Run do-it-all-claude-code mode api (it rebuilds it)` });
   }
   // a launch value: today the settings value wins; if a later Claude Code let the launch value win, TLS would fail closed
   const inBundle = (f: string) => sources.some(s => path.resolve(s) === path.resolve(f));
   if (shell && path.resolve(shell) !== path.resolve(p.bundle)) {
     out.push(usesBundle && inBundle(shell)
       ? { name: 'NODE_EXTRA_CA_CERTS in your environment', ok: false, blocking: false, detail: `${shell} is combined into ${p.bundle}, which Claude Code uses (its settings value replaces yours). Point your variable at ${p.bundle} so both orders work` }
-      : { name: 'NODE_EXTRA_CA_CERTS in your environment', ok: false, blocking: false, detail: `${shell} is not in what Claude Code uses (its settings value replaces yours), so those certificates are not trusted by it now (WebFetch or MCP through a TLS-inspecting proxy may fail). Run agentic-router mode api to combine them` });
+      : { name: 'NODE_EXTRA_CA_CERTS in your environment', ok: false, blocking: false, detail: `${shell} is not in what Claude Code uses (its settings value replaces yours), so those certificates are not trusted by it now (WebFetch or MCP through a TLS-inspecting proxy may fail). Run do-it-all-claude-code mode api to combine them` });
   }
   return out;
 }
@@ -228,7 +231,7 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
     for (const k of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY']) if (k in env) problems.push(`env.${k} is set and takes precedence over apiKeyHelper`);
   } catch (e) { problems.push(e instanceof SettingsParseError ? e.message : String(e)); }
   out.push({ name: `Claude Code settings (${mode})`, ok: problems.length === 0, blocking: true,
-    detail: problems.length ? `${problems.join('; ')} (run agentic-router mode ${mode})` : i.settingsFile });
+    detail: problems.length ? `${problems.join('; ')} (run do-it-all-claude-code mode ${mode})` : i.settingsFile });
   // a corporate proxy, both ways: Claude Code must not send its requests for 127.0.0.1 to it (network-config), and
   // the router's proxy reaches the API through it (egress)
   const corp = claudeCodeProxy(settingsEnv, i.env);
@@ -236,7 +239,7 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
     const missing = uncoveredNoProxy(settingsEnv, i.env, i.cfg.proxyPort ?? 0);
     out.push({ name: 'Claude Code and your proxy', ok: !missing.length, blocking: true,
       detail: missing.length
-        ? `${corp.name} is ${corp.shown}, and ${missing.join(' / ')} does not name 127.0.0.1: Claude Code would send its requests for the local proxy, local token included, to that proxy. Run agentic-router mode api (it adds 127.0.0.1 and localhost to NO_PROXY in Claude Code's settings)`
+        ? `${corp.name} is ${corp.shown}, and ${missing.join(' / ')} does not name 127.0.0.1: Claude Code would send its requests for the local proxy, local token included, to that proxy. Run do-it-all-claude-code mode api (it adds 127.0.0.1 and localhost to NO_PROXY in Claude Code's settings)`
         : `${corp.name} is ${corp.shown}; NO_PROXY keeps Claude Code's requests for the local proxy off it` });
   }
   if (mode === 'proxy') out.push(...localTlsChecks(i.cfg, settingsEnv, i.env, i.now?.() ?? new Date()));
@@ -263,7 +266,7 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
     detail: '0 turns off TLS verification: the proxy refuses to start (it does not send the key without it)' });
   const ks = await i.keyStatus();
   const keyHelp: Record<string, string> = {
-    not_found: 'no API key stored: run agentic-router key set',
+    not_found: 'no API key stored: run do-it-all-claude-code key set',
     unavailable: 'the OS keychain tool is not available (Windows PowerShell 5.1, macOS security, Linux secret-tool)',
     constrained_language: 'PowerShell runs in ConstrainedLanguage mode (device policy): keychain access is blocked, API-key mode cannot work here',
   };
@@ -277,10 +280,10 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
       const holder = await (i.proxyHolder ?? proxyHolder)(i.cfg.proxyPort);
       const proves = `it cannot prove it holds the local token${i.cfg.proxy?.tls ? ' or present the router\'s certificate' : ''}`;
       out.push(holder.own
-        ? { name: 'proxy', ok: false, blocking: false, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which does not prove it is this router's proxy: most likely an older proxy, or one restarting after a TLS switch. agentic-router stop, then agentic-router start` }
-        : { name: 'proxy', ok: false, blocking: true, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which is not this router's proxy (${proves}). The helper gives it no token. Stop it, then agentic-router start` });
+        ? { name: 'proxy', ok: false, blocking: false, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which does not prove it is this router's proxy: most likely an older proxy, or one restarting after a TLS switch. do-it-all-claude-code stop, then do-it-all-claude-code start` }
+        : { name: 'proxy', ok: false, blocking: true, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which is not this router's proxy (${proves}). The helper gives it no token. Stop it, then do-it-all-claude-code start` });
     } else out.push({ name: 'proxy', ok: !!h?.ok, blocking: false,
-      detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}${h.via ? ` via ${h.via}` : ''}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (agentic-router start), or switch with agentic-router mode direct` });
+      detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}${h.via ? ` via ${h.via}` : ''}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (do-it-all-claude-code start), or switch with do-it-all-claude-code mode direct` });
   }
   const degraded = Object.entries(i.supervise?.children ?? {}).filter(([, c]) => c.state === 'degraded').map(([n, c]) => `${n} (${c.restarts} restarts)`);
   if (degraded.length) out.push({ name: 'supervisor', ok: false, blocking: false, detail: `keeps failing: ${degraded.join(', ')}; see the logs in ${paths.logsDir()}` });
@@ -300,7 +303,9 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   } catch { /* not installed */ }
   checks.push({ name: 'claude code', ok: versionAtLeast(claude, MIN_CLAUDE), blocking: true, detail: claude || 'not found' + ` (need >= ${MIN_CLAUDE.join('.')})` });
   const cfg = readConfig();
-  checks.push({ name: 'init', ok: !!cfg && fs.existsSync(paths.token()), blocking: true, detail: cfg ? `port ${cfg.daemonPort}` : 'run agentic-router init' });
+  checks.push({ name: 'init', ok: !!cfg && fs.existsSync(paths.token()), blocking: true, detail: cfg ? `port ${cfg.daemonPort}` : 'run do-it-all-claude-code init' });
+  const previous = legacyHomeCheck(env);   // decision 161
+  if (previous) checks.push(previous);
   if (cfg) {
     // decision 156: who answers on the daemon port (sealed; a program without the token is named, never trusted)
     let daemonToken = '';
@@ -329,16 +334,21 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   // audit C6: the dashboard is served from its build; the router works without it (loaded here only, so other
   // commands do not load the daemon)
   try {
-    const { DEFAULT_DASHBOARD_DIST } = await import('@agentic-router/daemon');
+    const { DEFAULT_DASHBOARD_DIST } = await import('@do-it-all-claude-code/daemon');
     const built = fs.existsSync(path.join(DEFAULT_DASHBOARD_DIST, 'index.html'));
     checks.push({ name: 'dashboard assets', ok: built, blocking: false,
       detail: built ? 'built' : 'not built: run `npm run build:dashboard` (the dashboard serves a build page until then)' });
   } catch { /* the daemon package is not installed next to the CLI */ }
   // decision 142: the current repository's policy counts only once accepted
-  try { checks.push(policyCheck(await loadGuard(cfg?.pluginDir), process.cwd())); } catch { /* no plugin here */ }
+  try {
+    const guard = await loadGuard(cfg?.pluginDir);
+    checks.push(policyCheck(guard, process.cwd()));
+    const folder = projectFolderCheck(guard.policyRoot(process.cwd()));   // decision 161
+    if (folder) checks.push(folder);
+  } catch { /* no plugin here */ }
   // decision 142: a settings backup made before it may hold a credential in plain text
   const held = backupCredentials(defaultClaudeSettings());
-  if (held.length) checks.push({ name: 'settings backup', ok: false, blocking: false, detail: `${backupFile(defaultClaudeSettings())} holds ${held.join(', ')} in plain text: run agentic-router init, which offers to remove it` });
+  if (held.length) checks.push({ name: 'settings backup', ok: false, blocking: false, detail: `${backupFile(defaultClaudeSettings())} holds ${held.join(', ')} in plain text: run do-it-all-claude-code init, which offers to remove it` });
   const access = homeAccessCheck();
   if (access) checks.push(access);
   checks.push(...ladderBreakers(env));

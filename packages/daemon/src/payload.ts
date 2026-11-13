@@ -1,5 +1,5 @@
 // Masked, size-limited copy of a hook payload for the events table.
-import { redact, redactJson } from '@agentic-router/core';
+import { redact, redactJson } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER, TASK_NOTIFICATION } from './continuation.ts';
 
 export const MAX_STRING = 2000;
@@ -38,7 +38,7 @@ const KEEP = ['hook_event_name', 'session_id', 'agent_id', 'agent_type', 'prompt
 const AGENT_INPUT = ['subagent_type', 'model', 'effort', 'isolation', 'run_in_background'] as const;
 const AGENT_RESPONSE = ['status', 'agentId', 'agentType', 'resolvedModel', 'isAsync', 'totalTokens', 'totalDurationMs', 'totalToolUseCount',
   'worktreePath', 'worktreeBranch', 'outputFile', 'usage'] as const;
-const ROUTER_TOOL = /^mcp__plugin_agentic-router_router__/;
+const ROUTER_TOOL = /^mcp__plugin_do-it-all-claude-code_router__/;
 const EDIT_TOOL_PATH: Readonly<Record<string, string>> = { Edit: 'file_path', Write: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
 // the dispatch lines the router parses (policy.ts): the tag that starts line 1, the scope that is line 2
 const TAG_LINE = /^\s*\[subtask:\s*([A-Za-z0-9_.-]{1,64})\s*\]/;

@@ -1,11 +1,11 @@
 ---
 name: router
-description: Use when the user types /router — the manual controls for the agentic-router. /router level <L0|L1|L2|L3> overrides the difficulty of the current (or next) request; /router resume continues a subtask that was stopped for human input. Neither command is itself triaged as a new request.
+description: Use when the user types /router — the manual controls for Do It All Claude Code. /router level <L0|L1|L2|L3> overrides the difficulty of the current (or next) request; /router resume continues a subtask that was stopped for human input. Neither command is itself triaged as a new request.
 ---
 
 # /router commands
 
-The agentic-router triages each request automatically. These two commands let the user steer it. When the user's message is one of these, treat it as a control command — it is **not** a new task to triage, and the daemon appends it to the existing task ledger rather than starting a new request.
+Do It All Claude Code triages each request automatically. These two commands let the user steer it. When the user's message is one of these, treat it as a control command — it is **not** a new task to triage, and the daemon appends it to the existing task ledger rather than starting a new request.
 
 ## /router level <L0|L1|L2|L3>
 

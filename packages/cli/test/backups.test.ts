@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { paths } from '@agentic-router/core';
+import { paths } from '@do-it-all-claude-code/core';
 import { planApiSettings } from '../src/apimode.ts';
 import { backupCredentials, backupFile, ensureLocalState, planBackupClean, planStatusLine, readConfig, writeBackup, writeConfig, writeJsonAtomic } from '../src/setup.ts';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-hard-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 const posix = process.platform !== 'win32';
 const KEY = 'sk-ant-api03-' + 'K'.repeat(40);

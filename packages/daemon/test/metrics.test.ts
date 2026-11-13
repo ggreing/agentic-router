@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Level } from '@agentic-router/core';
+import type { Level } from '@do-it-all-claude-code/core';
 import { Ledger } from '../src/ledger.ts';
 import { metricsSummary, metricsRequests, metricsRequestDetail, metricsTriageReport } from '../src/metrics.ts';
 

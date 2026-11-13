@@ -11,6 +11,8 @@ import nodePath from 'node:path';
 
 export const SEAL_VERSION = 1;
 export const SEALED_PATH = '/router/v1/sealed';
+// A wire label, not a name shown anywhere: it keeps the previous product name (decision 161), so this release still
+// talks to a daemon of the previous one (stopping it when init moves the home).
 const SALT = 'agentic-router seal v1';
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;

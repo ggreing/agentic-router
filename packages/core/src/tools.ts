@@ -12,7 +12,7 @@ import type { Level, Step } from './types.ts';
 
 // ------------------------------------------------------------------ names
 
-export const ROUTER_PLUGIN_NAME = 'agentic-router';
+export const ROUTER_PLUGIN_NAME = 'do-it-all-claude-code';
 export const ROUTER_MCP_SERVER = 'router';
 /** Claude Code names a plugin server's tool mcp__plugin_<plugin>_<server>__<tool>. */
 export const ROUTER_TOOL_PREFIX = `mcp__plugin_${ROUTER_PLUGIN_NAME}_${ROUTER_MCP_SERVER}__`;
@@ -62,7 +62,7 @@ const scopeGlobs = z.array(scopeGlob).min(1).max(MAX_SCOPE_GLOBS);
  * Protected paths a subtask can never be given by router_request_scope (decision 129); credential paths
  * are refused by the guard on their own. Every other protected path needs a user turn first.
  */
-export const NEVER_GRANTABLE_WRITE_PATHS = ['.git/**', '**/.git/**', '.agentic-router/**', '**/.agentic-router/**'] as const;
+export const NEVER_GRANTABLE_WRITE_PATHS = ['.git/**', '**/.git/**', '.do-it-all-claude-code/**', '**/.do-it-all-claude-code/**', '.agentic-router/**', '**/.agentic-router/**'] as const;
 
 // ------------------------------------------------------------------ inputs
 
@@ -131,23 +131,23 @@ export interface RouterToolDef { name: RouterToolName; description: string; inpu
 export const ROUTER_TOOLS: readonly RouterToolDef[] = [
   {
     name: 'router_get_plan', input: GetPlanInput,
-    description: 'Agentic Router, lead only. Returns the plan of the current request from the router ledger: level, team, budget and spend, each role slot with the model and effort its next Agent call must use, and the subtasks with their status and verify result. Read-only. Use it after a compaction or resume, or before dispatching a subtask again.',
+    description: 'Do It All Claude Code, lead only. Returns the plan of the current request from the router ledger: level, team, budget and spend, each role slot with the model and effort its next Agent call must use, and the subtasks with their status and verify result. Read-only. Use it after a compaction or resume, or before dispatching a subtask again.',
   },
   {
     name: 'router_report_triage', input: ReportTriageInput,
-    description: 'Agentic Router, lead only. Reports your own judgement of the request size before the first subtask is dispatched: direct (L0 trivial, L1 small fix) or team (L2 module-level, L3 new service or architecture change), the number of files you expect to change, and your confidence. The router records it and, when you judge a request larger than planned, re-plans it and returns the team and the Agent call values to use.',
+    description: 'Do It All Claude Code, lead only. Reports your own judgement of the request size before the first subtask is dispatched: direct (L0 trivial, L1 small fix) or team (L2 module-level, L3 new service or architecture change), the number of files you expect to change, and your confidence. The router records it and, when you judge a request larger than planned, re-plans it and returns the team and the Agent call values to use.',
   },
   {
     name: 'router_report_result', input: ReportResultInput,
-    description: 'Agentic Router, lead only. Reports the judgement of a finished subtask: accept or reject, and who judged it (you, or a reviewer or tester subtask named in bySubtaskId). Use reject when the result is wrong even though the router\'s verify passed. A reject counts as a failure of that subtask; two failures in a row raise its slot one step, and the answer gives the model and effort for the next attempt.',
+    description: 'Do It All Claude Code, lead only. Reports the judgement of a finished subtask: accept or reject, and who judged it (you, or a reviewer or tester subtask named in bySubtaskId). Use reject when the result is wrong even though the router\'s verify passed. A reject counts as a failure of that subtask; two failures in a row raise its slot one step, and the answer gives the model and effort for the next attempt.',
   },
   {
     name: 'router_request_escalation', input: RequestEscalationInput,
-    description: 'Agentic Router, lead only. Asks to run the next attempt of a finished subtask one ladder step higher without waiting for a second failure. Granted at once after a reviewer or tester reject; on your judgement alone once per slot within the same model. Otherwise the answer is needs_user: ask the user, then call again with userConfirmed true. The answer gives the model and effort to use.',
+    description: 'Do It All Claude Code, lead only. Asks to run the next attempt of a finished subtask one ladder step higher without waiting for a second failure. Granted at once after a reviewer or tester reject; on your judgement alone once per slot within the same model. Otherwise the answer is needs_user: ask the user, then call again with userConfirmed true. The answer gives the model and effort to use.',
   },
   {
     name: 'router_request_scope', input: RequestScopeInput,
-    description: 'Agentic Router, lead only. Changes the paths a pending or running subtask may edit: add or remove repo-relative globs. For a finished subtask, dispatch it again with a new [scope: ...] line instead. Adding a protected path (.env files, CI config, .claude/) answers needs_user: ask the user, then call again with userConfirmed true.',
+    description: 'Do It All Claude Code, lead only. Changes the paths a pending or running subtask may edit: add or remove repo-relative globs. For a finished subtask, dispatch it again with a new [scope: ...] line instead. Adding a protected path (.env files, CI config, .claude/) answers needs_user: ask the user, then call again with userConfirmed true.',
   },
 ];
 
@@ -204,7 +204,7 @@ export type RouterToolErrorCode = keyof typeof ROUTER_TOOL_ERRORS;
 
 /** The text of a tool error result (`isError: true`): a code the lead can act on, then one sentence. */
 export function routerToolErrorText(code: RouterToolErrorCode, detail?: string): string {
-  return `[agentic-router] ${code}: ${detail ?? ROUTER_TOOL_ERRORS[code]}`;
+  return `[do-it-all-claude-code] ${code}: ${detail ?? ROUTER_TOOL_ERRORS[code]}`;
 }
 
 /** What the daemon answers for one call; the server turns it into the MCP tool result. */

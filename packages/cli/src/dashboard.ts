@@ -1,4 +1,4 @@
-// `agentic-router dashboard` (decision 132): asks the daemon for a one-time login code with the local Bearer
+// `do-it-all-claude-code dashboard` (decision 132): asks the daemon for a one-time login code with the local Bearer
 // token (POST /dashboard/register-code) and opens http://127.0.0.1:<port>/dashboard#code=<code> in the
 // browser; the page trades the code for a session cookie. The token stays in this process: it is sent only
 // in the Authorization header to 127.0.0.1, never put in a URL, an argument or a log line. The code is
@@ -7,12 +7,12 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, routerHome } from '@agentic-router/core';
+import { paths, routerHome } from '@do-it-all-claude-code/core';
 import { daemonRequest } from './daemonctl.ts';
 import { readConfig } from './setup.ts';
 
 export const REGISTER_PATH = '/dashboard/register-code';
-const URL_ENV = 'AGENTIC_ROUTER_DASHBOARD_URL';
+const URL_ENV = 'DO_IT_ALL_CLAUDE_CODE_DASHBOARD_URL';
 
 export type Opener = (url: string) => Promise<boolean>;
 
@@ -34,13 +34,13 @@ export const launchPage = (home: string = routerHome()): string => path.join(hom
 /**
  * Audit C1: writes a page (0600, in the router home) that sends the browser on to `url`, and returns its path.
  * The opener gets only the path; process lists show no code. The code is single-use and expires in a minute;
- * the page is replaced or removed by the next `agentic-router dashboard`.
+ * the page is replaced or removed by the next `do-it-all-claude-code dashboard`.
  */
 export function writeLaunchPage(url: string, home: string = routerHome()): string {
   const file = launchPage(home);
   fs.rmSync(file, { force: true });
   const u = JSON.stringify(url).replace(/</g, '\\u003c');
-  fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>agentic-router dashboard</title>
+  fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>do-it-all-claude-code dashboard</title>
 <script>location.replace(${u})</script><p>Opening the dashboard…</p>\n`, { mode: 0o600 });
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
   return file;
@@ -77,9 +77,9 @@ const defaultRegister = (port: number, token: string) => daemonRequest(port, 'PO
 export async function openDashboard(d: DashboardDeps): Promise<number> {
   const out = d.out ?? (line => console.log(line));
   const r = await (d.register ?? defaultRegister)(d.port, d.token);
-  if (!r) { out('The daemon is not running: start it with `agentic-router start`.'); return 1; }
-  if (r.status === 401) { out('The daemon refused the local token (it was started with another one): run `agentic-router stop` and `agentic-router start`.'); return 1; }
-  if (r.status === 404) { out('This daemon has no dashboard: restart it with `agentic-router stop` and `agentic-router start` after updating.'); return 1; }
+  if (!r) { out('The daemon is not running: start it with `do-it-all-claude-code start`.'); return 1; }
+  if (r.status === 401) { out('The daemon refused the local token (it was started with another one): run `do-it-all-claude-code stop` and `do-it-all-claude-code start`.'); return 1; }
+  if (r.status === 404) { out('This daemon has no dashboard: restart it with `do-it-all-claude-code stop` and `do-it-all-claude-code start` after updating.'); return 1; }
   let url = '';
   try {
     const o = JSON.parse(r.body) as { code?: unknown; url?: unknown };
@@ -91,7 +91,7 @@ export async function openDashboard(d: DashboardDeps): Promise<number> {
     out(`Opened the dashboard in your browser: ${page}`);
     return 0;
   }
-  out(`${d.noOpen ? 'Open' : 'Could not open a browser. Open'} this address within a minute (it works once; run \`agentic-router dashboard\` again for a new one):`);
+  out(`${d.noOpen ? 'Open' : 'Could not open a browser. Open'} this address within a minute (it works once; run \`do-it-all-claude-code dashboard\` again for a new one):`);
   out(`  ${url}`);
   return 0;
 }
@@ -101,6 +101,6 @@ export async function dashboardCommand(f: Record<string, string | boolean>): Pro
   const cfg = readConfig();
   let token = '';
   try { token = fs.readFileSync(paths.token(), 'utf8').trim(); } catch { /* below */ }
-  if (!cfg || !token) { console.log('Not set up yet: run `agentic-router init` first.'); return 2; }
+  if (!cfg || !token) { console.log('Not set up yet: run `do-it-all-claude-code init` first.'); return 2; }
   return openDashboard({ port: cfg.daemonPort, token, noOpen: f['no-open'] === true });
 }

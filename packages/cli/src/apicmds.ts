@@ -3,10 +3,10 @@
 // status, the user's confirmation, stdin) comes in through ApiDeps, so tests use fakes.
 import fs from 'node:fs';
 import path from 'node:path';
-import { routerHome } from '@agentic-router/core';
+import { routerHome } from '@do-it-all-claude-code/core';
 import {
   DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, ROTATION_GRACE_MS, checkUpstream, keyStatus, newToken, storeKey, writeRotationMeta, writeTokenFile, type VaultErrorCode,
-} from '@agentic-router/proxy';
+} from '@do-it-all-claude-code/proxy';
 import { claudeAuthStatus, detectLogin, planApiSettings, planSubscriptionSettings, type ApiMode, type CommandRunner } from './apimode.ts';
 import { runningSupervisor } from './daemonctl.ts';
 import { bundleSources, prepareTls, type TlsChoice } from './localtls.ts';
@@ -67,7 +67,7 @@ const vaultHelp: Record<string, string> = {
   unavailable: 'the OS keychain tool is not available (Windows PowerShell 5.1, macOS security, or Linux secret-tool from libsecret-tools)',
   constrained_language: 'PowerShell runs in ConstrainedLanguage mode (device policy), which blocks keychain access: API-key mode is unavailable on this machine',
   failed: 'the keychain could not be read',
-  invalid_key: 'the keychain entry is not a valid key: store it again with agentic-router key set',
+  invalid_key: 'the keychain entry is not a valid key: store it again with do-it-all-claude-code key set',
 };
 
 type Step = { ok: true } | { ok: false; code: number };
@@ -102,12 +102,12 @@ async function loginStep(f: Record<string, string | boolean>, d: ApiDeps, again:
 
 /** Before init --mode api writes anything: no saved Claude login, and a usable keychain holding the key. */
 export async function preflightApi(f: Record<string, string | boolean>, d: ApiDeps): Promise<Step> {
-  const login = await loginStep(f, d, 'agentic-router init --mode api');
+  const login = await loginStep(f, d, 'do-it-all-claude-code init --mode api');
   if (!login.ok) return login;
   const status = await d.vault.status();
   if (status === 'present') { d.out('API key found in the OS keychain'); return { ok: true }; }
   if (status !== 'not_found') { d.out(`keychain: ${vaultHelp[status] ?? status}`); return { ok: false, code: 2 }; }
-  if (f['no-key'] === true) { d.out('no API key stored yet (--no-key): run agentic-router key set before starting'); return { ok: true }; }
+  if (f['no-key'] === true) { d.out('no API key stored yet (--no-key): run do-it-all-claude-code key set before starting'); return { ok: true }; }
   return storeKeyStep(f, d);
 }
 
@@ -131,10 +131,10 @@ export async function configureApi(config: CliConfig, d: Pick<ApiDeps, 'out'>): 
 /** `mode direct|proxy`: swaps the helper and the base URL in Claude Code's settings (confirmed), then config. */
 export async function setMode(mode: ApiMode, f: Record<string, string | boolean>, d: ApiDeps): Promise<number> {
   const cfg = readConfig();
-  if (!cfg?.apiMode || !cfg.proxyPort) { d.out('API-key mode is not set up: run agentic-router init --mode api first'); return 2; }
+  if (!cfg?.apiMode || !cfg.proxyPort) { d.out('API-key mode is not set up: run do-it-all-claude-code init --mode api first'); return 2; }
   if (mode === 'direct') {
     const s = await d.vault.status();
-    if (s !== 'present') { d.out(`direct mode reads the key from the keychain, but: ${s === 'not_found' ? 'no key is stored (agentic-router key set)' : vaultHelp[s] ?? s}`); return 2; }
+    if (s !== 'present') { d.out(`direct mode reads the key from the keychain, but: ${s === 'not_found' ? 'no key is stored (do-it-all-claude-code key set)' : vaultHelp[s] ?? s}`); return 2; }
   }
   const env = d.env ?? process.env;
   const change = planApiSettings(d.settingsFile, mode, cfg.proxyPort, undefined, env, mode === 'proxy' ? tlsChoice(d.settingsFile, cfg, env, d.openssl) : undefined);
@@ -144,7 +144,7 @@ export async function setMode(mode: ApiMode, f: Record<string, string | boolean>
   const live = (d.reload ?? realReload)();
   d.out(mode === 'direct'
     ? `Direct mode: new Claude Code sessions talk to the API themselves with the key from the keychain (no proxy, no budget blocking). ${live ? 'The supervisor stops the proxy now. ' : ''}Restart running Claude Code sessions.`
-    : `Proxy mode: new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `agentic-router start` to run it;'} then restart running Claude Code sessions.`);
+    : `Proxy mode: new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `do-it-all-claude-code start` to run it;'} then restart running Claude Code sessions.`);
   return 0;
 }
 
@@ -156,7 +156,7 @@ export async function setMode(mode: ApiMode, f: Record<string, string | boolean>
  */
 export async function modeSubscription(f: Record<string, string | boolean>, d: ApiDeps): Promise<number> {
   const cfg = readConfig();
-  if (!cfg) { d.out('Not set up yet: run agentic-router init first.'); return 2; }
+  if (!cfg) { d.out('Not set up yet: run do-it-all-claude-code init first.'); return 2; }
   const change = planSubscriptionSettings(d.settingsFile);
   if (!cfg.apiMode && !change) { d.out('Already in subscription mode: nothing to change.'); return 0; }
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
@@ -165,7 +165,7 @@ export async function modeSubscription(f: Record<string, string | boolean>, d: A
   writeConfig(rest);
   const live = (d.reload ?? realReload)();
   d.out(`Subscription mode: new Claude Code sessions use the claude.ai login. If you logged out for API-key mode, log in again (/login in Claude Code). ${live ? 'The supervisor stops the proxy now. ' : ''}`
-    + 'The API key stays in the keychain, so `agentic-router mode api` switches back. Restart running Claude Code sessions.');
+    + 'The API key stays in the keychain, so `do-it-all-claude-code mode api` switches back. Restart running Claude Code sessions.');
   return 0;
 }
 
@@ -176,10 +176,10 @@ export async function modeSubscription(f: Record<string, string | boolean>, d: A
  */
 export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): Promise<number> {
   const cfg = readConfig();
-  if (!cfg?.proxyPort || !fs.existsSync(proxyTokenFile())) { d.out('API-key mode is not set up: run agentic-router init --mode api first'); return 2; }
+  if (!cfg?.proxyPort || !fs.existsSync(proxyTokenFile())) { d.out('API-key mode is not set up: run do-it-all-claude-code init --mode api first'); return 2; }
   const status = await d.vault.status();
-  if (status !== 'present') { d.out(`API-key mode needs the key in the keychain, but: ${status === 'not_found' ? 'no key is stored (agentic-router key set)' : vaultHelp[status] ?? status}`); return 2; }
-  const login = await loginStep(f, d, 'agentic-router mode api');
+  if (status !== 'present') { d.out(`API-key mode needs the key in the keychain, but: ${status === 'not_found' ? 'no key is stored (do-it-all-claude-code key set)' : vaultHelp[status] ?? status}`); return 2; }
+  const login = await loginStep(f, d, 'do-it-all-claude-code mode api');
   if (!login.ok) return login.code;
   const env = d.env ?? process.env;
   const change = planApiSettings(d.settingsFile, 'proxy', cfg.proxyPort, undefined, env, tlsChoice(d.settingsFile, cfg, env, d.openssl));
@@ -188,7 +188,7 @@ export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): 
   change?.apply();
   writeConfig({ ...(readConfig() ?? cfg), apiMode: 'proxy' });
   const live = (d.reload ?? realReload)();
-  d.out(`API-key mode (proxy): new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `agentic-router start` to run it;'} then restart running Claude Code sessions.`);
+  d.out(`API-key mode (proxy): new Claude Code sessions go through the proxy. ${live ? 'The supervisor starts it now;' : 'Run `do-it-all-claude-code start` to run it;'} then restart running Claude Code sessions.`);
   return 0;
 }
 
@@ -199,7 +199,7 @@ export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): 
  */
 export function tokenRotate(d: Pick<ApiDeps, 'out'>, opts: { grace?: boolean } = {}): number {
   const cfg = readConfig();
-  if (!cfg?.apiMode) { d.out('API-key mode is not set up: run agentic-router init --mode api first'); return 2; }
+  if (!cfg?.apiMode) { d.out('API-key mode is not set up: run do-it-all-claude-code init --mode api first'); return 2; }
   const grace = opts.grace !== false;
   writeRotationMeta(proxyTokenFile(), Date.now(), grace);
   writeTokenFile(proxyTokenFile(), newToken());
@@ -216,17 +216,17 @@ export async function keySet(f: Record<string, string | boolean>, d: ApiDeps): P
   if (status !== 'present' && status !== 'not_found') { d.out(`keychain: ${vaultHelp[status] ?? status}`); return 2; }
   const r = await storeKeyStep(f, d);
   if (!r.ok) return r.code;
-  if (readConfig()?.apiMode === 'proxy') d.out('Run agentic-router stop and start so the proxy loads the new key.');
+  if (readConfig()?.apiMode === 'proxy') d.out('Run do-it-all-claude-code stop and start so the proxy loads the new key.');
   return 0;
 }
 
 /** `proxy allow-upstream <origin> [--use]`: an https origin the proxy may send the key to (confirmed). */
 export async function allowUpstream(origin: string | undefined, f: Record<string, string | boolean>, d: ApiDeps, configFile: string): Promise<number> {
-  if (!origin) { d.out('usage: agentic-router proxy allow-upstream <https origin> [--use]'); return 2; }
+  if (!origin) { d.out('usage: do-it-all-claude-code proxy allow-upstream <https origin> [--use]'); return 2; }
   let normalized: string;
   try { normalized = checkUpstream(origin, [origin]).url.origin; } catch (e) { d.out(String((e as Error).message)); return 2; }
   const cfg = readConfig();
-  if (!cfg) { d.out('not initialised: run agentic-router init first'); return 2; }
+  if (!cfg) { d.out('not initialised: run do-it-all-claude-code init first'); return 2; }
   const allowed = [...new Set([...(cfg.proxy?.allowedUpstreams ?? []), normalized])];
   const use = f.use === true;
   const change: PlannedChange = {
@@ -239,6 +239,6 @@ export async function allowUpstream(origin: string | undefined, f: Record<string
   };
   if (!await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change.apply();
-  d.out(use ? `upstream set to ${normalized}: run agentic-router stop and start` : `${normalized} allowed (use it with --use, or set proxy.upstream)`);
+  d.out(use ? `upstream set to ${normalized}: run do-it-all-claude-code stop and start` : `${normalized} allowed (use it with --use, or set proxy.upstream)`);
   return 0;
 }

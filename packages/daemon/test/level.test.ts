@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { DEFAULT_PRESETS } from '@agentic-router/core';
+import { DEFAULT_PRESETS } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import type { StatusView } from '../src/router.ts';
 import { TEAM_L1_PRESETS, getStatus, postHook, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
@@ -28,7 +28,7 @@ const prompt = (sid: string, cwd: string, text: string): HookInput => ({ ...base
 const stop = (sid: string, cwd: string, msg: string): HookInput => ({ ...base(sid, cwd), hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: msg });
 const agent = (sid: string, cwd: string, type: string, tag: string, model: string, effort: string): HookInput => ({
   ...base(sid, cwd), hook_event_name: 'PreToolUse', tool_name: 'Agent',
-  tool_input: { subagent_type: `agentic-router:${type}`, prompt: `[subtask:${tag}] work`, model, effort },
+  tool_input: { subagent_type: `do-it-all-claude-code:${type}`, prompt: `[subtask:${tag}] work`, model, effort },
 });
 const ctx = (o: Out) => o.hookSpecificOutput?.additionalContext ?? '';
 const denied = (o: Out) => o.hookSpecificOutput?.permissionDecision === 'deny';
@@ -41,7 +41,7 @@ test('/router level on a request in progress re-plans it (manual triage, new tea
   await out(d, stop(sid, cwd, `Which file should I start with? ${AWAITING_USER_MARKER}`));
 
   const o = await out(d, prompt(sid, cwd, '/router level L3'));
-  assert.match(ctx(o), /^\[agentic-router\] level L3 \(source=manual, confidence=1\.00\)/);
+  assert.match(ctx(o), /^\[do-it-all-claude-code\] level L3 \(source=manual, confidence=1\.00\)/);
   assert.match(ctx(o), /team preset L3: architect x1 @s5 .* budget \$15\./);
   assert.match(ctx(o), /level set manually to L3 for request r-.* \(was L1\)/);
 
@@ -67,19 +67,19 @@ test('/router level with no request in progress applies to the next request only
   const sid = 'lvl-next';
   await out(d, prompt(sid, cwd, L1_PROMPT));
   await out(d, stop(sid, cwd, 'Done.'));                                                        // closed
-  const o = await out(d, prompt(sid, cwd, '/agentic-router:router level l2'));
+  const o = await out(d, prompt(sid, cwd, '/do-it-all-claude-code:router level l2'));
   assert.match(ctx(o), /no request is in progress, so the next request in this session will run at level L2 \(manual\)/);
   assert.deepEqual(rows(d, 'SELECT level, status FROM requests'), [{ level: 'L1', status: 'closed' }]);
 
   const next = await out(d, prompt(sid, cwd, L0_PROMPT));                                       // the rules say L0
-  assert.match(ctx(next), /^\[agentic-router\] level L2 \(source=manual/);
+  assert.match(ctx(next), /^\[do-it-all-claude-code\] level L2 \(source=manual/);
   const reqs = rows(d, 'SELECT level, triage, override_from FROM requests ORDER BY created_at, rowid');
   assert.equal(reqs[1]!.level, 'L2');
   assert.equal(JSON.parse(String(reqs[1]!.override_from)).level, 'L0');
 
   await out(d, stop(sid, cwd, 'Done.'));
   const after = await out(d, prompt(sid, cwd, L0_PROMPT));                                      // used up: rules again
-  assert.match(ctx(after), /^\[agentic-router\] level L0 \(source=rule/);
+  assert.match(ctx(after), /^\[do-it-all-claude-code\] level L0 \(source=rule/);
   // another session is not affected
   assert.match(ctx(await out(d, prompt('other', cwd, L0_PROMPT))), /level L0 \(source=rule/);
 }));
@@ -88,7 +88,7 @@ test('/router level without a valid level answers with usage and changes nothing
   const cwd = d.home;
   await out(d, prompt('lvl-bad', cwd, L1_PROMPT));
   const o = await out(d, prompt('lvl-bad', cwd, '/router level L9'));
-  assert.equal(o.systemMessage, '[agentic-router] usage: /router level L0|L1|L2|L3');
+  assert.equal(o.systemMessage, '[do-it-all-claude-code] usage: /router level L0|L1|L2|L3');
   assert.deepEqual(rows(d, 'SELECT level, override_from FROM requests'), [{ level: 'L1', override_from: null }]);
 }));
 
@@ -103,7 +103,7 @@ test('the next-request level survives a daemon restart and a newer /router level
     const d2 = await startTestDaemon({ home });
     try {
       const o = await out(d2, prompt('lvl-keep', home, L0_PROMPT));
-      assert.match(ctx(o), /^\[agentic-router\] level L3 \(source=manual/);
+      assert.match(ctx(o), /^\[do-it-all-claude-code\] level L3 \(source=manual/);
       assert.equal(rows(d2, 'SELECT COUNT(*) AS c FROM pending_levels')[0]!.c, 0);
     } finally { await d2.close(); }
   } finally { await d1.close(); rmrf(home); }

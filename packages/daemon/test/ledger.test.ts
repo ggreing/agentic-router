@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_PRESETS, triage } from '@agentic-router/core';
+import { DEFAULT_PRESETS, triage } from '@do-it-all-claude-code/core';
 import { Ledger, SCHEMA_VERSION } from '../src/ledger.ts';
 import { eventPayload } from '../src/payload.ts';
 import { rmrf, tmpDir } from './helpers.ts';
@@ -31,7 +31,7 @@ test('requests and subtasks round-trip in RequestRecord / SubtaskRecord shape', 
   assert.equal(r.leadCostUsd, 0);
   assert.equal(r.status, 'open');
 
-  const sub = l.dispatchSubtask({ requestId: 'r1', id: 'A', role: 'coder', slot: 0, step: 's1', writeScope: ['src/**'], unscoped: false, agentType: 'agentic-router:coder', toolUseId: 'tu1', at: AT });
+  const sub = l.dispatchSubtask({ requestId: 'r1', id: 'A', role: 'coder', slot: 0, step: 's1', writeScope: ['src/**'], unscoped: false, agentType: 'do-it-all-claude-code:coder', toolUseId: 'tu1', at: AT });
   assert.deepEqual(
     { id: sub.id, requestId: sub.requestId, role: sub.role, slot: sub.slot, step: sub.step, writeScope: sub.writeScope, attempts: sub.attempts, upCount: sub.upCount, status: sub.status },
     { id: 'A', requestId: 'r1', role: 'coder', slot: 0, step: 's1', writeScope: ['src/**'], attempts: 1, upCount: 0, status: 'pending' },
@@ -39,7 +39,7 @@ test('requests and subtasks round-trip in RequestRecord / SubtaskRecord shape', 
   assert.equal(sub.agentId, undefined);
   // re-dispatching the same tag counts an attempt and resets the binding
   l.updateSubtask('r1', 'A', { agentId: 'ag1', status: 'running' }, AT);
-  const again = l.dispatchSubtask({ requestId: 'r1', id: 'A', role: 'coder', slot: 0, step: 's1', writeScope: ['src/**'], unscoped: false, agentType: 'agentic-router:coder', toolUseId: 'tu2', at: AT });
+  const again = l.dispatchSubtask({ requestId: 'r1', id: 'A', role: 'coder', slot: 0, step: 's1', writeScope: ['src/**'], unscoped: false, agentType: 'do-it-all-claude-code:coder', toolUseId: 'tu2', at: AT });
   assert.equal(again.attempts, 2);
   assert.equal(again.agentId, undefined);
   assert.equal(again.status, 'pending');
@@ -49,14 +49,14 @@ test('pending subtasks pair with agents in dispatch order, per agent type', () =
   const t = triage({ prompt: 'x' });
   l.createRequest({ id: 'r1', sessionId: 's1', createdAt: AT, promptId: null, triage: t, team: DEFAULT_PRESETS.L1 });
   const d = (id: string, agentType: string) => l.dispatchSubtask({ requestId: 'r1', id, role: 'coder', slot: 0, step: 's1', writeScope: ['**'], unscoped: true, agentType, toolUseId: null, at: AT });
-  d('A', 'agentic-router:coder');
-  d('R', 'agentic-router:reviewer');
-  d('B', 'agentic-router:coder');
-  assert.equal(l.nextPendingSubtask('s1', 'agentic-router:coder')?.id, 'A');
+  d('A', 'do-it-all-claude-code:coder');
+  d('R', 'do-it-all-claude-code:reviewer');
+  d('B', 'do-it-all-claude-code:coder');
+  assert.equal(l.nextPendingSubtask('s1', 'do-it-all-claude-code:coder')?.id, 'A');
   l.updateSubtask('r1', 'A', { agentId: 'ag1', status: 'running' }, AT);
-  assert.equal(l.nextPendingSubtask('s1', 'agentic-router:coder')?.id, 'B');
-  assert.equal(l.nextPendingSubtask('s1', 'agentic-router:reviewer')?.id, 'R');
-  assert.equal(l.nextPendingSubtask('other-session', 'agentic-router:coder'), undefined);
+  assert.equal(l.nextPendingSubtask('s1', 'do-it-all-claude-code:coder')?.id, 'B');
+  assert.equal(l.nextPendingSubtask('s1', 'do-it-all-claude-code:reviewer')?.id, 'R');
+  assert.equal(l.nextPendingSubtask('other-session', 'do-it-all-claude-code:coder'), undefined);
 }));
 
 test('costs: transcript rows count toward usedUsd, agent_result rows are kept for cross-checking only', () => withLedger(l => {

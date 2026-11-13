@@ -1,9 +1,9 @@
 // State-folder layout of one router home. File names are derived from core `paths`, so the
 // layout keeps a single source of truth even when the daemon runs on a home other than
-// $AGENTIC_ROUTER_HOME (tests, `startDaemon({ home })`).
+// $DO_IT_ALL_CLAUDE_CODE_HOME (tests, `startDaemon({ home })`).
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, routerHome } from '@agentic-router/core';
+import { paths, routerHome } from '@do-it-all-claude-code/core';
 
 export interface HomeLayout {
   root: string;

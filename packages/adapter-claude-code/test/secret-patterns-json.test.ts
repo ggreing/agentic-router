@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SECRET_PATTERN_SPECS, SECRET_KEY_NAME_SPECS } from '@agentic-router/core';
+import { SECRET_PATTERN_SPECS, SECRET_KEY_NAME_SPECS } from '@do-it-all-claude-code/core';
 
 const file = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'hooks', 'secret-patterns.json');
 

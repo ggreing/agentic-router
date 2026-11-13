@@ -22,9 +22,9 @@ const session = (d: TestDaemon, sid: string, cwd = d.home) => async (h: HookInpu
 };
 const call = (tag: string, scope: string, o: { type?: string; model?: string; effort?: string; toolUseId?: string } = {}): HookInput => ({
   hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: o.toolUseId ?? `toolu_${++seq}`,
-  tool_input: { subagent_type: o.type ?? 'agentic-router:coder', prompt: `[subtask:${tag}] work\n[scope: ${scope}]`, model: o.model ?? 'haiku', effort: o.effort ?? 'low' },
+  tool_input: { subagent_type: o.type ?? 'do-it-all-claude-code:coder', prompt: `[subtask:${tag}] work\n[scope: ${scope}]`, model: o.model ?? 'haiku', effort: o.effort ?? 'low' },
 });
-const start = (agentId: string): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'agentic-router:coder' });
+const start = (agentId: string): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder' });
 const denied = (o: Out) => o.hookSpecificOutput?.permissionDecision === 'deny' ? o.hookSpecificOutput.permissionDecisionReason ?? '' : '';
 const subs = (d: TestDaemon) => rows(d, 'SELECT id, status, agent_id FROM subtasks ORDER BY dispatch_seq');
 
@@ -92,7 +92,7 @@ test('E11 / #12: replayed events are history: duplicates ignored, an old prompt 
     await post(call('A', 'src/a/**', { toolUseId: 'toolu_A' }));
     await post(start('a1'));
     write(repo, 'src/a/x.ts', 'ok\n');
-    await post({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    await post({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     await replay('dup', repo, call('A', 'src/a/**', { toolUseId: 'toolu_A' }));
     await replay('dup', repo, { hook_event_name: 'UserPromptSubmit', prompt: L1_PROMPT, prompt_id: 'p-1' });   // the same prompt again
     assert.deepEqual(subs(d), [{ id: 'A', status: 'passed', agent_id: 'a1' }]);
@@ -106,7 +106,7 @@ test('E11 / #12: replayed events are history: duplicates ignored, an old prompt 
   await replay('old', d.home, { hook_event_name: 'UserPromptSubmit', prompt: 'Fix the typo in the error message' }, '2026-11-01T00:00:00.000Z');
   assert.deepEqual(rows(d, "SELECT level, status, created_at FROM requests WHERE session_id = 'old' ORDER BY created_at"),
     [{ level: 'L0', status: 'closed', created_at: '2026-11-01T00:00:00.000Z' }, { level: 'L2', status: 'open', created_at: '2026-11-11T10:00:00.000Z' }]);
-  assert.deepEqual(await post(call('X', 'src/**', { type: 'agentic-router:architect', model: 'sonnet', effort: 'medium' })), {});
+  assert.deepEqual(await post(call('X', 'src/**', { type: 'do-it-all-claude-code:architect', model: 'sonnet', effort: 'medium' })), {});
 
   // (d) a SubagentStart replayed late: the tree now is not the start state
   const repo2 = makeRepo({ 'src/a/x.ts': 'a\n', 'other/y.ts': 'y\n' });
@@ -118,7 +118,7 @@ test('E11 / #12: replayed events are history: duplicates ignored, an old prompt 
     await replay('late', repo2, start('a9'));
     assert.equal(rows(d, "SELECT snapshot FROM agents WHERE agent_id = 'a9'")[0]!.snapshot, null);
     write(repo2, 'src/a/x.ts', 'in scope\n');
-    assert.deepEqual(await p2({ hook_event_name: 'SubagentStop', agent_id: 'a9', agent_type: 'agentic-router:coder', stop_hook_active: false }), {});
+    assert.deepEqual(await p2({ hook_event_name: 'SubagentStop', agent_id: 'a9', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false }), {});
     assert.match(String(rows(d, "SELECT detail FROM signals WHERE agent_id = 'a9' AND kind = 'scope'")[0]!.detail), /^no start snapshot \(baseline unknown\)/);
   } finally { rmrf(repo2); }
 }));

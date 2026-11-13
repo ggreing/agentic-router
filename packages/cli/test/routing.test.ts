@@ -5,15 +5,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { paths } from '@agentic-router/core';
-import type { StatusView } from '@agentic-router/daemon';
+import { paths } from '@do-it-all-claude-code/core';
+import type { StatusView } from '@do-it-all-claude-code/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks, routingReset } from '../src/routing.ts';
 import { testPort } from './ports.ts';
 
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-routing-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 type Routing = StatusView['routing'];
 
@@ -69,7 +69,7 @@ test('routing reset: what the daemon cleared, or why nothing happened', async ()
 test('against the real daemon: a released level shows in doctor\'s lines, and routing reset delegates it again', async () => {
   const { ensureLocalState, readConfig, writeConfig } = await import('../src/setup.ts');
   const { localRequest, start, stop } = await import('../src/daemonctl.ts');
-  const { Ledger } = await import('@agentic-router/daemon');
+  const { Ledger } = await import('@do-it-all-claude-code/daemon');
   await ensureLocalState();
   const port = await testPort();   // outside the ephemeral range, claimed (see ports.ts)
   writeConfig({ ...readConfig()!, daemonPort: port, autoRelease: 'on' });
@@ -82,7 +82,7 @@ test('against the real daemon: a released level shows in doctor\'s lines, and ro
     assert.match(await start(), /^started/);
     const before = routingChecks(await routing());
     assert.match(before[0]!.detail, /^on: .*holdout 10%/, 'no holdoutRate in config.json: the reader\'s 0.1');
-    assert.deepEqual(before.filter(c => c.name === 'routing: opus lead').map(c => c.detail), ['L1 requests are handled directly (released; undo: agentic-router routing reset)']);
+    assert.deepEqual(before.filter(c => c.name === 'routing: opus lead').map(c => c.detail), ['L1 requests are handled directly (released; undo: do-it-all-claude-code routing reset)']);
     const lines: string[] = [];
     assert.equal(await routingReset({ port, token, out: x => { lines.push(x); } }), 0);
     assert.match(lines[0]!, /^Cleared the auto-release state of 1 lead model class/);

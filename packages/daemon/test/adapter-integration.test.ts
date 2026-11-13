@@ -1,6 +1,6 @@
 // Daemon + the real Claude Code adapter through the public startDaemon() entry:
 // the adapter is loaded by the daemon itself and verify commands come from the project's
-// .agentic-router/verify.json (read from the start commit). Spike s2 end to end, plus a deny, the
+// .do-it-all-claude-code/verify.json (read from the start commit). Spike s2 end to end, plus a deny, the
 // HITL marker via RouterEvent.lastAssistantMessage, and the plain-text PreCompact output.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ const CHECK = 'const t = require("fs").readFileSync("allowed/c.txt", "utf8");\ni
 
 test('startDaemon + real adapter: brief, deny, block then pass on spike s2, HITL marker, PreCompact as plain text', async () => {
   const home = makeHome();
-  const repo = makeRepo({ 'check.cjs': CHECK, '.agentic-router/verify.json': JSON.stringify({ coder: ['node check.cjs'] }) });
+  const repo = makeRepo({ 'check.cjs': CHECK, '.do-it-all-claude-code/verify.json': JSON.stringify({ coder: ['node check.cjs'] }) });
   try {
     const d = await startDaemon({ home, port: 0 });
     try {
@@ -32,10 +32,10 @@ test('startDaemon + real adapter: brief, deny, block then pass on spike s2, HITL
           h.prompt = 'Fix the bug where parse() fails on empty input in src/parse.ts';
           const o = (await post(h)).body as Out;
           assert.equal(o.hookSpecificOutput?.hookEventName, 'UserPromptSubmit');
-          assert.match(o.hookSpecificOutput?.additionalContext ?? '', /^\[agentic-router\] level L1/);
+          assert.match(o.hookSpecificOutput?.additionalContext ?? '', /^\[do-it-all-claude-code\] level L1/);
           // a call at the wrong step is denied in Claude Code's PreToolUse format (sonnet/medium is neither the L2 nor
           // the L3 coder start, decision 113; the lead-direct L1 request is re-planned at L2 and checked against it)
-          const wrong = (await post({ ...inputs.find(x => x.tool_name === 'Agent')!, tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:Z] x', model: 'sonnet', effort: 'medium' } })).body as Out;
+          const wrong = (await post({ ...inputs.find(x => x.tool_name === 'Agent')!, tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:Z] x', model: 'sonnet', effort: 'medium' } })).body as Out;
           assert.equal(wrong.hookSpecificOutput?.hookEventName, 'PreToolUse');
           assert.equal(wrong.hookSpecificOutput?.permissionDecision, 'deny');
           assert.match(wrong.hookSpecificOutput?.permissionDecisionReason ?? '', /model="haiku", effort="low"/);
@@ -60,7 +60,7 @@ test('startDaemon + real adapter: brief, deny, block then pass on spike s2, HITL
       const pc = await post({ session_id: sid, transcript_path: String(inputs[0]!.transcript_path), cwd: repo, hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: '' });
       assert.match(String(pc.headers['content-type']), /^text\/plain/);
       // the request is awaiting the user: the compaction guidance keeps its team state
-      assert.match(pc.text, /^Agentic Router: keep this team state/);
+      assert.match(pc.text, /^Do It All Claude Code: keep this team state/);
       assert.ok(pc.text.includes('  - C: coder#0 @s1 (model=haiku, effort=low) passed/meet; scope: whole repo'), pc.text);
     } finally { await d.close(); }
   } finally { rmrf(home); rmrf(repo); }

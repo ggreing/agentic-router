@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-router/daemon",
+  "name": "@do-it-all-claude-code/daemon",
   "version": "0.2.0",
   "private": true,
   "description": "Local router daemon: hook event API, local auth, ledger (node:sqlite), session verification",
@@ -12,7 +12,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agentic-router/core": "0.2.0",
-    "@agentic-router/adapter-claude-code": "0.2.0"
+    "@do-it-all-claude-code/core": "0.2.0",
+    "@do-it-all-claude-code/adapter-claude-code": "0.2.0"
   }
 }

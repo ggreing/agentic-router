@@ -153,7 +153,7 @@ test('8. a request over a budget cap never reaches the upstream: 429, x-should-r
   assert.equal(r1.headers['retry-after'], undefined);
   const e = JSON.parse(r1.body.toString()) as { type: string; error: { type: string; message: string } };
   assert.deepEqual([e.type, e.error.type], ['error', 'rate_limit_error']);
-  assert.match(e.error.message, /agentic-router: the budget of this request is reached \(\$5\.00 of \$5\.00\)/);
+  assert.match(e.error.message, /do-it-all-claude-code: the budget of this request is reached \(\$5\.00 of \$5\.00\)/);
   assert.equal(up.received.length, 0);
   // count_tokens and other routes are not blocked
   up.script.push({ status: 200, headers: { 'content-type': 'application/json' }, steps: ['{"input_tokens":1}'] });

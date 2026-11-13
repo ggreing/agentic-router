@@ -19,13 +19,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const PROOF_PATH = '/proxy/v1/proof';
+// A wire label, not a name shown anywhere: it keeps the previous product name (decision 161), as the seal label does.
 export const PROOF_LABEL = 'agentic-router proxy proof v1';
 export const proofOf = (token, port, nonce) => createHmac('sha256', token).update(`${PROOF_LABEL}\n${port}\n${nonce}`).digest('base64url');
 const TIMEOUT_MS = 3000;
 
 export function routerHome(env = process.env) {
-  const v = env.AGENTIC_ROUTER_HOME;
-  return v && path.isAbsolute(v) ? v : path.join(os.homedir(), '.agentic-router');
+  const v = env.DO_IT_ALL_CLAUDE_CODE_HOME;
+  return v && path.isAbsolute(v) ? v : path.join(os.homedir(), '.do-it-all-claude-code');
 }
 
 /** Resolves true only when the listener on 127.0.0.1:port answers the nonce with the right proof. */
@@ -73,13 +74,13 @@ const originOf = base => { try { return new URL(base).origin; } catch { return '
 
 export const PROBE_FILE = 'helper-probe.jsonl';
 /**
- * Tests only (scripts/tls-live): with AGENTIC_ROUTER_HELPER_PROBE=1, one JSON line in <router home>/helper-probe.jsonl
+ * Tests only (scripts/tls-live): with DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE=1, one JSON line in <router home>/helper-probe.jsonl
  * says whether the helper saw ANTHROPIC_BASE_URL and whether it matched; the value itself is never written. No path is
  * taken from the environment (a project's settings env reaches the helper), and the file is not followed if it is a
  * link.
  */
 function probe(env, home, baseUrl, matches) {
-  if (env.AGENTIC_ROUTER_HELPER_PROBE !== '1') return;
+  if (env.DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE !== '1') return;
   const f = path.join(home, PROBE_FILE);
   try {
     try { if (fs.lstatSync(f).isSymbolicLink()) return; } catch { /* not there yet */ }
@@ -90,7 +91,7 @@ function probe(env, home, baseUrl, matches) {
 }
 
 function fail(message) {
-  process.stderr.write(`agentic-router: ${message}\n`);
+  process.stderr.write(`do-it-all-claude-code: ${message}\n`);
   process.exit(1);
 }
 
@@ -98,11 +99,11 @@ export async function main(env = process.env) {
   const home = routerHome(env);
   let token;
   try { token = fs.readFileSync(path.join(home, 'proxy-token'), 'utf8').trim(); } catch { /* below */ }
-  if (!token) return fail('no local proxy token (run agentic-router init --mode api)');
+  if (!token) return fail('no local proxy token (run do-it-all-claude-code init --mode api)');
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')); } catch { /* below */ }
   const port = cfg && Number.isInteger(cfg.proxyPort) ? cfg.proxyPort : 0;
-  if (!(port > 0 && port < 65536)) return fail('no proxy port in config.json (run agentic-router init --mode api)');
+  if (!(port > 0 && port < 65536)) return fail('no proxy port in config.json (run do-it-all-claude-code init --mode api)');
   const tls = !!(cfg.proxy && cfg.proxy.tls === true);
   // The session that runs this helper sends its requests to its ANTHROPIC_BASE_URL, which may be older than the
   // config (a port or TLS change since it started). The proof below checks the port in config.json, so the session's
@@ -113,14 +114,14 @@ export async function main(env = process.env) {
   probe(env, home, base ? 'set' : 'unset', matches);
   if (base && !matches) {
     return fail(`this Claude Code session sends to ${originOf(base)}, but the router's proxy is now ${expected}: restart Claude Code; `
-      + 'if it was just started, run agentic-router mode api (its settings and config.json disagree) (no token given out)');
+      + 'if it was just started, run do-it-all-claude-code mode api (its settings and config.json disagree) (no token given out)');
   }
   let ca;
   if (tls) {
-    try { ca = fs.readFileSync(path.join(home, 'tls', 'proxy-cert.pem'), 'utf8'); } catch { return fail('local TLS is on but its certificate is missing (run agentic-router mode api)'); }
+    try { ca = fs.readFileSync(path.join(home, 'tls', 'proxy-cert.pem'), 'utf8'); } catch { return fail('local TLS is on but its certificate is missing (run do-it-all-claude-code mode api)'); }
   }
   if (!(await proxyProves({ port, token, ca }))) {
-    return fail(`the program on 127.0.0.1:${port} is not this router's proxy, or the proxy is not running: no token given out (agentic-router doctor says more)`);
+    return fail(`the program on 127.0.0.1:${port} is not this router's proxy, or the proxy is not running: no token given out (do-it-all-claude-code doctor says more)`);
   }
   process.stdout.write(token);
 }

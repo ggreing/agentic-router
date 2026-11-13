@@ -7,7 +7,7 @@
 // It reuses the shape of scripts/guard-e2e: a real `claude -p` is driven against a local fake that listens
 // on 127.0.0.1 only, with a fresh temp config dir (no login) and a dummy key that only the fake accepts.
 // The difference is that the fake speaks HTTPS with a throwaway self-signed cert, and the prompt is tiny.
-// No API call is made and nothing is billed. Your own ~/.claude and ~/.agentic-router are not touched.
+// No API call is made and nothing is billed. Your own ~/.claude and ~/.do-it-all-claude-code are not touched.
 //
 // Cases (one tiny prompt each):
 //   no-trust      host 127.0.0.1, cert not trusted                 -> expect a TLS error (no silent http)
@@ -61,7 +61,7 @@ distinguished_name = dn
 x509_extensions = v3ext
 prompt = no
 [dn]
-CN = agentic-router-tls-spike
+CN = do-it-all-claude-code-tls-spike
 [v3ext]
 subjectAltName = IP:127.0.0.1, DNS:localhost
 basicConstraints = critical, CA:TRUE
@@ -93,7 +93,7 @@ function cleanEnv(base, extra) {
   const env = {};
   for (const [k, v] of Object.entries(base)) {
     // a prefix match: CLAUDE_CODE_*, ANTHROPIC_*, NODE_TLS_REJECT_UNAUTHORIZED and the rest never reach the child
-    if (/^(?:CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|AGENTIC_ROUTER|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT|HTTPS?_PROXY|NO_PROXY)/i.test(k)) continue;
+    if (/^(?:CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|DO_IT_ALL_CLAUDE_CODE|AGENTIC_ROUTER|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT|HTTPS?_PROXY|NO_PROXY)/i.test(k)) continue;
     env[k] = v;
   }
   return Object.assign(env, extra);

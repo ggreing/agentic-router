@@ -198,9 +198,9 @@ test('local tokens: a changed file is picked up, the old token stays valid for t
 
 /** The helper as Claude Code runs it (asynchronously, so the proxy in this process can answer its check). */
 function runHelper(home: string, extra: NodeJS.ProcessEnv = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const { ANTHROPIC_BASE_URL: _b, AGENTIC_ROUTER_HELPER_PROBE: _p, ...inherited } = process.env;
+  const { ANTHROPIC_BASE_URL: _b, DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: _p, ...inherited } = process.env;
   return new Promise(resolve => {
-    execFile(process.execPath, [path.join(BIN, 'local-token.mjs')], { env: { ...inherited, AGENTIC_ROUTER_HOME: home, ...extra }, encoding: 'utf8', timeout: 20_000 },
+    execFile(process.execPath, [path.join(BIN, 'local-token.mjs')], { env: { ...inherited, DO_IT_ALL_CLAUDE_CODE_HOME: home, ...extra }, encoding: 'utf8', timeout: 20_000 },
       (err, stdout, stderr) => resolve({ code: err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : null) : 0, stdout, stderr }));
   });
 }
@@ -282,14 +282,14 @@ test('review M1: the helper gives the token only to a session whose ANTHROPIC_BA
   const probe = path.join(t.home, 'helper-probe.jsonl');
   try {
     for (const base of [`http://127.0.0.1:${t.port}`, `http://127.0.0.1:${t.port}/`]) {
-      const ok = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      const ok = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: '1' });
       assert.deepEqual([ok.code, ok.stdout], [0, LOCAL_TOKEN], `${base}: ${ok.stderr}`);
     }
     // review R2: localhost is refused too (the proof is made to 127.0.0.1; localhost may resolve to ::1)
     for (const base of [`http://localhost:${t.port}`, `http://127.0.0.1:${t.port + 1}`, `https://127.0.0.1:${t.port}`, 'https://gateway.example', 'not a url']) {
-      const bad = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      const bad = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: '1' });
       assert.deepEqual([bad.code, bad.stdout], [1, ''], base);
-      assert.match(bad.stderr, /restart Claude Code; if it was just started, run agentic-router mode api .*\(no token given out\)/);
+      assert.match(bad.stderr, /restart Claude Code; if it was just started, run do-it-all-claude-code mode api .*\(no token given out\)/);
     }
     // not set (a helper run by hand): the proof alone decides
     assert.equal((await runHelper(t.home)).stdout, LOCAL_TOKEN);
@@ -299,14 +299,14 @@ test('review M1: the helper gives the token only to a session whose ANTHROPIC_BA
     assert.ok(!fs.readFileSync(probe, 'utf8').includes(String(t.port)), 'no value written');
     // review R1: no path is taken from the environment, and a link in the probe's place is not followed
     const elsewhere = path.join(t.home, 'elsewhere.txt');
-    await runHelper(t.home, { AGENTIC_ROUTER_HELPER_PROBE: elsewhere });
+    await runHelper(t.home, { DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: elsewhere });
     assert.ok(!fs.existsSync(elsewhere), 'a path value is not a probe switch');
     if (process.platform !== 'win32') {
       fs.rmSync(probe);
       const target = path.join(t.home, 'profile-stand-in');
       fs.writeFileSync(target, 'keep\n');
       fs.symlinkSync(target, probe);
-      await runHelper(t.home, { AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      await runHelper(t.home, { DO_IT_ALL_CLAUDE_CODE_HELPER_PROBE: '1' });
       assert.equal(fs.readFileSync(target, 'utf8'), 'keep\n', 'nothing appended through the link');
     }
   } finally { await t.close(); await up.close(); }

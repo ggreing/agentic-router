@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// agentic-router guard: PreToolUse hook, registered with onFailure:"block" (fail-closed).
+// do-it-all-claude-code guard: PreToolUse hook, registered with onFailure:"block" (fail-closed).
 // Dependency-free single file (marketplace installs have no node_modules, decision 55).
 //
-// Applies ONLY to this plugin's subagents (agent_type "agentic-router:*"); the main session
+// Applies ONLY to this plugin's subagents (agent_type "do-it-all-claude-code:*"); the main session
 // and every other agent pass untouched. The daemon writes agents/<agentId>.json and scopes/<key>.json
 // locally and the guard reads those files, so a check needs no daemon call; without any scope record a
 // router subagent may not write (decision 142).
@@ -29,7 +29,9 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------- policy constants (mirror of core/security.ts)
 export const CREDENTIAL_PATHS = [
   '~/.claude/**', '~/.claude.json', '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.azure/**',
-  '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.agentic-router/token',
+  '~/.docker/config.json', '~/.npmrc', '~/.netrc', '~/_netrc', '~/.git-credentials', '~/.do-it-all-claude-code/token',
+  // the home of the previous release (decision 161), until init moves it: its tokens, TLS key and ledger
+  '~/.agentic-router/**',
   '~/.config/gh/**', '~/.kube/**', '~/.gnupg/**', '~/.pgpass', '~/.pypirc', '~/.cargo/credentials*',
   '~/.gem/credentials', '~/.terraform.d/credentials.tfrc.json',
   // the macOS keychains, and the keyrings and password stores of a Linux desktop
@@ -41,6 +43,8 @@ export const CREDENTIAL_PATHS = [
 export const PROTECTED_WRITE_PATHS = [
   '**/.env', '**/.env.*', '.claude/**', '**/.claude/**', '.github/workflows/**', '**/.github/workflows/**',
   '.gitlab-ci.yml', '**/.gitlab-ci.yml', '**/.npmrc', '.git/**', '**/.git/**',
+  '.do-it-all-claude-code/**', '**/.do-it-all-claude-code/**',
+  // the previous release's project folder, still read while a project has not renamed it (decision 161)
   '.agentic-router/**', '**/.agentic-router/**',
 ];
 export const ENV_DUMP_COMMANDS = ['env', 'printenv', 'set', 'export -p', 'Get-ChildItem Env:', 'gci env:', 'dir env:'];
@@ -85,24 +89,38 @@ export const ROUTER_BASH_DENY_OPTIONS = {
   'grep': ['--include-dir'],
 };
 
-export const ROUTER_AGENT_PREFIX = 'agentic-router:';
+export const ROUTER_AGENT_PREFIX = 'do-it-all-claude-code:';
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 // Router MCP tools are lead-only; a router subagent must never call them (mirror of core/tools.ts).
-export const ROUTER_TOOL_PREFIX = 'mcp__plugin_agentic-router_router__';
+export const ROUTER_TOOL_PREFIX = 'mcp__plugin_do-it-all-claude-code_router__';
 export const ROUTER_TOOL_NAMES = [
   'router_get_plan', 'router_report_triage', 'router_report_result', 'router_request_escalation', 'router_request_scope',
 ];
 export const isRouterToolName = (toolName) => typeof toolName === 'string' && toolName.startsWith(ROUTER_TOOL_PREFIX);
 // Protected write paths a user grant can never open (decision 129; mirror of core NEVER_GRANTABLE_WRITE_PATHS).
-export const NEVER_GRANTABLE_WRITE_PATHS = ['.git/**', '**/.git/**', '.agentic-router/**', '**/.agentic-router/**'];
+export const NEVER_GRANTABLE_WRITE_PATHS = ['.git/**', '**/.git/**', '.do-it-all-claude-code/**', '**/.do-it-all-claude-code/**', '.agentic-router/**', '**/.agentic-router/**'];
 
-const DENY_NOT_ALLOWED = 'this command is not on the router\'s Bash allowlist; ask the lead (the lead can run it, or the user can add it to .agentic-router/policy.json).';
+const DENY_NOT_ALLOWED = 'this command is not on the router\'s Bash allowlist; ask the lead (the lead can run it, or the user can add it to .do-it-all-claude-code/policy.json).';
 
 // ---------------------------------------------------------------- paths (mirror of core/paths.ts)
 export function routerHome() {
-  return process.env.AGENTIC_ROUTER_HOME || path.join(os.homedir(), '.agentic-router');
+  return process.env.DO_IT_ALL_CLAUDE_CODE_HOME || path.join(os.homedir(), '.do-it-all-claude-code');
+}
+/**
+ * Decision 161: the previous release's home named by an absolute $AGENTIC_ROUTER_HOME, while it exists, is off
+ * limits like the state folder until init moves it (the default ~/.agentic-router is a credential path).
+ */
+export function legacyStateHome(env = process.env) {
+  const v = env.AGENTIC_ROUTER_HOME;
+  if (!v || !path.isAbsolute(v)) return null;
+  try { return fs.statSync(v).isDirectory() ? v : null; } catch { return null; }
+}
+/** The state folders of opts: routerHome, and legacyRouterHome (default legacyStateHome(); null for none). */
+function stateHomesOf(opts, stateHome) {
+  const legacy = opts.legacyRouterHome === undefined ? legacyStateHome() : opts.legacyRouterHome;
+  return legacy ? [stateHome, legacy] : [stateHome];
 }
 export function safeName(id) {
   return String(id).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128);
@@ -365,7 +383,7 @@ function trustedBases(...dirs) {
 /** Names that are a credential store or hold one, as a single path segment (for globs, which cannot be resolved). Must equal core. */
 export const GUARD_SENSITIVE_SEGMENTS = [
   '.env', '.claude', '.claude.json', '.ssh', '.aws', '.azure', '.docker', '.npmrc', '.netrc', '_netrc', '.git-credentials',
-  '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
+  '.do-it-all-claude-code', '.agentic-router', '.kube', '.gnupg', '.pgpass', '.pypirc', '.env.local', '.env.production', '.env.development', '.env.test',
 ];
 const SENSITIVE_SEGMENTS = GUARD_SENSITIVE_SEGMENTS;
 const GLOB_CHARS = /[*?[]/;
@@ -719,12 +737,14 @@ function deniedOption(tok, denied) {
 /**
  * Returns a deny reason for a router subagent's Bash command, or null when nothing recognised as bad was
  * found (which is not a statement that the command is safe).
- * opts: { userHome, routerHome, bashAllow, cwd, root, denyExec, msys } (bashAllow = the accepted project policy's
+ * opts: { userHome, routerHome, legacyRouterHome, bashAllow, cwd, root, denyExec, msys } (bashAllow = the accepted project policy's
  * extension; msys = { tmp, root } overrides where Git Bash's /tmp and / point, for tests).
  */
 export function classifyBash(command, opts = {}) {
   const userHome = opts.userHome ?? os.homedir();
   const stateHome = opts.routerHome ?? routerHome();
+  const stateHomes = stateHomesOf(opts, stateHome);
+  const inState = p => stateHomes.some(h => isUnder(p, h));
   const baseCwd = opts.cwd ?? process.cwd();
   const allow = [...ROUTER_BASH_ALLOW, ...(Array.isArray(opts.bashAllow) ? opts.bashAllow : [])];
   const bases = trustedBases(baseCwd, opts.root, userHome, stateHome);
@@ -766,7 +786,7 @@ export function classifyBash(command, opts = {}) {
         if (/\\/.test(cand) && (/^~/.test(cand) || cand.includes('/'))) return 'this command has a path argument with a backslash escape in a POSIX-style path, which cannot be checked safely; it is not allowed.';
         for (const abs of resolvePathArgForms(cand, vcwd, userHome, opts.msys)) {
           if (isCredentialPath(abs, userHome)) return 'this command reads or writes a credential path, which is not allowed.';
-          if (isUnder(abs, stateHome)) return 'this command touches the router state folder (~/.agentic-router), which is not allowed.';
+          if (inState(abs)) return 'this command touches the router state folder (~/.do-it-all-claude-code), which is not allowed.';
           if (Array.isArray(opts.denyExec) && opts.denyExec.some(d => isUnder(abs, d)))
             return 'this command touches the router proxy binaries, which is not allowed.';
           // A build, test or install command can write where its arguments point (-o, --outDir, --write,
@@ -806,7 +826,7 @@ export function classifyBash(command, opts = {}) {
       vcwd = resolvePathArg(t, vcwd, userHome, opts.msys);
       if (credentialHit(vcwd, userHome) || credentialDirs(userHome).some(d => vcwd.toLowerCase() === d || vcwd.toLowerCase().startsWith(d + '/')))
         return 'this command changes into a credential directory, which is not allowed.';
-      if (isUnder(vcwd, stateHome)) return 'this command changes into the router state folder (~/.agentic-router), which is not allowed.';
+      if (inState(vcwd)) return 'this command changes into the router state folder (~/.do-it-all-claude-code), which is not allowed.';
       continue;
     }
 
@@ -959,7 +979,7 @@ export function isProtectedPath(rel, extraProtected = []) {
   return [...PROTECTED_WRITE_PATHS, ...extraProtected].some(p => globToRegExp(normRel(p), true).test(r));
 }
 
-/** A protected path a user grant can NEVER open (.git, .agentic-router). Credential paths are refused on
+/** A protected path a user grant can NEVER open (.git, .do-it-all-claude-code). Credential paths are refused on
  *  their own before decideWrite. ALWAYS case-insensitive. */
 export function isNeverGrantable(rel) {
   const r = normRel(rel);
@@ -967,13 +987,13 @@ export function isNeverGrantable(rel) {
 }
 
 export function decideWrite(a) {
-  // A user-granted scope (decision 129) opens a protected or out-of-scope path - never .git/.agentic-router.
+  // A user-granted scope (decision 129) opens a protected or out-of-scope path - never .git/.do-it-all-claude-code.
   // evaluate() calls this for the path as written and for the path with links resolved; both must pass.
   const granted = Array.isArray(a.protectedGranted) && a.protectedGranted.length > 0;
   const grantCovers = (rel) => granted && !isNeverGrantable(rel) && matchesAny(rel, a.protectedGranted, a.userHome ?? os.homedir());
   if (!a.outsideRepo && isProtectedPath(a.rel, a.extraProtected || [])) {
     if (grantCovers(a.rel)) return null;
-    return `${a.rel} is a protected path (.env, CI config, .claude, .git, .agentic-router, …) and needs user confirmation; add it to your report's "scope request" line instead of editing it`;
+    return `${a.rel} is a protected path (.env, CI config, .claude, .git, .do-it-all-claude-code, …) and needs user confirmation; add it to your report's "scope request" line instead of editing it`;
   }
   if (a.outsideRepo)
     return 'writing outside the repository root is not allowed; stay within your worktree';
@@ -1061,12 +1081,21 @@ function gitRoot(cwd) {
 
 // ---------------------------------------------------------------- project policy, honoured only once accepted (decision 142)
 //
-// <repo>/.agentic-router/policy.json can widen the Bash allowlist (bashAllow) and name environment variables
+// <repo>/.do-it-all-claude-code/policy.json can widen the Bash allowlist (bashAllow) and name environment variables
 // to forward to verify (verifyEnv). A repository the user cloned must not be able to do that for itself, so
 // the file counts only after the user accepted it: its hash is recorded in the router home, per repository,
 // and a changed file is ignored until it is accepted again. Workers cannot write either file (the policy
 // folder and the router home are both off-limits to them).
-export const POLICY_FILE = path.join('.agentic-router', 'policy.json');
+export const POLICY_FILE = path.join('.do-it-all-claude-code', 'policy.json');
+// The folder of the previous release (decision 161): honoured while the new one has no policy.json; doctor asks
+// to rename it. The acceptance is keyed by repository and content, so renaming the folder keeps it.
+export const LEGACY_POLICY_FILE = path.join('.agentic-router', 'policy.json');
+/** The policy file a repository uses: the new folder first, else the previous release's. */
+export function policyFile(root) {
+  const file = path.join(root, POLICY_FILE);
+  const old = path.join(root, LEGACY_POLICY_FILE);
+  return !fs.existsSync(file) && fs.existsSync(old) ? { file: old, legacy: true } : { file, legacy: false };
+}
 export const POLICY_ACCEPT_FILE = 'policy-accepted.json';
 
 function policyKey(root) {
@@ -1082,12 +1111,14 @@ function readAccepted(stateHome) {
 }
 /**
  * The project policy of a repository and whether the user accepted this exact content.
- * { present, valid, hash, accepted, acceptedHash, policy: { bashAllow, verifyEnv } } - `policy` is the file's
- * content whether accepted or not (for doctor to show); use readAcceptedPolicy to act on it.
+ * { present, valid, hash, accepted, acceptedHash, policy: { bashAllow, verifyEnv }, file, legacy } - `policy` is
+ * the file's content whether accepted or not (for doctor to show); use readAcceptedPolicy to act on it. `file` is
+ * the file read, and `legacy` says it is in the previous release's folder.
  */
 export function policyStatus(root, stateHome = routerHome()) {
+  const { file, legacy } = policyFile(root);
   let text;
-  try { text = fs.readFileSync(path.join(root, POLICY_FILE)); } catch { return { present: false, valid: false, hash: null, accepted: false, acceptedHash: null, policy: null }; }
+  try { text = fs.readFileSync(file); } catch { return { present: false, valid: false, hash: null, accepted: false, acceptedHash: null, policy: null, file, legacy: false }; }
   const hash = createHash('sha256').update(text).digest('hex');
   const acceptedHash = readAccepted(stateHome)[policyKey(root)]?.hash ?? null;
   let policy = null;
@@ -1098,7 +1129,7 @@ export function policyStatus(root, stateHome = routerHome()) {
       policy = { bashAllow: list(j.bashAllow), verifyEnv: list(j.verifyEnv) };
     }
   } catch { /* not JSON: present but not valid */ }
-  return { present: true, valid: policy !== null, hash, accepted: policy !== null && acceptedHash === hash, acceptedHash, policy };
+  return { present: true, valid: policy !== null, hash, accepted: policy !== null && acceptedHash === hash, acceptedHash, policy, file, legacy };
 }
 /** The project policy when the user accepted its current content; null otherwise (absent, invalid, new or changed). */
 export function readAcceptedPolicy(root, stateHome = routerHome()) {
@@ -1213,9 +1244,11 @@ function msysPathHint(p, msys) {
 
 export function evaluate(hookInput, opts = {}) {
   // userHome (base for '~' in CREDENTIAL_PATHS) and the router state folder are DIFFERENT dirs;
-  // conflating them was a real bug (~/.ssh became ~/.agentic-router/.ssh). opts.home is a test alias for both.
+  // conflating them was a real bug (~/.ssh became ~/.do-it-all-claude-code/.ssh). opts.home is a test alias for both.
   const userHome = opts.userHome ?? opts.home ?? os.homedir();
   const stateHome = opts.routerHome ?? opts.home ?? routerHome();
+  const stateHomes = stateHomesOf(opts, stateHome);
+  const inState = p => stateHomes.some(h => isUnder(p, h));
   const at = typeof hookInput.agent_type === 'string' ? hookInput.agent_type : '';
   if (!at.startsWith(ROUTER_AGENT_PREFIX)) return null;      // main session & non-router agents: unrestricted
 
@@ -1237,7 +1270,7 @@ export function evaluate(hookInput, opts = {}) {
   if (tool === 'Bash') {
     const command = input.command || '';
     const policy = readAcceptedPolicy(root, stateHome);       // decision 142: a project policy counts only once the user accepted it
-    const reason = classifyBash(command, { userHome, routerHome: stateHome, bashAllow: policy?.bashAllow ?? [], cwd, root, denyExec: [proxyBinDir] });
+    const reason = classifyBash(command, { userHome, routerHome: stateHome, legacyRouterHome: stateHomes[1] ?? null, bashAllow: policy?.bashAllow ?? [], cwd, root, denyExec: [proxyBinDir] });
     if (reason) return { deny: `[router] ${reason}` };
     const scriptDirs = packageScriptDirs(command, cwd, userHome);
     if (scriptDirs.length && [root, ...scriptDirs].some(d => packageScriptsChanged(root, d)))
@@ -1279,7 +1312,7 @@ export function evaluate(hookInput, opts = {}) {
       let isDir = false;
       try { isDir = fs.statSync(dir).isDirectory(); } catch { /* not there: nothing to open */ }
       if (isDir) {
-        if (isUnder(dir, stateHome)) return { deny: `[router] blocked: ${toPosix(dir)} is inside the router state folder and may not be searched.` };
+        if (inState(dir)) return { deny: `[router] blocked: ${toPosix(dir)} is inside the router state folder and may not be searched.` };
         const open = unignoredCredentialFiles(dir);
         if (open.length)
           return { deny: `[router] blocked: this Grep would read ${open.slice(0, 3).join(', ')}${open.length > 3 ? ', …' : ''} below ${toPosix(dir)}: a credential file that git does not ignore. Add a glob or a type (for example glob "*.ts"), search a subdirectory, or name the files.` };
@@ -1288,7 +1321,7 @@ export function evaluate(hookInput, opts = {}) {
     }
     // The router state folder holds the local token and the proxy token (decision 130); off-limits to subagents.
     for (const p of targets)
-      if (isUnder(p, stateHome))
+      if (inState(p))
         return { deny: `[router] blocked: ${toPosix(p)} is inside the router state folder (incl. proxy-token) and may not be read.` };
     // D1 detail: allow (skip the prompt) only when every target is inside the repo in every form (a link that
     // leaves the repository is not "inside"); an out-of-repo read is left to Claude Code's normal confirmation.
@@ -1302,7 +1335,7 @@ export function evaluate(hookInput, opts = {}) {
     // Fail-closed (decision 142): without a scope record nothing may be written. The record is there before
     // the subagent's first call when the daemon runs; without the daemon a router worker cannot write.
     if (!scope.confirmed)
-      return { deny: '[router] blocked: the router has no scope record for this subagent, so no file may be written. Is the router daemon running (agentic-router status)? Report this instead of retrying.' };
+      return { deny: '[router] blocked: the router has no scope record for this subagent, so no file may be written. Is the router daemon running (do-it-all-claude-code status)? Report this instead of retrying.' };
     // `.git` as a FILE (a worktree or submodule pointer) redirects git; the mirrored list only has `.git/**`
     const extraProtected = [...scope.extraProtected, '.git', '**/.git', ...(scope.unscoped ? UNSCOPED_PROTECTED_PATHS : [])];
     for (const p of targets) {
@@ -1312,7 +1345,7 @@ export function evaluate(hookInput, opts = {}) {
       if (w) return { deny: `[router] blocked: ${toPosix(p)} is written with ${w}, which is not allowed.` };
       if (credentialHit(p, userHome))
         return { deny: `[router] blocked: ${toPosix(p)} is a credential path and may not be written.` };
-      if (isUnder(p, stateHome))
+      if (inState(p))
         return { deny: `[router] blocked: ${toPosix(p)} is inside the router state folder and may not be written.` };
       // Both forms must pass: the path as written, and the path with links resolved (a link inside the scope
       // that points at a protected directory, or out of the repository, is where the write really lands).

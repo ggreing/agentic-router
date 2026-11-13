@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { matchScope, matchesAny } from '../src/glob.ts';
 
 type Expect = boolean | Record<'win32' | 'darwin' | 'linux', boolean>;

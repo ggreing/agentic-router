@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { socketCandidates } from '@agentic-router/core';
+import { socketCandidates } from '@do-it-all-claude-code/core';
 import { EXTRA_CA_ENV, HELPER_TTL_ENV, HELPER_TTL_MS, planApiSettings, planSubscriptionSettings } from '../src/apimode.ts';
 import { configureApi, setMode, tlsChoice, type ApiDeps } from '../src/apicmds.ts';
 import { localTlsChecks } from '../src/doctor.ts';
@@ -26,14 +26,14 @@ let tmp = '';
 let settingsFile = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-tls-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
   settingsFile = path.join(tmp, 'claude', 'settings.json');
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
 });
 const OPENSSL = findOpenssl();
 const needs = { skip: OPENSSL ? false : 'no openssl on this machine' };
 const env = () => (JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as { env?: Record<string, string> }).env ?? {};
-const home = () => process.env.AGENTIC_ROUTER_HOME!;
+const home = () => process.env.DO_IT_ALL_CLAUDE_CODE_HOME!;
 const DAY = 86_400_000;
 
 async function setup(): Promise<number> {

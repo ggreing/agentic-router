@@ -11,7 +11,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ENDPOINT_FILE, SealError, daemonTarget, privateDir, readEndpoint, sealedCall, socketCandidates, socketLocation, sunPathMax, writeEndpoint } from '@agentic-router/core';
+import { ENDPOINT_FILE, SealError, daemonTarget, privateDir, readEndpoint, sealedCall, socketCandidates, socketLocation, sunPathMax, writeEndpoint } from '@do-it-all-claude-code/core';
 import * as plugin from '../../../plugin/hooks/seal.mjs';
 import { TOKEN, makeHome, rmrf, startTestDaemon, tmpDir, type TestDaemon } from './helpers.ts';
 
@@ -26,7 +26,7 @@ const refusal = async (p: Promise<unknown>): Promise<string> => { try { await p;
 
 function run(file: string, args: string[], home: string, stdin = ''): Promise<string> {
   return new Promise((resolve, reject) => {
-    const c = spawn(process.execPath, [file, ...args], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], cwd: home });
+    const c = spawn(process.execPath, [file, ...args], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], cwd: home });
     let out = '';
     c.stdout.on('data', x => { out += x; });
     c.stderr.on('data', x => { out += x; });
@@ -47,12 +47,12 @@ async function tcpRecorder() {
 
 test('socketCandidates: the home first; a path too long for the system falls back to a directory of the user\'s own', () => {
   const env = { platform: 'linux' as const, uid: 1000, env: { XDG_RUNTIME_DIR: '/run/user/1000' }, tmpdir: '/tmp' };
-  assert.deepEqual(socketCandidates('/home/u/.agentic-router', env).map(c => [c.path, c.fallback]).slice(0, 1), [['/home/u/.agentic-router/daemon.sock', false]]);
+  assert.deepEqual(socketCandidates('/home/u/.do-it-all-claude-code', env).map(c => [c.path, c.fallback]).slice(0, 1), [['/home/u/.do-it-all-claude-code/daemon.sock', false]]);
   const long = '/home/u/' + 'x'.repeat(120);
   const c = socketCandidates(long, env);
   assert.equal(c.length, 2, 'the home is skipped; the runtime directory, then the temp directory');
-  assert.match(c[0]!.path, /^\/run\/user\/1000\/agentic-router-1000-[0-9a-f]{12}\/daemon\.sock$/);
-  assert.match(c[1]!.path, /^\/tmp\/agentic-router-1000-[0-9a-f]{12}\/daemon\.sock$/);
+  assert.match(c[0]!.path, /^\/run\/user\/1000\/do-it-all-cc-1000-[0-9a-f]{12}\/daemon\.sock$/);
+  assert.match(c[1]!.path, /^\/tmp\/do-it-all-cc-1000-[0-9a-f]{12}\/daemon\.sock$/);
   assert.ok(c.every(x => x.fallback && Buffer.byteLength(x.path) <= sunPathMax('linux')));
   // per home and per user
   assert.notEqual(socketCandidates(long + 'y', env)[0]!.path, c[0]!.path);
@@ -61,7 +61,7 @@ test('socketCandidates: the home first; a path too long for the system falls bac
   assert.equal(sunPathMax('darwin'), 103);
   assert.equal(socketCandidates('/Users/u/' + 'x'.repeat(88), { ...env, platform: 'darwin' })[0]!.fallback, true);
   assert.deepEqual(socketCandidates(long, { ...env, env: { XDG_RUNTIME_DIR: 'relative/dir' } }).map(x => x.dir.startsWith('/tmp/')), [true]);
-  assert.deepEqual(socketCandidates('C:\\Users\\u\\.agentic-router', { platform: 'win32' }), []);
+  assert.deepEqual(socketCandidates('C:\\Users\\u\\.do-it-all-claude-code', { platform: 'win32' }), []);
   // nothing fits: no socket (the daemon then stays on TCP with sealed messages)
   assert.deepEqual(socketCandidates(long, { ...env, env: { XDG_RUNTIME_DIR: '/' + 'r'.repeat(100) }, tmpdir: '/' + 't'.repeat(100) }), []);
 });
@@ -150,7 +150,7 @@ test('the clients on the socket: relay, status line and CLI reach the daemon wit
     const cfg = path.join(d.home, 'config.json');
     fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), daemonPort: rec.port }));
     const out = await run(RELAY, ['UserPromptSubmit'], d.home, prompt(`Fix the typo in README.md ${MARKER}`));
-    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /agentic-router/, 'the hook was answered by the daemon');
+    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /do-it-all-claude-code/, 'the hook was answered by the daemon');
     assert.match(await run(STATUSLINE, [], d.home, JSON.stringify({ session_id: 's-sock' })), /\[Router\] (?!OFF)/);
     assert.match(await run(CLI, ['status'], d.home), /Router ON/);
     assert.deepEqual(rec.wire.filter(w => !w.startsWith('GET /router/v1/health')), [], 'nothing sealed went to the TCP port');
@@ -225,7 +225,7 @@ test('a directory that is not the user\'s alone gets no socket: TCP with sealed 
   // the paths of a real install fit, on both systems: the home of an ordinary account, and the fallback under
   // the default macOS temp directory (the longest default there is) with a ten-digit uid
   for (const platform of ['darwin', 'linux'] as const) {
-    const home = platform === 'darwin' ? '/Users/a-rather-long-account-name/.agentic-router' : '/home/a-rather-long-account-name/.agentic-router';
+    const home = platform === 'darwin' ? '/Users/a-rather-long-account-name/.do-it-all-claude-code' : '/home/a-rather-long-account-name/.do-it-all-claude-code';
     assert.equal(socketCandidates(home, { platform, uid: 501, env: {}, tmpdir: '/tmp' })[0]!.fallback, false, `${platform}: the home holds the socket`);
     const macTmp = '/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T';
     const fb = socketCandidates('/Users/x/' + 'd'.repeat(100), { platform, uid: 1234567890, env: {}, tmpdir: macTmp });

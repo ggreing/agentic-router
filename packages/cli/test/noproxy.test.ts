@@ -17,11 +17,11 @@ let tmp = '';
 let settingsFile = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-np-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
   settingsFile = path.join(tmp, 'claude', 'settings.json');
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
 });
-const PKG = path.join('/opt', 'agentic-router', 'packages', 'proxy');
+const PKG = path.join('/opt', 'do-it-all-claude-code', 'packages', 'proxy');
 const env = () => (JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as { env?: Record<string, string> }).env ?? {};
 /** A proxy URL with credentials, put together at run time (no such URL is written out in the source). */
 const CORP = ['http', '://', 'corp-user', ':', 'not-a-secret', '@', 'corp.example:8080'].join('');
@@ -104,7 +104,7 @@ test('doctor: says when Claude Code would send its requests for the local proxy 
   let checks = await apiChecks(base);
   const leak = checks.find(c => c.name === 'Claude Code and your proxy')!;
   assert.deepEqual([leak.ok, leak.blocking], [false, true]);
-  assert.match(leak.detail, /local token included.*agentic-router mode api/);
+  assert.match(leak.detail, /local token included.*do-it-all-claude-code mode api/);
   assert.ok(!JSON.stringify(checks).includes('not-a-secret'));
   assert.match(checks.find(c => c.name === 'API through your proxy')!.detail, /through http:\/\/corp\.example:8080 \(credentials hidden\) \(HTTPS_PROXY/);
   assert.match(checks.find(c => c.name === 'proxy')!.detail, /via http:\/\/corp\.example:8080/);

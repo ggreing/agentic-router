@@ -1,17 +1,17 @@
-// `agentic-router uninstall [--keep-key] [--project <dir>] [--claude-settings <file>] [--yes]` (audit B4): undoes what
+// `do-it-all-claude-code uninstall [--keep-key] [--project <dir>] [--claude-settings <file>] [--yes]` (audit B4): undoes what
 // init and the mode commands put outside the router home, after one confirmation. It stops the daemon, takes
 // the router's entries out of Claude Code's settings (status line, with a wrapped original put back; the
 // router's apiKeyHelper, base URL and hint variable), removes worktree.baseRef = "head" and the
 // ".claude/worktrees/" line from the project, deletes the settings backup and (unless --keep-key) the API key
-// in the OS keychain. Values the user set are left alone. The router home (~/.agentic-router) stays; the
+// in the OS keychain. Values the user set are left alone. The router home (~/.do-it-all-claude-code) stays; the
 // command says how to remove it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { redact, routerHome } from '@agentic-router/core';
+import { redact, routerHome } from '@do-it-all-claude-code/core';
 import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper, recordApiState, recordNoProxy, removeLoopbackNoProxy, undoEnvAdded } from './apimode.ts';
 import { removeEndpointFiles } from './endpointfiles.ts';
 import { tlsPaths } from './localtls.ts';
-import { SettingsParseError, backupFile, isRouterStatusLine, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
+import { SettingsParseError, backupFile, isRouterStatusLine, legacyBackupFile, moveBackupFile, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
 export interface UninstallDeps {
   settingsFile: string;
@@ -112,7 +112,8 @@ function backupStillNeeded(settingsFile: string, own: ReturnType<typeof userOrig
 
 export async function uninstall(f: Record<string, string | boolean>, d: UninstallDeps): Promise<number> {
   const config = readConfig();
-  const bak = backupFile(d.settingsFile);
+  // decision 161: a backup of the previous release is used when it is the only one (init moves it otherwise)
+  const bak = !fs.existsSync(backupFile(d.settingsFile)) && fs.existsSync(legacyBackupFile(d.settingsFile)) ? legacyBackupFile(d.settingsFile) : backupFile(d.settingsFile);
   let backup: Record<string, any> | null = null;
   let backupUnreadable = false;
   if (fs.existsSync(bak)) {
@@ -137,6 +138,9 @@ export async function uninstall(f: Record<string, string | boolean>, d: Uninstal
         fs.rmSync(bak, { force: true });
       } });
   }
+  // decision 161: the backup init made when it moved the previous release's home
+  const moveBak = moveBackupFile(d.settingsFile);
+  if (fs.existsSync(moveBak)) changes.push({ file: moveBak, summary: 'delete the settings backup made when init moved the previous release', apply() { fs.rmSync(moveBak, { force: true }); } });
   // decision 157: the local TLS key and certificate; a bundle the user's own NODE_EXTRA_CA_CERTS names is kept
   const tls = tlsPaths();
   const shellCa = (d.env ?? process.env).NODE_EXTRA_CA_CERTS?.trim();
@@ -153,12 +157,12 @@ export async function uninstall(f: Record<string, string | boolean>, d: Uninstal
   const endpointFiles = removeEndpointFiles(routerHome(), { dryRun: true });
   if (endpointFiles.length) changes.push({ file: routerHome(), summary: `remove the daemon's endpoint file and socket (${endpointFiles.map(p => path.basename(p)).join(', ')})`, apply() { removeEndpointFiles(routerHome()); } });
   const key = f['keep-key'] === true ? 'kept' : await d.keyStatus();
-  if (key !== 'present' && key !== 'not_found' && key !== 'kept') d.out(`The OS keychain could not be checked (${key}): an API key may remain in it under "agentic-router".`);
-  d.out('agentic-router uninstall will:');
+  if (key !== 'present' && key !== 'not_found' && key !== 'kept') d.out(`The OS keychain could not be checked (${key}): an API key may remain in it under "do-it-all-claude-code".`);
+  d.out('do-it-all-claude-code uninstall will:');
   d.out('  - stop the daemon and the proxy');
   for (const c of changes) d.out(`  - ${c.file}: ${c.summary}`);
   if (key === 'present') d.out('  - delete the API key from the OS keychain (--keep-key keeps it)');
-  d.out(`Your router data stays in ${routerHome()}: \`agentic-router data purge --all\` empties it, then delete the folder.`);
+  d.out(`Your router data stays in ${routerHome()}: \`do-it-all-claude-code data purge --all\` empties it, then delete the folder.`);
   if (f.yes !== true) {
     if (!d.isTTY) { d.out('Not a terminal: re-run with --yes to uninstall.'); return 1; }
     if (!await d.ask('Uninstall? [y/N] ')) { d.out('Nothing changed.'); return 1; }

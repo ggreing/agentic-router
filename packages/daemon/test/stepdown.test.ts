@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ROUTER_TOOL_PREFIX } from '@agentic-router/core';
+import { ROUTER_TOOL_PREFIX } from '@do-it-all-claude-code/core';
 import { Ledger, SCHEMA_VERSION } from '../src/ledger.ts';
 import type { StatusView } from '../src/router.ts';
 import { TOOL_USE_ID_META } from '../src/tools.ts';
@@ -40,15 +40,15 @@ function session(d: TestDaemon, sid: string, cwd: string) {
   };
   const call = (tag: string, role: string, model: string, effort: string): HookInput => ({
     hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_c${++seq}`,
-    tool_input: { subagent_type: `agentic-router:${role}`, prompt: `[subtask:${tag}] work\n[scope: src/**]`, model, effort },
+    tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: `[subtask:${tag}] work\n[scope: src/**]`, model, effort },
   });
   /** Dispatches a subtask and lets it finish with a passing verify. */
   const pass = async (tag: string, model: string, effort: string, role = 'coder'): Promise<void> => {
     const agent = `ag${++seq}`;
     assert.deepEqual(await post(call(tag, role, model, effort)), {}, `dispatch ${tag}`);
-    await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `agentic-router:${role}` });
+    await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `do-it-all-claude-code:${role}` });
     if (role === 'coder' || role === 'ui-designer') write(cwd, `src/${tag}-${agent}.ts`, `${tag}\n`);   // a writer that did its work (decision 145)
-    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `agentic-router:${role}`, stop_hook_active: false }), {});
+    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `do-it-all-claude-code:${role}`, stop_hook_active: false }), {});
   };
   const easy = (subtaskId: string, bySubtaskId = 'RV') => tool('router_report_result', { subtaskId, verdict: 'accept', by: 'reviewer', bySubtaskId, margin: 'easy' });
   return { post, tool, call, pass, easy };
@@ -168,9 +168,9 @@ test('a verify miss right after a step-down raises the slot again and locks it',
       assert.equal((await s.easy('X2')).result?.slot.step, 's4');
       fail = true;
       assert.deepEqual(await s.post(s.call('X3', 'coder', 'sonnet', 'high')), {});
-      await s.post({ hook_event_name: 'SubagentStart', agent_id: 'm1', agent_type: 'agentic-router:coder' });
-      await s.post({ hook_event_name: 'SubagentStop', agent_id: 'm1', agent_type: 'agentic-router:coder', stop_hook_active: false });
-      await s.post({ hook_event_name: 'SubagentStop', agent_id: 'm1', agent_type: 'agentic-router:coder', stop_hook_active: true });
+      await s.post({ hook_event_name: 'SubagentStart', agent_id: 'm1', agent_type: 'do-it-all-claude-code:coder' });
+      await s.post({ hook_event_name: 'SubagentStop', agent_id: 'm1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
+      await s.post({ hook_event_name: 'SubagentStop', agent_id: 'm1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: true });
       assert.deepEqual((x => [x!.step, x!.up_count, x!.lock_step, x!.lock_left, x!.down_count, x!.easy_streak])(coder0(d)), ['s5', 1, 's5', 2, 1, 0]);
       const n = await s.post({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>\n<task-id>m1</task-id>\n<status>completed</status>\n</task-notification>' });
       assert.match(n.hookSpecificOutput?.additionalContext ?? '', /now runs one step higher, at s5/);

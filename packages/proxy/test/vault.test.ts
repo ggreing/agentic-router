@@ -1,5 +1,5 @@
 // The vault's commands, checked with a fake runner: no test touches a keychain unless
-// AGENTIC_ROUTER_TEST_KEYCHAIN=1 (a throwaway service name, created and deleted).
+// DO_IT_ALL_CLAUDE_CODE_TEST_KEYCHAIN=1 (a throwaway service name, created and deleted).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -18,10 +18,10 @@ const decode = (args: string[]) => Buffer.from(args[args.indexOf('-EncodedComman
 test('read: the right tool per OS; the key comes from stdout and never appears in argv', async () => {
   const mac = fake({ stdout: `${KEY}\n` });
   assert.equal(await readKey({ platform: 'darwin', run: mac.run }), KEY);
-  assert.deepEqual([mac.calls[0]!.command, mac.calls[0]!.args], ['/usr/bin/security', ['find-generic-password', '-s', 'agentic-router', '-a', 'anthropic-api-key', '-w']]);
+  assert.deepEqual([mac.calls[0]!.command, mac.calls[0]!.args], ['/usr/bin/security', ['find-generic-password', '-s', 'do-it-all-claude-code', '-a', 'anthropic-api-key', '-w']]);
   const lin = fake({ stdout: KEY });
   assert.equal(await readKey({ platform: 'linux', run: lin.run }), KEY);
-  assert.deepEqual([lin.calls[0]!.command, lin.calls[0]!.args], ['secret-tool', ['lookup', 'service', 'agentic-router', 'account', 'anthropic-api-key']]);
+  assert.deepEqual([lin.calls[0]!.command, lin.calls[0]!.args], ['secret-tool', ['lookup', 'service', 'do-it-all-claude-code', 'account', 'anthropic-api-key']]);
   const win = fake({ stdout: `﻿${KEY}` });
   assert.equal(await readKey({ platform: 'win32', run: win.run }), KEY);
   assert.equal(win.calls[0]!.command, 'powershell.exe');
@@ -74,12 +74,12 @@ test('store: interactive prompts in the tool on the inherited terminal; stdin mo
 });
 
 test('children get a minimal environment (no credentials of the parent)', () => {
-  const env = childEnv({ PATH: '/bin', HOME: '/h', DBUS_SESSION_BUS_ADDRESS: 'unix:x', ANTHROPIC_API_KEY: 'k', AGENTIC_ROUTER_HOME: '/r', SECRET_TOKEN: 's' });
+  const env = childEnv({ PATH: '/bin', HOME: '/h', DBUS_SESSION_BUS_ADDRESS: 'unix:x', ANTHROPIC_API_KEY: 'k', DO_IT_ALL_CLAUDE_CODE_HOME: '/r', SECRET_TOKEN: 's' });
   assert.deepEqual(env, { PATH: '/bin', HOME: '/h', DBUS_SESSION_BUS_ADDRESS: 'unix:x' });
 });
 
 test('the Windows scripts parse in Windows PowerShell 5.1 (parse only: no keychain access)', { skip: process.platform !== 'win32' }, () => {
-  for (const script of [windowsReadScript('agentic-router', 'anthropic-api-key'), windowsStoreScript('agentic-router', 'a', false), windowsStoreScript('agentic-router', 'a', true), windowsDeleteScript('agentic-router', 'a')]) {
+  for (const script of [windowsReadScript('do-it-all-claude-code', 'anthropic-api-key'), windowsStoreScript('do-it-all-claude-code', 'a', false), windowsStoreScript('do-it-all-claude-code', 'a', true), windowsDeleteScript('do-it-all-claude-code', 'a')]) {
     const b64 = Buffer.from(script, 'utf8').toString('base64');
     const check = `$s = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')); $e = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($s, [ref]$null, [ref]$e); if ($e.Count) { $e | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }`;
     const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', check], { encoding: 'utf8', windowsHide: true });
@@ -87,8 +87,8 @@ test('the Windows scripts parse in Windows PowerShell 5.1 (parse only: no keycha
   }
 });
 
-test('a real keychain: store, read and delete a throwaway entry', { skip: process.env.AGENTIC_ROUTER_TEST_KEYCHAIN !== '1' || process.platform === 'darwin' }, async () => {
-  const service = `agentic-router-test-${process.pid}`;
+test('a real keychain: store, read and delete a throwaway entry', { skip: process.env.DO_IT_ALL_CLAUDE_CODE_TEST_KEYCHAIN !== '1' || process.platform === 'darwin' }, async () => {
+  const service = `do-it-all-claude-code-test-${process.pid}`;
   const key = `sk-ant-test-${Date.now()}-throwaway`;
   try {
     await storeKey({ service, interactive: false, key });

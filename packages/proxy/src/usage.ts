@@ -10,8 +10,8 @@ import http from 'node:http';
 import path from 'node:path';
 // Core's price table through its dependency-free subpath: the key-holding process runs no third-party code
 // (core's index pulls in zod and yaml; the wire types below are type-only imports, erased at runtime).
-import { sealedCall, type UsageRow, type UsageRowState } from '@agentic-router/core';
-import { PRICING_PER_MTOK, costUsd } from '@agentic-router/core/pricing';
+import { sealedCall, type UsageRow, type UsageRowState } from '@do-it-all-claude-code/core';
+import { PRICING_PER_MTOK, costUsd } from '@do-it-all-claude-code/core/pricing';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyPaths } from './paths.ts';
 import type { TapResult } from './tap.ts';

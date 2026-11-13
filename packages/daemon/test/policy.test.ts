@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRESETS, PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { DEFAULT_PRESETS, PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER, awaitsUser, classifyPrompt } from '../src/continuation.ts';
 import { checkAgentCall, defaultStartStep, managedRole, parseScope, parseTag, scopeFileBody, stepOf, type AgentCallInput } from '../src/policy.ts';
 
-test('only agentic-router:<role> agent types are managed', () => {
-  assert.equal(managedRole('agentic-router:coder'), 'coder');
-  assert.equal(managedRole('agentic-router:ui-designer'), 'ui-designer');
-  assert.equal(managedRole('agentic-router:lead'), null);
+test('only do-it-all-claude-code:<role> agent types are managed', () => {
+  assert.equal(managedRole('do-it-all-claude-code:coder'), 'coder');
+  assert.equal(managedRole('do-it-all-claude-code:ui-designer'), 'ui-designer');
+  assert.equal(managedRole('do-it-all-claude-code:lead'), null);
   assert.equal(managedRole('Explore'), undefined);
   assert.equal(managedRole(''), undefined);
   assert.equal(managedRole(undefined), undefined);
@@ -92,10 +92,10 @@ test('prompt classification (decision Q1: explicit markers; /router level)', () 
   assert.deepEqual(kind('fix the bug', 'closed'), { kind: 'new' });
   assert.deepEqual(kind('yes, use option B', 'awaiting_user'), { kind: 'continue' });
   assert.deepEqual(kind('/router resume', 'closed'), { kind: 'resume' });
-  assert.deepEqual(kind('/agentic-router:router resume now', 'closed'), { kind: 'resume' });
+  assert.deepEqual(kind('/do-it-all-claude-code:router resume now', 'closed'), { kind: 'resume' });
   assert.deepEqual(kind('/router resume'), { kind: 'command' });
   assert.deepEqual(kind('/router level L2', 'open'), { kind: 'level', level: 'L2' });
-  assert.deepEqual(kind('/agentic-router:router level l3'), { kind: 'level', level: 'L3' });
+  assert.deepEqual(kind('/do-it-all-claude-code:router level l3'), { kind: 'level', level: 'L3' });
   assert.deepEqual(kind('/router level L7'), { kind: 'level', level: null });
   assert.deepEqual(kind('/router level'), { kind: 'level', level: null });
   assert.deepEqual(kind('/compact', 'awaiting_user'), { kind: 'command' });

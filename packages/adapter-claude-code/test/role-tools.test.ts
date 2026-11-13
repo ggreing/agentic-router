@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseRoleFile, FORBIDDEN_ROLE_TOOLS } from '@agentic-router/core';
+import { parseRoleFile, FORBIDDEN_ROLE_TOOLS } from '@do-it-all-claude-code/core';
 
 // plugin/agents/*.md are authored outside this package; this test validates them as they appear.
 const agentsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'agents');
@@ -42,7 +42,7 @@ test('no role grants an mcp__ tool, and each disallows the router tools (decisio
     const base = path.basename(f);
     for (const t of role.tools)
       assert.ok(!t.startsWith('mcp__'), `${base}: must not grant an MCP tool (${t})`);
-    assert.match(text, /^disallowedTools:\s*mcp__plugin_agentic-router_router__\*/m, `${base}: must disallow the router MCP tools`);
+    assert.match(text, /^disallowedTools:\s*mcp__plugin_do-it-all-claude-code_router__\*/m, `${base}: must disallow the router MCP tools`);
   }
 });
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as core from '@agentic-router/core';
+import * as core from '@do-it-all-claude-code/core';
 import * as relayMod from '../../../plugin/hooks/relay.mjs';
 import { sealedFake, type WireRecord } from '../../core/test/sealed-fake.ts';
 
@@ -137,7 +137,7 @@ async function bodyReceived(event: string, input: object, env: Record<string, st
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ daemonPort: port, fableOptIn: false }));
     fs.writeFileSync(path.join(home, 'token'), 'tok');
     await new Promise<void>((resolve) => {
-      const c = spawn(process.execPath, [RELAY_PATH, event], { env: { ...process.env, AGENTIC_ROUTER_HOME: home, ...env }, stdio: ['pipe', 'ignore', 'ignore'] });
+      const c = spawn(process.execPath, [RELAY_PATH, event], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home, ...env }, stdio: ['pipe', 'ignore', 'ignore'] });
       c.stdin.end(JSON.stringify(input));
       c.on('close', () => resolve());
     });
@@ -156,7 +156,7 @@ test('D2: SessionStart adds routerClient (node path/version, routerHome, port) t
 
 test('D4: SubagentStart adds a filtered verifyEnv to the body', async () => {
   const body = await bodyReceived('SubagentStart',
-    { hook_event_name: 'SubagentStart', session_id: 's', agent_id: 'a', agent_type: 'agentic-router:coder' },
+    { hook_event_name: 'SubagentStart', session_id: 's', agent_id: 'a', agent_type: 'do-it-all-claude-code:coder' },
     { LANG: 'en_US.UTF-8', SOME_SECRET_TOKEN: 'nope' });
   const ve = body.verifyEnv as Record<string, string> | undefined;
   assert.ok(ve, 'verifyEnv present');

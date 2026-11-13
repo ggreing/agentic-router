@@ -7,7 +7,7 @@
 //   node scripts/e2e.ts --round5 --only R1,R3 --auth subscription
 //   node scripts/e2e.ts --round5 --dry-run                    (prints the plan + estimated usage; no claude)
 //   --no-dashboard skips R7. Per-scenario summaries and round5-summary.json are written to the temp dir.
-// Everything runs in a temp AGENTIC_ROUTER_HOME and temp repositories; the user's ~/.claude is
+// Everything runs in a temp DO_IT_ALL_CLAUDE_CODE_HOME and temp repositories; the user's ~/.claude is
 // never modified (init writes the status line into a temp settings file).
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,7 +27,9 @@ const SCEN = (args.scenarios ?? 'E1,E2,E3').split(',');
 const MODEL = args.model ?? 'sonnet';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-e2e-'));
 const HOME = path.join(TMP, 'home');
-const env = { ...process.env, AGENTIC_ROUTER_HOME: HOME };
+// AGENTIC_ROUTER_HOME (the previous release) is left out: with it, init would move that folder into this temp home
+const { AGENTIC_ROUTER_HOME: _previousHome, ...inherited } = process.env;
+const env = { ...inherited, DO_IT_ALL_CLAUDE_CODE_HOME: HOME };
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 /** Integration runs must be deterministic: no auto-release holdout draw (decision 138). */
 function noHoldout(): void {
@@ -56,7 +58,7 @@ function repoFrom(fixture: string, name: string): string {
 // run while a guard deny still wins.
 export const ALLOW_TOOLS = [
   'Agent',                                   // the lead delegates to subagents
-  'mcp__plugin_agentic-router_router__*',    // router MCP tools: the lead MAY call them (R5 observes; never forced)
+  'mcp__plugin_do-it-all-claude-code_router__*',    // router MCP tools: the lead MAY call them (R5 observes; never forced)
   // build / test / typecheck — what a worker runs to verify; dashboard R7 build is `npm run build`
   'Bash(npm test)', 'Bash(npm run *)', 'Bash(node *)', 'Bash(npx tsc *)', 'Bash(tsc *)',
   // dependency install: the one allowed network use (the guard denies --registry and index-url redirects)
@@ -76,7 +78,7 @@ function printAllowPolicy(emit: (s: string) => void): void {
   emit('is what a user would put in settings.json; the router guard still denies network, credential-store and');
   emit('registry-override forms on top, and a guard deny always wins over these allows:');
   emit(`  Bash: ${bash.join(' ')}`);
-  emit('  plus Agent (delegation) and mcp__plugin_agentic-router_router__* (router MCP tools the lead may call).');
+  emit('  plus Agent (delegation) and mcp__plugin_do-it-all-claude-code_router__* (router MCP tools the lead may call).');
 }
 
 function claude(cwd: string, prompt: string, timeoutSec = 900, direct = false, resume?: string): Promise<{ code: number | null; out: any; ms: number }> {
@@ -170,7 +172,7 @@ async function summarize(s: R5, repo: string, r1: any, r2: any): Promise<any> {
     const reqIds = recs.map(r => String(r.request_id));
     const subs = reqIds.length ? q(`SELECT * FROM subtasks WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
     const signals = reqIds.length ? q(`SELECT * FROM signals WHERE ${inClause('request_id', reqIds)}`, ...reqIds) : [];
-    const tools = sids.length ? q(`SELECT DISTINCT tool_name FROM events WHERE ${inClause('session_id', sids)} AND tool_name LIKE 'mcp__plugin_agentic-router_router__%'`, ...sids) : [];
+    const tools = sids.length ? q(`SELECT DISTINCT tool_name FROM events WHERE ${inClause('session_id', sids)} AND tool_name LIKE 'mcp__plugin_do-it-all-claude-code_router__%'`, ...sids) : [];
     // the daemon does not log the lead's/worker's Edit/Write calls as events, so "did a subagent run at all"
     // (an agents row) is the available signal: a lead-direct session has none, so any edit there was the lead's.
     const agents = sids.length ? q(`SELECT agent_id, agent_type FROM agents WHERE ${inClause('session_id', sids)}`, ...sids) : [];
@@ -182,7 +184,7 @@ async function summarize(s: R5, repo: string, r1: any, r2: any): Promise<any> {
   for (let i = 0; i < 20 && sids.length && !data.recs.length; i++) { await sleep(500); data = read(); }
   const { recs, reqRows, subs, signals, tools, agents } = data;
   const subagentRan = agents.length > 0;
-  const toolNames = tools.map(t => String(t.tool_name).replace('mcp__plugin_agentic-router_router__', ''));
+  const toolNames = tools.map(t => String(t.tool_name).replace('mcp__plugin_do-it-all-claude-code_router__', ''));
   const first = recs[0] ?? {};
   // a session can hold more than one request row (e.g. lead_class "other" before the model resolves, then
   // "sonnet"); show every distinct value so a wrong lead class is visible at a glance
@@ -255,7 +257,7 @@ if (DRY) {
     else if (s.follow) console.log(`   follow-up (--resume same session): ${s.follow}`);
     console.log(`   expect: ${s.expect}`);
   }
-  console.log(`\nR7 dashboard check (no claude): ${wantDash ? 'register a code via `agentic-router dashboard --no-open`, exchange it for a cookie, GET summary + requests, assert the runs appear and no prompt text leaks' : 'skipped (--no-dashboard)'}`);
+  console.log(`\nR7 dashboard check (no claude): ${wantDash ? 'register a code via `do-it-all-claude-code dashboard --no-open`, exchange it for a cookie, GET summary + requests, assert the runs appear and no prompt text leaks' : 'skipped (--no-dashboard)'}`);
   printAllowPolicy(console.log);
   console.log(`\nestimated subscription usage: ${callTotal} claude -p calls, roughly ${turnLo}-${turnHi} agent turns total (lead + subagents; depends on how the lead delegates). Each run caps at --max-budget-usd 3.`);
   console.log('no claude was run (dry run).');

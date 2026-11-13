@@ -65,7 +65,7 @@ test('a spooled Agent call that breaks the rules is recorded, not denied after t
     fs.mkdirSync(spool, { recursive: true });
     fs.writeFileSync(path.join(spool, 'a.jsonl'), JSON.stringify({ receivedAt: at(0), input: {
       session_id: 's', hook_event_name: 'PreToolUse', cwd: home, tool_name: 'Agent',
-      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] x', model: 'opus', effort: 'xhigh' },
+      tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] x', model: 'opus', effort: 'xhigh' },
     } }) + '\n');
     const d = await startTestDaemon({ home });
     try {

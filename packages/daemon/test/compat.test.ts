@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { cleanVerifyEnv, gitEnv, isSecretName, scrubbedEnv, verifyEnv, withoutEnvValues } from '../src/env.ts';
 import { takeSnapshot } from '../src/git.ts';
 import { homeLayout, tightenPermissions, writeJsonAtomic } from '../src/home.ts';
@@ -26,16 +26,16 @@ const session = (d: TestDaemon, sid: string, cwd: string) => async (h: HookInput
 let seq = 0;
 const call = (tag: string, scope: string): HookInput => ({
   hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_x${++seq}`,
-  tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:${tag}] work\n[scope: ${scope}]`, model: 'haiku', effort: 'low' },
+  tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:${tag}] work\n[scope: ${scope}]`, model: 'haiku', effort: 'low' },
 });
-const start = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'agentic-router:coder', ...extra });
-const stop = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'agentic-router:coder', stop_hook_active: false, ...extra });
+const start = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder', ...extra });
+const stop = (agentId: string, extra: HookInput = {}): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false, ...extra });
 
 // ------------------------------------------------------------------ decision 99: environments
 
 test('decision 99: secret names are narrow; ordinary settings stay', () => {
   for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'MY_SERVICE_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
-    'GOOGLE_APPLICATION_CREDENTIALS', 'PGPASSWORD', 'DB_PASSWD', 'BASIC_AUTH', 'SSH_AUTH_SOCK', 'OPENAI_API_KEY', 'NPM_CONFIG__AUTH', 'SESSION_COOKIE', 'AGENTIC_ROUTER_HOME']) {
+    'GOOGLE_APPLICATION_CREDENTIALS', 'PGPASSWORD', 'DB_PASSWD', 'BASIC_AUTH', 'SSH_AUTH_SOCK', 'OPENAI_API_KEY', 'NPM_CONFIG__AUTH', 'SESSION_COOKIE', 'DO_IT_ALL_CLAUDE_CODE_HOME']) {
     assert.equal(isSecretName(k), true, k);
   }
   for (const k of ['AWS_REGION', 'AWS_PROFILE', 'DOCKER_HOST', 'SESSION_STORE', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'CLAUDE_PROJECT_DIR', 'GH_HOST', 'PATH', 'JAVA_HOME']) {
@@ -299,7 +299,7 @@ test('decision 97: the status lists what the hooks of the latest sessions see (n
   let t = Date.parse('2026-11-11T10:00:00.000Z');
   const d = await startTestDaemon({ now: () => new Date(t) });
   try {
-    const client = { node: 'C:\\nodejs\\node.exe', nodeVersion: 'v24.22.1', routerHome: 'C:\\Users\\u\\.agentic-router', port: 47821 };
+    const client = { node: 'C:\\nodejs\\node.exe', nodeVersion: 'v24.22.1', routerHome: 'C:\\Users\\u\\.do-it-all-claude-code', port: 47821 };
     for (let i = 0; i < 12; i++) {
       t += 1000;
       await postHook(d.port, { session_id: `s${i}`, hook_event_name: 'SessionStart', source: 'startup', cwd: d.home, routerClient: { ...client, port: 47000 + i } });

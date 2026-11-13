@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { routerToolList, ROUTER_TOOL_NAMES } from '@agentic-router/core';
+import { routerToolList, ROUTER_TOOL_NAMES } from '@do-it-all-claude-code/core';
 
 const toolsJson = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugin', 'mcp', 'tools.json');
 

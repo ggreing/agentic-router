@@ -75,7 +75,7 @@ export function nextAction(scn, state, req) {
       // The daemon names the step it planned when the call's model or effort does not fit: take it and call once more.
       const t = req.results[0].text;
       const model = /model="([^"]+)"/.exec(t)?.[1], effort = /effort="([^"]+)"/.exec(t)?.[1];
-      if (state.batchTurns === 0 && state.dispatches < 12 && req.agentTool && t.includes('[agentic-router]') && model && effort && !state.retried[state.batch]) {
+      if (state.batchTurns === 0 && state.dispatches < 12 && req.agentTool && t.includes('[do-it-all-claude-code]') && model && effort && !state.retried[state.batch]) {
         state.retried[state.batch] = true;
         return dispatchNext(scn, state, req, { model, effort });
       }

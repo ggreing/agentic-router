@@ -1,4 +1,4 @@
-// start / stop / status. `start` runs `agentic-router supervise` (supervise.ts), which runs the daemon and,
+// start / stop / status. `start` runs `do-it-all-claude-code supervise` (supervise.ts), which runs the daemon and,
 // in API-key mode, the proxy, restarting them when they exit. A daemon started without a supervisor (an older
 // install) is still stopped by the PID-file path below. The CLI owns the PID files; the daemon does not.
 // Safety (review #2, #13, #14, decision 78): a PID is only force-killed when its command line is
@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { paths, routerHome, sealedCall } from '@agentic-router/core';
+import { legacyRouterHome, paths, routerHome, sealedCall } from '@do-it-all-claude-code/core';
 import { portOwner } from './portowner.ts';
 import { isFree, readConfig } from './setup.ts';
 import { proxyHealth, readSuperviseStatus, superviseFiles } from './supervise.ts';
@@ -66,7 +66,7 @@ const readToken = (): string => { try { return fs.readFileSync(paths.token(), 'u
 /** What to tell the user when the daemon's port is held by something that is not the daemon. */
 export const otherOnPort = (port: number): string =>
   `port ${port} is answered by a program that does not hold this router's token: another program or another user's process took the port, `
-  + 'or a daemon of an older version is still running. Nothing was sent to it. Stop it, or pick a new port with `agentic-router init --new-port`.';
+  + 'or a daemon of an older version is still running. Nothing was sent to it. Stop it, or pick a new port with `do-it-all-claude-code init --new-port`.';
 
 export async function health(port: number, timeoutMs = 800): Promise<{ ok: boolean; version?: string } | null> {
   const r = await localRequest(port, 'GET', '/router/v1/health', { timeoutMs });
@@ -76,7 +76,7 @@ export async function health(port: number, timeoutMs = 800): Promise<{ ok: boole
 
 /** The daemon's runnable entry, next to the package's resolved index (src in dev, dist when built). */
 export function daemonEntry(): string {
-  const index = fileURLToPath(import.meta.resolve('@agentic-router/daemon'));
+  const index = fileURLToPath(import.meta.resolve('@do-it-all-claude-code/daemon'));
   const main = path.join(path.dirname(index), index.endsWith('.ts') ? 'main.ts' : 'main.js');
   if (!fs.existsSync(main)) throw new Error(`daemon entry not found: ${main}`);
   return main;
@@ -98,6 +98,40 @@ export function commandLineOf(pid: number): string | null {
     }
     if (fs.existsSync(`/proc/${pid}/cmdline`)) return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim() || null;
     return execFileSync('ps', ['-o', 'command=', '-p', String(Math.trunc(pid))], { encoding: 'utf8', timeout: 5000 }).trim() || null;
+  } catch { return null; }
+}
+
+/**
+ * The process's command line and, when it can be read, its start time (ms since the epoch); null when the
+ * process is gone or cannot be read. Windows: one Get-CimInstance call (CreationDate and CommandLine); Linux:
+ * /proc (the start in clock ticks after boot, USER_HZ 100); elsewhere ps.
+ */
+export function processInfo(pid: number): { commandLine: string; startedAt?: number } | null {
+  const n = Math.trunc(pid);
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${n}"; if ($p) { $p.CreationDate.ToUniversalTime().ToString('o'); $p.CommandLine }`],
+        { encoding: 'utf8', timeout: 10000, windowsHide: true }).trim();
+      const [first = '', ...rest] = out.split(/\r?\n/);
+      const commandLine = rest.join(' ').trim();
+      const t = Date.parse(first);
+      return commandLine ? { commandLine, ...(Number.isFinite(t) ? { startedAt: t } : {}) } : null;
+    }
+    const commandLine = commandLineOf(n);
+    if (!commandLine) return null;
+    let startedAt: number | undefined;
+    if (process.platform === 'linux' && fs.existsSync(`/proc/${n}/stat`)) {
+      // the fields after the command name, which is in parentheses and may hold spaces: starttime is field 22
+      const stat = fs.readFileSync(`/proc/${n}/stat`, 'utf8');
+      const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+      const btime = Number(/^btime (\d+)$/m.exec(fs.readFileSync('/proc/stat', 'utf8'))?.[1]);
+      if (Number.isFinite(ticks) && Number.isFinite(btime)) startedAt = btime * 1000 + ticks * 10;
+    } else {
+      const t = Date.parse(execFileSync('ps', ['-o', 'lstart=', '-p', String(n)], { encoding: 'utf8', timeout: 5000, env: { ...process.env, LC_ALL: 'C' } }).trim());
+      if (Number.isFinite(t)) startedAt = t;
+    }
+    return { commandLine, ...(startedAt !== undefined ? { startedAt } : {}) };
   } catch { return null; }
 }
 
@@ -146,7 +180,13 @@ const proxyToken = () => { try { return fs.readFileSync(path.join(routerHome(), 
 
 export async function start(): Promise<string> {
   const cfg = readConfig();
-  if (!cfg) return 'not initialised: run `agentic-router init` first';
+  if (!cfg) {
+    // decision 161: a home of the previous release is moved by init (the rule of migrate.ts legacyHomeToMove)
+    const old = legacyRouterHome();
+    const named = (v: string | undefined) => !!v && path.isAbsolute(v);
+    return fs.existsSync(path.join(old, 'config.json')) && (named(process.env.AGENTIC_ROUTER_HOME) || !named(process.env.DO_IT_ALL_CLAUDE_CODE_HOME))
+      ? `not initialised under the new name: run \`do-it-all-claude-code init\`, which moves ${old}` : 'not initialised: run `do-it-all-claude-code init` first';
+  }
   const sup = runningSupervisor();
   if (sup) return `already running (supervisor pid ${sup}, daemon on 127.0.0.1:${cfg.daemonPort}${cfg.apiMode === 'proxy' ? `, proxy on 127.0.0.1:${cfg.proxyPort}` : ''})`;
   const there = await daemonIdentity(cfg.daemonPort, readToken());
@@ -155,19 +195,19 @@ export async function start(): Promise<string> {
   try { fs.writeFileSync(startLock(), String(process.pid), { flag: 'wx' }); }
   catch {
     const age = Date.now() - fs.statSync(startLock()).mtimeMs;
-    if (age < 15000) return 'another `agentic-router start` is in progress';
+    if (age < 15000) return 'another `do-it-all-claude-code start` is in progress';
     fs.writeFileSync(startLock(), String(process.pid));     // stale lock from a crashed start
   }
   try {
     if (!await isFree(cfg.daemonPort)) {
       const owner = await portOwner(cfg.daemonPort);          // decision 156 (c): a hint only, never a check
-      return `port ${cfg.daemonPort} is in use by another program${owner ? ` (${owner})` : ''}. Pick a new port with \`agentic-router init --new-port\`, then start again.`;
+      return `port ${cfg.daemonPort} is in use by another program${owner ? ` (${owner})` : ''}. Pick a new port with \`do-it-all-claude-code init --new-port\`, then start again.`;
     }
     const proxy = cfg.apiMode === 'proxy' && cfg.proxyPort ? cfg.proxyPort : undefined;
     if (proxy && !await isFree(proxy)) return `proxy port ${proxy} is in use by another program`;
     const child = spawn(process.execPath, [cliEntry(), 'supervise'], {
       detached: true, stdio: 'ignore', windowsHide: true,
-      env: { ...process.env, AGENTIC_ROUTER_HOME: routerHome() },
+      env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: routerHome() },
     });
     let exited: number | null | undefined;
     child.once('exit', code => { exited = code; });
@@ -194,7 +234,7 @@ export async function start(): Promise<string> {
     if (daemonUp && proxyUp) return `started (supervisor pid ${child.pid}; ${where})`;
     const down = [daemonUp ? '' : 'daemon', proxyUp ? '' : 'proxy'].filter(Boolean).join(' and ');
     return `started (supervisor pid ${child.pid}) but the ${down} did not answer yet; it is restarted when it exits. See ${paths.logsDir()}`
-      + (proxy && !proxyUp ? ' and run agentic-router doctor (is the API key in the keychain?)' : '');
+      + (proxy && !proxyUp ? ' and run do-it-all-claude-code doctor (is the API key in the keychain?)' : '');
   } finally {
     fs.rmSync(startLock(), { force: true });
   }
@@ -276,8 +316,8 @@ export async function status(): Promise<string> {
     lines.push(cfg.apiMode === 'direct' ? 'API-key mode: direct (no proxy; Claude Code reads the key from the keychain)'
       : p?.ok ? `API-key mode: proxy ON (${p.tls ? 'https' : 'http'}://127.0.0.1:${cfg.proxyPort} -> ${p.upstream ?? '?'}, ${p.inflight ?? 0} in flight)`
       // decision 156: something holds the port without proving it is this router's proxy
-      : p?.other ? `API-key mode: port ${cfg.proxyPort} answers but does not prove it is this router's proxy (an older or restarting proxy, or another program; agentic-router doctor names it); the helper gives it no token`
-      : `API-key mode: proxy OFF (127.0.0.1:${cfg.proxyPort} not answering): API calls fail until it is back, or run agentic-router mode direct`);
+      : p?.other ? `API-key mode: port ${cfg.proxyPort} answers but does not prove it is this router's proxy (an older or restarting proxy, or another program; do-it-all-claude-code doctor names it); the helper gives it no token`
+      : `API-key mode: proxy OFF (127.0.0.1:${cfg.proxyPort} not answering): API calls fail until it is back, or run do-it-all-claude-code mode direct`);
   }
   return `${lines.join('\n')}${detail}`;
 }

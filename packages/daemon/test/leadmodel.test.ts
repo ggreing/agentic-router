@@ -73,7 +73,7 @@ test('decision 119: an automatic L3 is planned with the L2 team; the first call 
   assert.deepEqual([r.level, r.budgetUsd, r.leadDirect], ['L2', 5, false]);
   assert.match(ctx, /Larger team/);
   const call = (tag: string, role: string, model: string, effort: string) => postHook(d.port, { session_id: sid, cwd: d.home, hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: `agentic-router:${role}`, prompt: `[subtask:${tag}] work`, model, effort } });
+    tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: `[subtask:${tag}] work`, model, effort } });
   assert.equal(((await call('X', 'architect', 'opus', 'high')).body as Out).hookSpecificOutput?.permissionDecision, undefined);
   r = await req(d, sid);
   assert.deepEqual([r.level, r.budgetUsd, r.replannedFrom], ['L3', 15, 'L2']);
@@ -81,7 +81,7 @@ test('decision 119: an automatic L3 is planned with the L2 team; the first call 
   const sid2 = 'l3-stays';
   await ask(d, sid2, L3_SIGN_PROMPT);
   await postHook(d.port, { session_id: sid2, cwd: d.home, hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:architect', prompt: '[subtask:X] work', model: 'sonnet', effort: 'medium' } });
+    tool_input: { subagent_type: 'do-it-all-claude-code:architect', prompt: '[subtask:X] work', model: 'sonnet', effort: 'medium' } });
   assert.deepEqual([(await req(d, sid2)).level, (await req(d, sid2)).replannedFrom], ['L2', null]);
   // and the record keeps the triage's L3 signs
   await postHook(d.port, { session_id: sid, cwd: d.home, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'done' });
@@ -93,7 +93,7 @@ test('decision 119: an automatic L3 is planned with the L2 team; the first call 
 test('decision 119: a request set by /router level or by forceLevel is not raised by a call', () => withDaemon(async d => {
   await ask(d, 'forced', L3_SIGN_PROMPT);
   await postHook(d.port, { session_id: 'forced', cwd: d.home, hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:architect', prompt: '[subtask:X] work', model: 'opus', effort: 'high' } });
+    tool_input: { subagent_type: 'do-it-all-claude-code:architect', prompt: '[subtask:X] work', model: 'opus', effort: 'high' } });
   assert.equal((await req(d, 'forced')).level, 'L2');
 }, { forceLevel: 'L2' }));
 

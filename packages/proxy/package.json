@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-router/proxy",
+  "name": "@do-it-all-claude-code/proxy",
   "version": "0.2.0",
   "private": true,
   "description": "API-key mode gateway for Claude Code: byte-exact passthrough, usage per session and agent, budget blocking, keychain-only key",
@@ -12,9 +12,9 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "agentic-router-proxy": "./src/main.ts"
+    "do-it-all-claude-code-proxy": "./src/main.ts"
   },
   "dependencies": {
-    "@agentic-router/core": "0.2.0"
+    "@do-it-all-claude-code/core": "0.2.0"
   }
 }

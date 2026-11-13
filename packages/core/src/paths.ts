@@ -1,6 +1,6 @@
 // Local state layout shared by the daemon, the hook scripts and the CLI.
 //
-// <home> = $AGENTIC_ROUTER_HOME or ~/.agentic-router
+// <home> = $DO_IT_ALL_CLAUDE_CODE_HOME or ~/.do-it-all-claude-code
 //   config.json        { daemonPort, proxyPort, fableOptIn, ... }   written by `init`
 //   token              local auth token (file mode 0600 where supported); never the API key
 //   router.db          node:sqlite ledger
@@ -15,12 +15,39 @@ import path from 'node:path';
 import type { Level } from './types.ts';
 
 /**
- * The router's state folder. A relative AGENTIC_ROUTER_HOME is ignored (env audit #7): it would
+ * The router's state folder. A relative DO_IT_ALL_CLAUDE_CODE_HOME is ignored (env audit #7): it would
  * resolve to a different folder in every process cwd (hooks, daemon, CLI), so events would never meet.
  */
 export function routerHome(): string {
-  const v = process.env.AGENTIC_ROUTER_HOME;
-  return v && path.isAbsolute(v) ? v : path.join(homedir(), '.agentic-router');
+  const v = process.env.DO_IT_ALL_CLAUDE_CODE_HOME;
+  return v && path.isAbsolute(v) ? v : path.join(homedir(), '.do-it-all-claude-code');
+}
+
+// ------------------------------------------------------------------ names of the previous release (decision 161)
+// The product was renamed. These names are only read: to move the old home (init), to honour a project folder
+// that has not been renamed yet, to keep both folders protected, and to recognise settings entries the
+// previous release wrote. Nothing is written under them.
+
+/** The previous product's command, plugin and keychain service name. */
+export const LEGACY_SLUG = 'agentic-router';
+/** The project folder (policy.json, verify.json, teams.yaml), and the one of the previous release. */
+export const PROJECT_DIR = '.do-it-all-claude-code';
+export const LEGACY_PROJECT_DIR = '.agentic-router';
+
+/** The previous release's state folder: $AGENTIC_ROUTER_HOME when absolute, else ~/.agentic-router. */
+export function legacyRouterHome(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  const v = env.AGENTIC_ROUTER_HOME;
+  return v && path.isAbsolute(v) ? v : path.join(home, LEGACY_PROJECT_DIR);
+}
+
+/**
+ * A project file: <root>/.do-it-all-claude-code/<name>, or the same file in the previous release's folder when
+ * only that one has it (honoured for this release; doctor asks to rename the folder). `legacy` says which.
+ */
+export function projectFile(root: string, name: string, exists: (p: string) => boolean): { file: string; legacy: boolean } {
+  const file = path.join(root, PROJECT_DIR, name);
+  const old = path.join(root, LEGACY_PROJECT_DIR, name);
+  return !exists(file) && exists(old) ? { file: old, legacy: true } : { file, legacy: false };
 }
 
 export const paths = {
@@ -65,13 +92,13 @@ export interface RouterConfig {
   delegateFrom?: Partial<Record<'opus' | 'sonnet' | 'haiku' | 'other', Level>>;   // decision 117: first delegated level per lead model tier
   proxy?: {                  // API-key mode proxy (decisions 130-131)
     upstream?: string;       // https origin on the allowlist; default https://api.anthropic.com
-    allowedUpstreams?: string[];   // extra https origins added by `agentic-router proxy allow-upstream` (user-confirmed)
+    allowedUpstreams?: string[];   // extra https origins added by `do-it-all-claude-code proxy allow-upstream` (user-confirmed)
     tokenDailyCapUsd?: number;   // per local token per day; default 100
     dailyCapUsd?: number;        // all tokens per day; default 300
     tls?: boolean;               // decision 157: serve HTTPS with <home>/tls/proxy-cert.pem (set by `mode api` when it can)
   };
   /**
-   * API-key mode (decision 130), set by `agentic-router init --mode api` / `mode`: 'proxy' runs the proxy and
+   * API-key mode (decision 130), set by `do-it-all-claude-code init --mode api` / `mode`: 'proxy' runs the proxy and
    * its usage rows are the cost source; 'direct' is the bypass while it is down. Absent: subscription mode.
    */
   apiMode?: 'proxy' | 'direct';

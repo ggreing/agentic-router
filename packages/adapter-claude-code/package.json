@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-router/adapter-claude-code",
+  "name": "@do-it-all-claude-code/adapter-claude-code",
   "version": "0.2.0",
   "private": true,
   "description": "Claude Code adapter: hook input/output translation, local guard hooks, plugin assets",
@@ -12,6 +12,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agentic-router/core": "0.2.0"
+    "@do-it-all-claude-code/core": "0.2.0"
   }
 }

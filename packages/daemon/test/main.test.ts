@@ -12,7 +12,7 @@ test('main.ts writes nothing to the console; a start failure goes to logs/daemon
   const home = makeHome();
   try {
     fs.rmSync(path.join(home, 'token'));
-    const r = spawnSync(process.execPath, [MAIN], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, encoding: 'utf8', timeout: 30_000 });
+    const r = spawnSync(process.execPath, [MAIN], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home }, encoding: 'utf8', timeout: 30_000 });
     assert.equal(r.status, 1);
     assert.equal(r.stdout, '');
     assert.equal(r.stderr, '');

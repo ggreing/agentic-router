@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SECRET_PATTERN_SPECS, SECRET_KEY_NAME_SPECS } from '@agentic-router/core';
+import { SECRET_PATTERN_SPECS, SECRET_KEY_NAME_SPECS } from '@do-it-all-claude-code/core';
 
 // The relay walks parsed JSON (audit N1): it masks string leaves with `patterns` and replaces a string
 // whole when its object key matches one of `secretKeyNames`.

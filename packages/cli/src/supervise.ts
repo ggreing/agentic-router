@@ -1,9 +1,9 @@
-// `agentic-router supervise`: one detached process that runs the daemon and, in API-key mode, the proxy
+// `do-it-all-claude-code supervise`: one detached process that runs the daemon and, in API-key mode, the proxy
 // (spec 5.4, decision 130). A child that exits is started again after 1 s, 2 s, 5 s, then every 30 s; after
 // three failures in a row it is marked degraded (status line / doctor say so) and retries continue. A run
 // of a minute resets the count.
 //
-// Stopping: `agentic-router stop` creates <home>/supervise.stop (on Windows a signal to another process is a
+// Stopping: `do-it-all-claude-code stop` creates <home>/supervise.stop (on Windows a signal to another process is a
 // hard kill, so a file is the portable request). The supervisor stops the proxy first (IPC message: in-flight
 // streams finish, usage rows are flushed to the daemon), then the daemon (its authenticated shutdown
 // route), then exits. <home>/supervise.json records each child's pid and state for status and doctor.
@@ -12,8 +12,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import { paths, routerHome } from '@agentic-router/core';
-import { proveProxy } from '@agentic-router/proxy';
+import { paths, routerHome } from '@do-it-all-claude-code/core';
+import { proveProxy } from '@do-it-all-claude-code/proxy';
 import { proxyEntry } from './apimode.ts';
 import { daemonEntry, daemonRequest, health } from './daemonctl.ts';
 import { renewTlsIfDue } from './localtls.ts';
@@ -195,7 +195,7 @@ export class Supervisor {
 /** The children for this router home: the daemon always, the proxy in API-key proxy mode. */
 export function childSpecs(home = routerHome(), env: NodeJS.ProcessEnv = process.env): ChildSpec[] {
   const cfg = readConfig();
-  const childEnv = { ...env, AGENTIC_ROUTER_HOME: home };
+  const childEnv = { ...env, DO_IT_ALL_CLAUDE_CODE_HOME: home };
   const specs: ChildSpec[] = [{
     name: 'daemon', command: process.execPath, args: [daemonEntry()], env: childEnv, stopTimeoutMs: 10_000, pidFile: path.join(home, 'daemon.pid'),
     stop: async () => {
@@ -225,7 +225,7 @@ export async function runSupervisor(home = routerHome()): Promise<void> {
   fs.writeFileSync(files.pid, String(process.pid));
   const sup = new Supervisor({ specs: childSpecs(home), statusFile: files.status, log });
   sup.start();
-  // decision 157: at the supervisor's start (agentic-router start) the certificate is renewed inside RENEW_WITHIN_DAYS
+  // decision 157: at the supervisor's start (do-it-all-claude-code start) the certificate is renewed inside RENEW_WITHIN_DAYS
   // and an older CA-shaped one is remade; the timer renews only inside TIMER_RENEW_WITHIN_DAYS or after the end,
   // since a renewal breaks running Claude Code sessions. The proxy picks a new file up without a restart.
   const renew = (at: 'start' | 'timer') => {

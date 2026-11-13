@@ -30,6 +30,8 @@ export const SEAL_VERSION = 1;
 export const SEALED_PATH = '/router/v1/sealed';
 /** How far a request's clock may be from the daemon's, and how long its nonce is remembered. Same machine, so small. */
 export const SEAL_WINDOW_MS = 120_000;
+// A wire label, not a name shown anywhere: it keeps the previous product name (decision 161), so this release still
+// talks to a daemon of the previous one (stopping it when init moves the home).
 const SALT = 'agentic-router seal v1';
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;

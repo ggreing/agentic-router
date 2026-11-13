@@ -1,11 +1,11 @@
-// @agentic-router/daemon: local router daemon (hook event API, local auth, ledger, session verification).
+// @do-it-all-claude-code/daemon: local router daemon (hook event API, local auth, ledger, session verification).
 // Entry contract: startDaemon(opts) resolves after the spool replay, with the bound
 // port and close(). main.ts is the process entry point.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { socketLocation, writeEndpoint, type Level, type TeamPreset } from '@agentic-router/core';
+import { socketLocation, writeEndpoint, type Level, type TeamPreset } from '@do-it-all-claude-code/core';
 import { loadClaudeCodeAdapter, type ClientAdapter } from './adapter.ts';
 import { readConfig, readToken } from './config.ts';
 import { ensureHomeDirs, homeLayout, tightenPermissions } from './home.ts';

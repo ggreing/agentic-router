@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { paths } from '@agentic-router/core';
+import { paths } from '@do-it-all-claude-code/core';
 import { HINT_HEADERS_ENV, detectLogin, isRouterHelper, keyHelper, localTokenHelper, planApiSettings, planSubscriptionSettings, proxyBaseUrl } from '../src/apimode.ts';
 import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, proxyTokenFile, setMode, tokenRotate, type ApiDeps } from '../src/apicmds.ts';
 import { apiChecks, type ApiCheckInput } from '../src/doctor.ts';
@@ -15,10 +15,10 @@ import { ensureLocalState, readConfig, writeConfig } from '../src/setup.ts';
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-api-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 
-const PKG = path.join('/opt', 'agentic-router', 'packages', 'proxy');
+const PKG = path.join('/opt', 'do-it-all-claude-code', 'packages', 'proxy');
 const settingsOf = (f: string) => JSON.parse(fs.readFileSync(f, 'utf8')) as Record<string, any>;
 
 interface Fake { deps: ApiDeps; lines: string[]; stored: string[]; confirms: number }
@@ -54,14 +54,14 @@ test('proxy settings: base URL, hint headers and the local-token helper; credent
   assert.deepEqual(s.env, { FOO: 'bar', ANTHROPIC_BASE_URL: 'http://127.0.0.1:47811', [HINT_HEADERS_ENV]: '1' });
   assert.equal(s.apiKeyHelper, localTokenHelper(PKG));
   assert.ok(isRouterHelper(s.apiKeyHelper));
-  assert.equal(JSON.parse(fs.readFileSync(file + '.agentic-router.bak', 'utf8')).apiKeyHelper, 'my-vault get');
+  assert.equal(JSON.parse(fs.readFileSync(file + '.do-it-all-claude-code.bak', 'utf8')).apiKeyHelper, 'my-vault get');
   assert.equal(planApiSettings(file, 'proxy', 47811, PKG), null);
   // direct: our base URL and hint go, the key helper comes; the backup is not overwritten
   planApiSettings(file, 'direct', 47811, PKG)!.apply();
   const d = settingsOf(file);
   assert.deepEqual(d.env, { FOO: 'bar' });
   assert.equal(d.apiKeyHelper, keyHelper(PKG));
-  assert.equal(JSON.parse(fs.readFileSync(file + '.agentic-router.bak', 'utf8')).apiKeyHelper, 'my-vault get');
+  assert.equal(JSON.parse(fs.readFileSync(file + '.do-it-all-claude-code.bak', 'utf8')).apiKeyHelper, 'my-vault get');
   // a foreign gateway URL is not removed by direct mode
   fs.writeFileSync(file, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } }));
   planApiSettings(file, 'direct', 47811, PKG)!.apply();
@@ -207,12 +207,12 @@ test('doctor in API-key mode: version, settings, project overrides, credential v
   fs.writeFileSync(f.deps.settingsFile, JSON.stringify(s));
   const drift = (await apiChecks(base)).find(x => x.name === 'Claude Code settings (proxy)')!;
   assert.deepEqual([drift.ok, drift.blocking], [false, true]);
-  assert.match(drift.detail, /ANTHROPIC_BASE_URL.*run agentic-router mode proxy/);
+  assert.match(drift.detail, /ANTHROPIC_BASE_URL.*run do-it-all-claude-code mode proxy/);
 });
 
 test('decision 156: the proxy health is read only after the proxy proved itself; a program that cannot is reported, and gets no token', async () => {
   const { proxyHealth } = await import('../src/supervise.ts');
-  const { proofOf } = await import('@agentic-router/proxy');
+  const { proofOf } = await import('@do-it-all-claude-code/proxy');
   const TOKEN = 'tok-1234567890-abcdefghijklmnopqrstuvwxyz';
   const seen: Array<string | undefined> = [];
   let port = 0;
@@ -252,7 +252,7 @@ test('spec 2.1: subscription settings take out only what API-key mode put in', (
   planApiSettings(file, 'proxy', 47811, PKG)!.apply();                     // the backup keeps "corp-vault get"
   fs.writeFileSync(file, JSON.stringify({ ...settingsOf(file), env: { ...settingsOf(file).env, FOO: 'bar' } }));
   const plan = planSubscriptionSettings(file)!;
-  assert.match(plan.summary, /apiKeyHelper: remove the router's helper; env\.ANTHROPIC_BASE_URL: remove .*; env\.CLAUDE_CODE_GATEWAY_HINT_HEADERS: remove; your earlier apiKeyHelper "corp-vault get" is in settings\.json\.agentic-router\.bak; it is not put back/);
+  assert.match(plan.summary, /apiKeyHelper: remove the router's helper; env\.ANTHROPIC_BASE_URL: remove .*; env\.CLAUDE_CODE_GATEWAY_HINT_HEADERS: remove; your earlier apiKeyHelper "corp-vault get" is in settings\.json\.do-it-all-claude-code\.bak; it is not put back/);
   plan.apply();
   assert.deepEqual(settingsOf(file), { model: 'opus', env: { FOO: 'bar' } });
   assert.equal(planSubscriptionSettings(file), null, 'nothing of ours left');
@@ -278,7 +278,7 @@ test('spec 2.1: mode subscription and mode api switch back and forth (confirmed)
   assert.deepEqual([readConfig()!.proxyPort, fs.existsSync(proxyTokenFile())], [c.proxyPort, true], 'port and local token kept for mode api');
   const s = settingsOf(f.deps.settingsFile);
   assert.deepEqual([s.apiKeyHelper, s.env?.ANTHROPIC_BASE_URL, s.env?.[HINT_HEADERS_ENV]], [undefined, undefined, undefined]);
-  assert.match(f.lines.at(-1)!, /^Subscription mode: .*The supervisor stops the proxy now\. .*agentic-router mode api/);
+  assert.match(f.lines.at(-1)!, /^Subscription mode: .*The supervisor stops the proxy now\. .*do-it-all-claude-code mode api/);
   assert.equal(reloads, 1);
   assert.equal(await modeSubscription({}, deps().deps), 0);
   assert.match(f.lines.at(-1)!, /Subscription mode/);
@@ -286,7 +286,7 @@ test('spec 2.1: mode subscription and mode api switch back and forth (confirmed)
   assert.equal(await modeApi({}, deps({ status: 'not_found' }).deps), 2);
   const saved = deps({ login: '{"loggedIn":true,"authMethod":"claude.ai"}' });
   assert.equal(await modeApi({}, saved.deps), 2);
-  assert.match(saved.lines[0]!, /then run `agentic-router mode api` again/);
+  assert.match(saved.lines[0]!, /then run `do-it-all-claude-code mode api` again/);
   const back = deps();
   assert.equal(await modeApi({ yes: true }, back.deps), 0);
   assert.equal(readConfig()!.apiMode, 'proxy');
@@ -299,7 +299,7 @@ test('spec 2.1: mode subscription and mode api switch back and forth (confirmed)
 });
 
 test('audit C3: token rotate records the rotation time, so the grace runs from it; --no-grace refuses the old token at once', async () => {
-  const { LocalTokens } = await import('@agentic-router/proxy');
+  const { LocalTokens } = await import('@do-it-all-claude-code/proxy');
   const { config } = await ensureLocalState();
   const f = fake();
   await configureApi(config, f.deps);

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import type { Level } from '@agentic-router/core';
+import type { Level } from '@do-it-all-claude-code/core';
 import { readConfig } from '../src/config.ts';
 import { Ledger } from '../src/ledger.ts';
 import { metricsRouting } from '../src/metrics.ts';
@@ -93,7 +93,7 @@ test('the view and the rule: observe shows what it would do, on applies it, off 
 
   const change = releaseChange(l, cfg, 'other', NOW)!;
   assert.deepEqual([change.kind, change.level, change.from, change.to], ['release', 'L2', 'L2', 'L3']);
-  assert.equal(releaseNotice(change), '[agentic-router] L2 requests with a other lead are now handled directly: the last 30 delegated L2 requests cost $0.400 per accepted task against $0.100 per accepted task for 10 handled directly. Undo: agentic-router routing reset');
+  assert.equal(releaseNotice(change), '[do-it-all-claude-code] L2 requests with a other lead are now handled directly: the last 30 delegated L2 requests cost $0.400 per accepted task against $0.100 per accepted task for 10 handled directly. Undo: do-it-all-claude-code routing reset');
   assert.equal(releaseChange(l, { ...cfg, autoRelease: 'off' }, 'other', NOW), undefined);
   assert.equal(releaseChange(l, cfg, 'opus', NOW), undefined);
 
@@ -212,7 +212,7 @@ test('mode on: a level that costs far more delegated is released, the user is to
 
   // the next request of that lead class carries the notice, once
   const first = await ask('r0');
-  assert.match(first.systemMessage ?? '', /^\[agentic-router\] L2 requests with a other lead are now handled directly: the last 30 delegated L2 requests cost \$0\.400 per accepted task against \$0\.100/);
+  assert.match(first.systemMessage ?? '', /^\[do-it-all-claude-code\] L2 requests with a other lead are now handled directly: the last 30 delegated L2 requests cost \$0\.400 per accepted task against \$0\.100/);
   assert.equal((await ask('r1')).systemMessage, undefined);
   for (let i = 2; i < 60; i++) await ask(`r${i}`);
   const after = planned(d).filter(r => r.sid.startsWith('r'));

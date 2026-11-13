@@ -9,7 +9,7 @@
 //
 // Trust model (distinct from the hook API, which refuses browsers): the static SPA shell is served
 // unauthenticated (it carries no data); the metrics API requires a session cookie obtained through a
-// one-time code. The CLI's `agentic-router dashboard` calls POST /dashboard/register-code with the local
+// one-time code. The CLI's `do-it-all-claude-code dashboard` calls POST /dashboard/register-code with the local
 // Bearer token to mint a code, then opens http://127.0.0.1:<port>/dashboard#code=<code>; the page reads
 // the fragment, POSTs it once to /dashboard/auth, and the daemon sets an HttpOnly SameSite=Strict cookie.
 // Every route also checks Host (loopback only -> DNS-rebinding defence), Origin and Sec-Fetch-Site
@@ -22,7 +22,7 @@ import { isWithin } from './canonical.ts';
 import type { Ledger } from './ledger.ts';
 import { metricsSummary, metricsRequests, metricsRequestDetail, metricsTriageReport, type RequestsQuery } from './metrics.ts';
 import { latestLimits } from './limits.ts';
-import type { Level } from '@agentic-router/core';
+import type { Level } from '@do-it-all-claude-code/core';
 
 export interface DashboardDeps {
   ledger: Ledger;
@@ -66,7 +66,7 @@ const UNBUILT_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"
 <h1>Dashboard not built yet</h1>
 <p>The dashboard's web assets have not been built. <code>npm ci</code> installs dependencies but does not build the SPA. From the project root, run:</p>
 <pre><code>npm run build:dashboard</code></pre>
-<p>Then reload this page. <code>agentic-router doctor</code> also reports the dashboard build state.</p>
+<p>Then reload this page. <code>do-it-all-claude-code doctor</code> also reports the dashboard build state.</p>
 </body></html>`;
 const UNBUILT_CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -194,7 +194,7 @@ export function createDashboard(d: DashboardDeps): Dashboard {
 
   function metrics(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
-    if (!sessionOk(req)) return sendJson(res, 401, { error: 'no dashboard session; open the dashboard with `agentic-router dashboard`' });
+    if (!sessionOk(req)) return sendJson(res, 401, { error: 'no dashboard session; open the dashboard with `do-it-all-claude-code dashboard`' });
     const q = url.searchParams;
     const window = { since: q.get('since') ?? undefined, until: q.get('until') ?? undefined };
     const sub = url.pathname.slice(`${COOKIE_PATH}/metrics`.length).replace(/^\//, '');

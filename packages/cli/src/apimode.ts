@@ -12,8 +12,8 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { redact } from '@agentic-router/core';
-import { NO_PROXY_VARS, PROXY_VARS, noProxyCovers, shownProxyUrl, splitNoProxy } from '@agentic-router/proxy';
+import { redact } from '@do-it-all-claude-code/core';
+import { NO_PROXY_VARS, PROXY_VARS, noProxyCovers, shownProxyUrl, splitNoProxy } from '@do-it-all-claude-code/proxy';
 import type { TlsChoice } from './localtls.ts';
 import { backupNote, readConfig, readJsonFile, writeBackup, writeConfig, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
@@ -24,16 +24,16 @@ const CREDENTIAL_ENV = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 
 /** The proxy package's folder (src/index.ts resolved, one level up). */
 export function proxyPackageDir(): string {
-  return path.dirname(path.dirname(fileURLToPath(import.meta.resolve('@agentic-router/proxy'))));
+  return path.dirname(path.dirname(fileURLToPath(import.meta.resolve('@do-it-all-claude-code/proxy'))));
 }
 export const proxyEntry = (dir = proxyPackageDir()) => path.join(dir, 'src', 'main.ts');
 export const localTokenHelper = (dir = proxyPackageDir()) => `node "${path.join(dir, 'bin', 'local-token.mjs')}"`;
 export const keyHelper = (dir = proxyPackageDir()) => `node "${path.join(dir, 'bin', 'key-helper.mjs')}"`;
 export const proxyBaseUrl = (port: number, tls = false) => `${tls ? 'https' : 'http'}://127.0.0.1:${port}`;
 
-/** True when an apiKeyHelper command is one of ours (any install location). */
+/** True when an apiKeyHelper command is one of ours (any install location, this release's name or the previous one's). */
 export function isRouterHelper(command: unknown): boolean {
-  return typeof command === 'string' && /(local-token|key-helper)\.mjs/.test(command) && /agentic-router|[\\/]proxy[\\/]bin[\\/]/i.test(command);
+  return typeof command === 'string' && /(local-token|key-helper)\.mjs/.test(command) && /do-it-all-claude-code|agentic-router|[\\/]proxy[\\/]bin[\\/]/i.test(command);
 }
 export const isOurBaseUrl = (v: unknown): boolean => typeof v === 'string' && /^https?:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
 
@@ -269,7 +269,7 @@ export function planSubscriptionSettings(settingsFile: string): PlannedChange | 
   const hadEnvAdded = envAdded.length > 0;
   notes.push(...undoEnvAdded(env, envAdded));
   if (!notes.length && !hadEnvAdded) return null;
-  const backup = settingsFile + '.agentic-router.bak';
+  const backup = settingsFile + '.do-it-all-claude-code.bak';
   if (ours && fs.existsSync(backup)) {
     const before = readJsonFile<Record<string, any>>(backup, {}).apiKeyHelper;
     if (before !== undefined && !isRouterHelper(before)) notes.push(`your earlier apiKeyHelper "${String(before)}" is in ${path.basename(backup)}; it is not put back`);

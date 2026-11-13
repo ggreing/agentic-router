@@ -17,7 +17,7 @@ const L2_PROMPT = 'Add a pagination module and refactor the API layer across mul
 function run(home: string, input: unknown, env: Record<string, string> = {}): Promise<{ out: string; code: number | null; ms: number }> {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
-    const child = spawn(process.execPath, [SCRIPT], { env: { ...process.env, AGENTIC_ROUTER_HOME: home, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [SCRIPT], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', c => { out += c; });
     child.on('error', reject);
@@ -119,7 +119,7 @@ test('a wrapped status line that is this script itself runs one level deep, not 
   assert.equal(r.out, `${line} | ${line}\n`);
   assert.ok(r.ms < 15_000, `took ${r.ms} ms`);   // one level deep, not recursive; the rest is node cold starts, slow under load
   // started as a wrapped command: router segment only, nothing wrapped
-  assert.equal((await run(d.home, { session_id: 'sl-3' }, { AGENTIC_ROUTER_STATUSLINE: '1' })).out, `${line}\n`);
+  assert.equal((await run(d.home, { session_id: 'sl-3' }, { DO_IT_ALL_CLAUDE_CODE_STATUSLINE: '1' })).out, `${line}\n`);
 }));
 
 test('runs when the plugin is reached through a junction or symlink (environment audit E1)', async () => {
@@ -128,7 +128,7 @@ test('runs when the plugin is reached through a junction or symlink (environment
   try {
     fs.symlinkSync(path.dirname(SCRIPT), link, 'junction');   // a junction needs no privilege on Windows; a dir symlink elsewhere
     const r = await new Promise<string>((resolve, reject) => {
-      const child = spawn(process.execPath, [path.join(link, 'statusline.mjs')], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, [path.join(link, 'statusline.mjs')], { env: { ...process.env, DO_IT_ALL_CLAUDE_CODE_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
       let out = '';
       child.stdout.on('data', c => { out += c; });
       child.on('error', reject);

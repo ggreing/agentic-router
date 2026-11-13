@@ -40,7 +40,7 @@ test('T6: the lead\'s first router Agent call re-plans a lead-direct request at 
     await post({ hook_event_name: 'UserPromptSubmit', prompt: p });
     assert.deepEqual([(await status(d, sid)).request?.level, (await status(d, sid)).request?.leadDirect], [from, true]);
     const call = (tag: string, type: string, model: string, effort: string) => post({ hook_event_name: 'PreToolUse', tool_name: 'Agent',
-      tool_input: { subagent_type: `agentic-router:${type}`, prompt: `[subtask:${tag}] work`, model, effort } });
+      tool_input: { subagent_type: `do-it-all-claude-code:${type}`, prompt: `[subtask:${tag}] work`, model, effort } });
     // the architect of the L2 team starts at s3: haiku/low is the wrong step
     const r = await call('X', 'architect', 'haiku', 'low');
     assert.equal(r.hookSpecificOutput?.permissionDecision, 'deny');
@@ -70,7 +70,7 @@ test('decision 113: the first call\'s step picks the team: the L3 start step re-
     const post = session(d, sid);
     await post({ hook_event_name: 'UserPromptSubmit', prompt });
     const r = await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent',
-      tool_input: { subagent_type: `agentic-router:${role}`, prompt: '[subtask:A] work', model, effort } });
+      tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: '[subtask:A] work', model, effort } });
     if (allowed !== null) assert.equal(r.hookSpecificOutput?.permissionDecision, allowed ? undefined : 'deny', sid);
     const st = await status(d, sid);
     assert.deepEqual([st.request?.level, st.request?.budgetUsd, st.request?.leadDirect], [level, level === 'L3' ? 15 : 5, false], sid);
@@ -79,7 +79,7 @@ test('decision 113: the first call\'s step picks the team: the L3 start step re-
   // a later call does not re-plan again: the request stays at L3
   const post = session(d, 'a3');
   await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:B] work', model: 'haiku', effort: 'low' } });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:B] work', model: 'haiku', effort: 'low' } });
   assert.equal((await status(d, 'a3')).request?.level, 'L3');
 }));
 

@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { canonicalPath } from './canonical.ts';
 import { gitEnv } from './env.ts';
 import { fingerprint, normalizeEol, sameContent, scanTree, type TreeMarks } from './tree.ts';
@@ -21,7 +21,7 @@ const GIT_TIMEOUT_MS = 15_000;
 let emptyHooks: string | undefined;
 function emptyHooksDir(): string {
   if (!emptyHooks) {
-    emptyHooks = path.join(os.tmpdir(), 'agentic-router-no-hooks');
+    emptyHooks = path.join(os.tmpdir(), 'do-it-all-claude-code-no-hooks');
     try { fs.mkdirSync(emptyHooks, { recursive: true }); } catch { /* best effort */ }
   }
   return emptyHooks;

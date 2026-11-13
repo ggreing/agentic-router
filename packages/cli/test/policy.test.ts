@@ -1,4 +1,4 @@
-// `agentic-router policy show|accept|revoke` and doctor's line (decision 142): a project policy is ignored until
+// `do-it-all-claude-code policy show|accept|revoke` and doctor's line (decision 142): a project policy is ignored until
 // the user accepts its exact content, and again after it changes. The guard keeps the record (temp router home).
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,19 +6,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadGuard, policyCheck, policyCommand, type GuardPolicy } from '../src/policy.ts';
+import { loadGuard, policyCheck, policyCommand, projectFolderCheck, type GuardPolicy } from '../src/policy.ts';
 
 const PLUGIN = fileURLToPath(new URL('../../../plugin/', import.meta.url));
 let tmp = '';
 let repo = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-pol-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
-  fs.mkdirSync(process.env.AGENTIC_ROUTER_HOME, { recursive: true });
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
+  fs.mkdirSync(process.env.DO_IT_ALL_CLAUDE_CODE_HOME, { recursive: true });
   repo = path.join(tmp, 'repo');
-  fs.mkdirSync(path.join(repo, '.agentic-router'), { recursive: true });
+  fs.mkdirSync(path.join(repo, '.do-it-all-claude-code'), { recursive: true });
 });
-const writePolicy = (o: unknown) => fs.writeFileSync(path.join(repo, '.agentic-router', 'policy.json'), JSON.stringify(o));
+const writePolicy = (o: unknown) => fs.writeFileSync(path.join(repo, '.do-it-all-claude-code', 'policy.json'), JSON.stringify(o));
 
 async function run(guard: GuardPolicy, sub: string, f: Record<string, string | boolean> = {}, o: { tty?: boolean; answer?: boolean } = {}) {
   const lines: string[] = [];
@@ -28,14 +28,14 @@ async function run(guard: GuardPolicy, sub: string, f: Record<string, string | b
 
 test('decision 142: a policy is shown, accepted only after the user says yes, ignored again when it changes, and revocable', async () => {
   const guard = await loadGuard(PLUGIN);
-  assert.match((await run(guard, 'show')).text, /no \.agentic-router\/policy\.json/);
+  assert.match((await run(guard, 'show')).text, /no \.do-it-all-claude-code\/policy\.json/);
   assert.deepEqual(policyCheck(guard, repo), { name: 'project policy', ok: true, blocking: false, detail: 'none in this repository' });
   writePolicy({ verifyEnv: ['MY_TOOLCHAIN'] });
   const shown = await run(guard, 'show');
   assert.match(shown.text, /not accepted: ignored\n {2}bashAllow .*: none\n {2}verifyEnv .*: 1\n {4}- "MY_TOOLCHAIN"/);
   const check = policyCheck(guard, repo);
   assert.deepEqual([check.ok, check.blocking], [false, false]);
-  assert.match(check.detail, /agentic-router policy accept/);
+  assert.match(check.detail, /do-it-all-claude-code policy accept/);
   assert.equal((await run(guard, 'accept', {}, { answer: false })).code, 1);
   assert.equal((await run(guard, 'accept', {}, { tty: false })).code, 1, 'no terminal and no --yes');
   assert.equal(guard.policyStatus(guard.policyRoot(repo)).accepted, false);
@@ -71,7 +71,7 @@ test('audit N5: accept records the content that was shown; a file rewritten whil
   assert.equal(code, 1);
   assert.match(lines.join('\n'), /- "npm test"[\s\S]*Not accepted: the file changed while you were asked/);
   assert.equal(guard.policyStatus(guard.policyRoot(repo)).accepted, false);
-  const record = path.join(process.env.AGENTIC_ROUTER_HOME!, 'policy-accepted.json');
+  const record = path.join(process.env.DO_IT_ALL_CLAUDE_CODE_HOME!, 'policy-accepted.json');
   assert.ok(!fs.existsSync(record) || !fs.readFileSync(record, 'utf8').includes(guard.policyStatus(guard.policyRoot(repo)).hash!), 'nothing recorded for the rewritten file');
 });
 
@@ -86,4 +86,19 @@ test('audit N5: entries are listed one per line with control, bidi and zero-widt
   const text = describePolicy(guard.policyRoot(repo), guard.policyStatus(guard.policyRoot(repo))).join('\n');
   assert.match(text, /bashAllow \(extra commands workers may run\): 100 \(4 more in the file are ignored/);
   assert.equal((text.match(/^ {4}- /gm) ?? []).length, 100);
+});
+
+test('decision 161: a project with the previous release\'s folder: its policy is shown from there, and doctor asks to rename the folder', async () => {
+  const guard = await loadGuard(PLUGIN);
+  fs.rmSync(path.join(repo, '.do-it-all-claude-code'), { recursive: true });
+  assert.equal(projectFolderCheck(repo), null);
+  fs.mkdirSync(path.join(repo, '.agentic-router'));
+  fs.writeFileSync(path.join(repo, '.agentic-router', 'policy.json'), JSON.stringify({ bashAllow: ['make lint'] }));
+  const shown = await run(guard, 'show');
+  assert.match(shown.text, /\.agentic-router[\\/]policy\.json \(sha256 [0-9a-f]{12}\): not accepted: ignored \(in the previous release's folder: rename \.agentic-router to \.do-it-all-claude-code; the acceptance stays\)/);
+  assert.match(shown.text, /- "make lint"/);
+  assert.match(projectFolderCheck(repo)!.detail, /has the previous release's \.agentic-router: rename it to \.do-it-all-claude-code/);
+  fs.mkdirSync(path.join(repo, '.do-it-all-claude-code'));
+  assert.match(projectFolderCheck(repo)!.detail, /has both \.agentic-router and \.do-it-all-claude-code/);
+  assert.equal(projectFolderCheck(repo)!.blocking, false);
 });

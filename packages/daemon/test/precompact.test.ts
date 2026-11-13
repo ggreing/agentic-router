@@ -25,14 +25,14 @@ test('guidance keeps level, subtasks with step/status/scope, the unfinished ones
 
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L1_PROMPT });
   const agent = (tag: string, scope?: string) => post({ hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:${tag}] work${scope ? `\n[scope: ${scope}]` : ''}`, model: 'haiku', effort: 'low' } });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:${tag}] work${scope ? `\n[scope: ${scope}]` : ''}`, model: 'haiku', effort: 'low' } });
   await agent('A', 'src/a/**, test/a/**');
-  await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-a', agent_type: 'agentic-router:coder' });
+  await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-a', agent_type: 'do-it-all-claude-code:coder' });
   await agent('B');
 
   const text = await preCompact();
   const lines = text.split('\n');
-  assert.equal(lines[0], 'Agentic Router: keep this team state in the compacted summary.');
+  assert.equal(lines[0], 'Do It All Claude Code: keep this team state in the compacted summary.');
   assert.match(text, /- Request r-[\w-]+: level L1 \(source=rule\), preset L1, budget \$2, spent \$0\.0000\./);
   assert.ok(lines.includes('  - A: coder#0 @s1 (model=haiku, effort=low) running; scope: src/a/**, test/a/**'), text);
   assert.ok(lines.includes('  - B: coder#1 @s1 (model=haiku, effort=low) pending; scope: whole repo'), text);

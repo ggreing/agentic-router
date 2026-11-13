@@ -6,9 +6,9 @@
 //   - ANTHROPIC_BASE_URL points at the fake in fake.mjs, which listens on 127.0.0.1 only;
 //   - the config dir is a fresh temp directory (no login), and the only credential is the dummy key
 //     printed by key-helper.mjs, which the fake accepts and nothing else does;
-//   - CLAUDE*, ANTHROPIC* and AGENTIC_ROUTER* variables of the calling shell are not passed on.
-// The router daemon runs in a temp AGENTIC_ROUTER_HOME and is stopped at the end. The repository the
-// subagent works in is a temp fixture. Your own ~/.claude and ~/.agentic-router are not touched.
+//   - CLAUDE*, ANTHROPIC*, DO_IT_ALL_CLAUDE_CODE* and (from before the rename) AGENTIC_ROUTER* variables of the calling shell are not passed on.
+// The router daemon runs in a temp DO_IT_ALL_CLAUDE_CODE_HOME and is stopped at the end. The repository the
+// subagent works in is a temp fixture. Your own ~/.claude and ~/.do-it-all-claude-code are not touched.
 //
 // The fake plays the model: the lead dispatches a coder with [scope: src/**], and the coder issues the
 // tool calls listed in steps() below, one per turn; after 20 steps the lead dispatches the next coder.
@@ -41,7 +41,7 @@ const REPO = path.resolve(HERE, '..', '..');
 if (!fs.existsSync(path.join(REPO, 'plugin', 'hooks', 'guard.mjs'))) { console.error(`plugin/hooks/guard.mjs not found under ${REPO}`); process.exit(2); }
 const RESULTS = path.join(HERE, 'results');
 const TIMEOUT_MS = Number(arg('timeout') ?? 240) * 1000;
-const CODER = 'agentic-router:coder';
+const CODER = 'do-it-all-claude-code:coder';
 /** Steps one scripted coder issues. The coder role has a turn limit (40), and a result is read on the turn after its step. */
 const STEPS_PER_CODER = 20;
 
@@ -51,7 +51,7 @@ const STEPS_PER_CODER = 20;
 function cleanEnv(base, extra) {
   const env = {};
   for (const [k, v] of Object.entries(base)) {
-    if (/^(CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|AGENTIC_ROUTER)/i.test(k)) continue;
+    if (/^(CLAUDE|ANTHROPIC|AWS_BEARER|MCP_|ENABLE_TOOL_SEARCH|DO_IT_ALL_CLAUDE_CODE|AGENTIC_ROUTER)/i.test(k)) continue;
     env[k] = v;
   }
   return Object.assign(env, extra);
@@ -253,7 +253,7 @@ async function runScenario(s, ctx) {
     '--allowedTools', ...s.allowedTools];
   const env = cleanEnv(process.env, {
     CLAUDE_CONFIG_DIR: ctx.configDir, ANTHROPIC_BASE_URL: `http://127.0.0.1:${ctx.fake.port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1',
-    ENABLE_TOOL_SEARCH: 'false', AGENTIC_ROUTER_HOME: ctx.home, E2E_LOG_DIR: logDir,
+    ENABLE_TOOL_SEARCH: 'false', DO_IT_ALL_CLAUDE_CODE_HOME: ctx.home, E2E_LOG_DIR: logDir,
   });
   const r = await runClaude({ args, stdin: 'Fix the wording of the comment in src/a.ts.', cwd: fx.dir, env });
   await sleep(800);   // let the last hooks finish their log line
@@ -336,7 +336,7 @@ async function runSquatter(ctx, d) {
   ctx.fake.setScenario({ name: 'squatter', steps: [], dispatch: {}, noDispatch: true });
   const env = cleanEnv(process.env, {
     CLAUDE_CONFIG_DIR: ctx.configDir, ANTHROPIC_BASE_URL: `http://127.0.0.1:${ctx.fake.port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1',
-    ENABLE_TOOL_SEARCH: 'false', AGENTIC_ROUTER_HOME: ctx.home,
+    ENABLE_TOOL_SEARCH: 'false', DO_IT_ALL_CLAUDE_CODE_HOME: ctx.home,
   });
   const r = await runClaude({ args: ['-p', '--plugin-dir', path.join(REPO, 'plugin'), '--model', 'sonnet', '--max-turns', '2', '--output-format', 'json'],
     stdin: `Say hello. ${SQUAT_MARKER}`, cwd: fx.dir, env });
@@ -362,7 +362,7 @@ async function runSquatter(ctx, d) {
 
 function daemon(tmp) {
   const home = path.join(tmp, 'home');
-  const env = cleanEnv(process.env, { AGENTIC_ROUTER_HOME: home });
+  const env = cleanEnv(process.env, { DO_IT_ALL_CLAUDE_CODE_HOME: home });
   const cli = (...a) => execFileSync(process.execPath, [path.join(REPO, 'packages', 'cli', 'src', 'index.ts'), ...a], { env, encoding: 'utf8', cwd: tmp, timeout: 60_000 });
   return { home, cli };
 }
@@ -384,7 +384,7 @@ async function selftest() {
   const st = newState();
   const main = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: 'go' }] }, {}));
   assert(main.block.name === 'Agent' && main.block.input.subagent_type === CODER, 'script: the lead dispatches the router coder');
-  const again = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', is_error: true, content: 'PreToolUse:Agent hook error: [agentic-router] subtask A: pass model and effort on the Agent call. The coder runs at step s2 (model="sonnet", effort="medium") for this L2 request.' }] }] }, {}));
+  const again = nextAction(scn, st, facts({ tools: [{ name: 'Agent' }], messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', is_error: true, content: 'PreToolUse:Agent hook error: [do-it-all-claude-code] subtask A: pass model and effort on the Agent call. The coder runs at step s2 (model="sonnet", effort="medium") for this L2 request.' }] }] }, {}));
   assert(again.block.name === 'Agent' && again.block.input.model === 'sonnet' && again.block.input.effort === 'medium', 'script: a refused dispatch is repeated with the step the daemon names');
   let last = { role: 'user', content: 'go' }, n = 0;
   const tags = [again.block.input.prompt.split('\n')[0]];
@@ -419,7 +419,7 @@ async function selftest() {
   // the real guard on the real hook command line, for one deny and one silent Bash step (scope record written by hand)
   fs.mkdirSync(path.join(d.home, 'agents'), { recursive: true });
   fs.writeFileSync(path.join(d.home, 'agents', 'self1.json'), JSON.stringify({ sessionId: 's', subtaskId: 'A', role: 'coder', pairing: 'confirmed', scope: { allowed: ['src/**'], protected: [] } }));
-  const guard = step => spawnSync(process.execPath, [path.join(REPO, 'plugin', 'hooks', 'guard.mjs')], { encoding: 'utf8', env: cleanEnv(process.env, { AGENTIC_ROUTER_HOME: d.home }),
+  const guard = step => spawnSync(process.execPath, [path.join(REPO, 'plugin', 'hooks', 'guard.mjs')], { encoding: 'utf8', env: cleanEnv(process.env, { DO_IT_ALL_CLAUDE_CODE_HOME: d.home }),
     input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', agent_id: 'self1', agent_type: CODER, cwd: fx.dir, tool_name: step.tool, tool_input: step.input }) });
   const decision = step => { const r = guard(step); try { return JSON.parse(r.stdout).hookSpecificOutput?.permissionDecision ?? 'other'; } catch { return r.stdout.trim() === '' ? 'silent' : 'other'; } };
   const wrong = list.filter(s => { const got = decision(s); return s.expect === 'deny' ? got !== 'deny' : got === 'deny'; }).map(s => `${s.id}=${decision(s)}`);
@@ -434,7 +434,7 @@ async function selftest() {
   const squat = await listenRetry(cfg.daemonPort);
   // asynchronous: the listener lives in this process and must be able to answer while the program runs
   const plug = (file, args, input) => new Promise(resolve => {
-    const c = spawn(process.execPath, [path.join(REPO, 'plugin', file), ...args], { env: cleanEnv(process.env, { AGENTIC_ROUTER_HOME: d.home }), stdio: ['pipe', 'pipe', 'ignore'] });
+    const c = spawn(process.execPath, [path.join(REPO, 'plugin', file), ...args], { env: cleanEnv(process.env, { DO_IT_ALL_CLAUDE_CODE_HOME: d.home }), stdio: ['pipe', 'pipe', 'ignore'] });
     let out = '';
     c.stdout.on('data', x => { out += x; });
     c.on('close', () => resolve(out));

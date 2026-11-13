@@ -26,7 +26,7 @@ import { X509Certificate, createPrivateKey } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { routerHome } from '@agentic-router/core';
+import { routerHome } from '@do-it-all-claude-code/core';
 
 export const CERT_DAYS = 825;
 /** init, mode api and start renew a certificate this close to its end. */
@@ -107,7 +107,7 @@ distinguished_name = dn
 x509_extensions = v3ext
 prompt = no
 [dn]
-CN = agentic-router local proxy
+CN = do-it-all-claude-code local proxy
 [v3ext]
 subjectAltName = IP:127.0.0.1, DNS:localhost
 basicConstraints = critical, CA:FALSE

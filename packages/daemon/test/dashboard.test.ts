@@ -12,7 +12,7 @@ const TOKEN = 'dash-token-0123456789abcdef';
 
 function tmpDist(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-dist-'));
-  fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>Agentic Router</title><div id=app></div>');
+  fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>Do It All Claude Code</title><div id=app></div>');
   fs.mkdirSync(path.join(dir, 'assets'));
   fs.writeFileSync(path.join(dir, 'assets', 'index-abcd1234.js'), 'console.log(1)');
   return dir;

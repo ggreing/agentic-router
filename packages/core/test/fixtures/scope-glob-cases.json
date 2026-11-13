@@ -32,7 +32,7 @@
     { "path": ".GitHub/Workflows/CI.yml", "expect": true },
     { "path": ".git/hooks/post-checkout", "expect": true },
     { "path": "sub/.git/config", "expect": true },
-    { "path": ".agentic-router/verify.json", "expect": true },
+    { "path": ".do-it-all-claude-code/verify.json", "expect": true },
     { "path": "pkg/.npmrc", "expect": true },
     { "path": "src/env.ts", "expect": false },
     { "path": "docs/claude.md", "expect": false },

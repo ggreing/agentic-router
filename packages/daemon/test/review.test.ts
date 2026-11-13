@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS, ROUTER_TOOL_PREFIX, formatTriageContext, triage } from '@agentic-router/core';
+import { DEFAULT_PRESETS, ROUTER_TOOL_PREFIX, formatTriageContext, triage } from '@do-it-all-claude-code/core';
 import { parseReportVerdict, reportAsksForScope } from '../src/review.ts';
 import { makeRepo, postHook, rmrf, rows, startTestDaemon, type HookInput, type TestDaemon } from './helpers.ts';
 
@@ -80,11 +80,11 @@ function session(d: TestDaemon, sid: string, cwd: string) {
     const agent = `ag${++seq}`;
     const [model, effort] = steps[role]!;
     const dispatched = await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_r${++seq}`,
-      tool_input: { subagent_type: `agentic-router:${role}`, prompt: `[subtask:${tag}]\n[scope: src/**]\nwork`, model, effort } });
+      tool_input: { subagent_type: `do-it-all-claude-code:${role}`, prompt: `[subtask:${tag}]\n[scope: src/**]\nwork`, model, effort } });
     assert.deepEqual(dispatched, {}, `dispatch ${tag}: ${JSON.stringify(dispatched)}`);
-    await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `agentic-router:${role}` });
+    await post({ hook_event_name: 'SubagentStart', agent_id: agent, agent_type: `do-it-all-claude-code:${role}` });
     if (edit) fs.writeFileSync(path.join(cwd, 'src', edit), `// ${tag}\n`);
-    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `agentic-router:${role}`, stop_hook_active: false, last_assistant_message: report }), {});
+    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: agent, agent_type: `do-it-all-claude-code:${role}`, stop_hook_active: false, last_assistant_message: report }), {});
     await d.router.drain();
     const note = await post({ hook_event_name: 'UserPromptSubmit', prompt: `<task-notification>\n<task-id>${agent}</task-id>\n<status>completed</status>\n</task-notification>` });
     return note.hookSpecificOutput?.additionalContext ?? '';

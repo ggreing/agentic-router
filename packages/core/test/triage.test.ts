@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRESETS as PRESETS0, L3_PLANNED_AS_L2, L3_SIGNS, L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, formatTriageContext, l3SignalRoles, promptFeatures, triage, uncertainLevel, withLeadModel } from '@agentic-router/core';
+import { DEFAULT_PRESETS as PRESETS0, L3_PLANNED_AS_L2, L3_SIGNS, L3_SIZE_RULE, RULE_CONFIDENCE_THRESHOLD, TEAM_SIZE_RULE, formatTriageContext, l3SignalRoles, promptFeatures, triage, uncertainLevel, withLeadModel } from '@do-it-all-claude-code/core';
 
 // Briefs for delegated teams: L1 is lead-direct by default (decision 88), so tests of the team brief turn it off.
 const DEFAULT_PRESETS = PRESETS0;
@@ -27,11 +27,11 @@ test('a new service request is planned at L2 and keeps its L3 signs (decision 11
 
   // The team brief of a marked request shows the L3 team as the lead's own way up, with the first call that raises it.
   const brief = formatTriageContext(r, DEFAULT_PRESETS.L2);
-  assert.match(brief, /^\[agentic-router\] level L2 /);
+  assert.match(brief, /^\[do-it-all-claude-code\] level L2 /);
   assert.match(brief, /team preset L2: architect x1 @s3/);
   assert.ok(brief.includes(`If it is clearly beyond this team (${L3_SIGNS}, or edits in ${L3_SIZE_RULE.files} or more files), use the L3 team instead: make your first Agent call the L3 team's architect with the L3 values below, and the router re-plans this request as L3. When unsure, stay with this team.`));
   const l3Part = brief.split('L3 team (team preset L3):')[1]!;
-  assert.match(l3Part, /^\n   - architect: subagent_type "agentic-router:architect", model "opus", effort "high"/);
+  assert.match(l3Part, /^\n   - architect: subagent_type "do-it-all-claude-code:architect", model "opus", effort "high"/);
   assert.equal(brief.match(/\[subtask:<ID>\]/g)!.length, 1);
   // an unmarked L2 request, a stored row without the mark, a lead-direct L3 and an L3 no first call could tell apart: no L3 text
   const plain = triage({ prompt: 'Refactor the validation module across multiple files and add an audit log' });
@@ -72,7 +72,7 @@ test('lead brief is directive and spells out the Agent call for every preset rol
     const p = TEAM[level];
     const text = formatTriageContext({ level, confidence: 0.9, source: 'rule', taskType: 'feature', preset: p.id, budgetUsd: p.budgetUsd, rationale: 'x' }, p);
     assert.match(text, /Do not edit or write files yourself/);
-    for (const r of p.roles) assert.match(text, new RegExp(`subagent_type "agentic-router:${r.role}", model "(haiku|sonnet|opus|fable)", effort "\\w+"`));
+    for (const r of p.roles) assert.match(text, new RegExp(`subagent_type "do-it-all-claude-code:${r.role}", model "(haiku|sonnet|opus|fable)", effort "\\w+"`));
     assert.match(text, /\[scope: /);
   }
 });
@@ -194,11 +194,11 @@ test('with a lead that delegates L1, an uncertain request gets the L2 team and s
   assert.ok(o.confidence < RULE_CONFIDENCE_THRESHOLD);
   assert.match(o.rationale, /-> L2 team, the lead picks the roles$/);
   const brief = formatTriageContext(o, opus[o.level], opus);
-  assert.match(brief, /^\[agentic-router\] level L2 \(source=default/);
+  assert.match(brief, /^\[do-it-all-claude-code\] level L2 \(source=default/);
   assert.match(brief, /Do not edit or write files yourself/);
   assert.match(brief, new RegExp(`the staffing is yours: call only the roles the change needs\\. One coder subtask alone is right for a small change \\(fewer than ${TEAM_SIZE_RULE.files} files, one module\\)`));
   assert.match(brief, new RegExp(`${TEAM_SIZE_RULE.dirs} or more modules or layers`));
-  for (const r of DEFAULT_PRESETS.L2.roles) assert.match(brief, new RegExp(`subagent_type "agentic-router:${r.role}"`));
+  for (const r of DEFAULT_PRESETS.L2.roles) assert.match(brief, new RegExp(`subagent_type "do-it-all-claude-code:${r.role}"`));
   assert.doesNotMatch(brief, /handled by you directly|L3/);
 
   // requests settled as small use the one-coder L1 team; settled team requests get no staffing line
@@ -236,20 +236,20 @@ test('features are numbers and categories, never prompt text', () => {
 test('an uncertain lead-direct request gets the rubric and the L2 call values; a settled one does not', () => {
   const t = triage({ prompt: '태스크에 댓글 기능 넣어줘' });
   const text = formatTriageContext(t, DEFAULT_PRESETS.L1);
-  assert.match(text, /^\[agentic-router\] level L1 \(source=default, confidence=0\.\d\d\)/);
+  assert.match(text, /^\[do-it-all-claude-code\] level L1 \(source=default, confidence=0\.\d\d\)/);
   assert.match(text, /handled by you directly/);
   assert.match(text, new RegExp(`${TEAM_SIZE_RULE.files} or more files`));
   assert.match(text, new RegExp(`${TEAM_SIZE_RULE.dirs} or more modules`));
-  for (const r of DEFAULT_PRESETS.L2.roles) assert.match(text, new RegExp(`subagent_type "agentic-router:${r.role}", model "(haiku|sonnet|opus)", effort "\\w+"`));
+  for (const r of DEFAULT_PRESETS.L2.roles) assert.match(text, new RegExp(`subagent_type "do-it-all-claude-code:${r.role}", model "(haiku|sonnet|opus)", effort "\\w+"`));
   assert.match(text, /\[subtask:<ID>\]/);
   // decision 113: the L3 team is offered too, with a higher bar and the call that tells the router "L3"
   assert.match(text, new RegExp(`Which team: the L2 team, unless the change is clearly beyond it: ${L3_SIGNS}, or edits in ${L3_SIZE_RULE.files} or more files\\.`));
   assert.match(text, /When unsure between the two, use L2\./);
   assert.match(text, /as L3 when that call is the L3 team's architect, coder or reviewer with the L3 values below, as L2 for any other call/);
   const [l2Part, l3Part] = text.split('L3 team (team preset L3); make your first call the architect:');
-  assert.match(l2Part!, /L2 team \(team preset L2\):\n   - architect: subagent_type "agentic-router:architect", model "sonnet", effort "medium"/);
-  assert.match(l3Part!, /^\n   - architect: subagent_type "agentic-router:architect", model "opus", effort "high"/);
-  assert.match(l3Part!, /agentic-router:ui-designer/);
+  assert.match(l2Part!, /L2 team \(team preset L2\):\n   - architect: subagent_type "do-it-all-claude-code:architect", model "sonnet", effort "medium"/);
+  assert.match(l3Part!, /^\n   - architect: subagent_type "do-it-all-claude-code:architect", model "opus", effort "high"/);
+  assert.match(l3Part!, /do-it-all-claude-code:ui-designer/);
   assert.equal(text.match(/\[subtask:<ID>\]/g)!.length, 1);
   assert.ok(L3_SIZE_RULE.files > TEAM_SIZE_RULE.files);
   // the roles that signal L3: in both teams, at a different start step (the tester starts at s1 in both)
@@ -257,9 +257,9 @@ test('an uncertain lead-direct request gets the rubric and the L2 call values; a
   // the escalation teams are the ones passed in (a customised teams.yaml); a single preset is the L2 team alone
   const custom = { ...DEFAULT_PRESETS.L2, roles: [{ role: 'coder' as const, count: 1, start: 's3' as const }] };
   const customText = formatTriageContext(t, DEFAULT_PRESETS.L1, custom);
-  assert.match(customText, /agentic-router:coder", model "sonnet", effort "medium"/);
+  assert.match(customText, /do-it-all-claude-code:coder", model "sonnet", effort "medium"/);
   assert.match(customText, /re-plans this request as L2 at your first call/);
-  assert.doesNotMatch(customText, /agentic-router:architect|L3/);
+  assert.doesNotMatch(customText, /do-it-all-claude-code:architect|L3/);
   const both = formatTriageContext(t, DEFAULT_PRESETS.L1, { ...DEFAULT_PRESETS, L2: custom });
   assert.match(both, /as L3 when that call is the L3 team's coder with the L3 values below/);
   assert.match(both, /make your first call the coder:/);

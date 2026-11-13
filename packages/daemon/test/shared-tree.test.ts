@@ -30,8 +30,8 @@ async function dispatch(d: TestDaemon, cwd: string, sid: string, agentId: string
   };
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L1_PROMPT });
   await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] fix parse\n[scope: src/**]', model: 'haiku', effort: 'low' } });
-  await post({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'agentic-router:coder' });
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] fix parse\n[scope: src/**]', model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder' });
   return post;
 }
 
@@ -43,7 +43,7 @@ test('shared work tree: the user\'s uncommitted changes are not counted; one in-
     const post = await dispatch(d, repo, 'shared-ok', 'ag-1');
     assert.equal(rows(d, 'SELECT snapshot FROM agents')[0]!.snapshot !== null, true);
     write(repo, 'src/parse.ts', 'export const parse = (s = "") => s.length;\n');
-    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-1', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     assert.deepEqual(out, {});
     assert.deepEqual(rows(d, 'SELECT status, verdict FROM subtasks'), [{ status: 'passed', verdict: 'meet' }]);
     assert.equal(scopeDetail(d), 'shared work tree (the user\'s checkout; 2 uncommitted change(s) that were already there are not counted): 1 file(s) changed during the subtask');
@@ -59,7 +59,7 @@ test('shared work tree: an edit outside the scope fails, including a further edi
     write(repo, 'src/parse.ts', 'export const parse = () => 2;\n');
     write(repo, 'docs/notes.md', 'notes\nuser edit, not committed\nand the subagent appended this\n');
     // no transcript: every out-of-scope change counts (decision 95: the strict fallback)
-    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-2', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-2', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     assert.equal(out.decision, 'block');
     assert.match(out.reason ?? '', /shared work tree \(the user's checkout; 1 uncommitted change\(s\) that were already there are not counted\): changed outside the allowed scope \[src\/\*\*\]: docs\/notes\.md/);
     assert.ok(!(out.reason ?? '').includes('scratch.txt'));
@@ -76,7 +76,7 @@ test('isolated worktree (isolation "worktree" on the call): checks run there and
     write(wt, 'src/parse.ts', 'export const parse = () => 3;\n');
     git(wt, 'add', '-A');
     git(wt, 'commit', '-qm', '[subtask:A] fix parse');
-    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-3', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-3', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     assert.deepEqual(out, {});
     assert.equal(scopeDetail(d), '1 file(s) changed during the subtask');
     assert.equal(JSON.parse(String(rows(d, 'SELECT snapshot FROM agents')[0]!.snapshot)).isolated, true);
@@ -96,8 +96,8 @@ async function asyncLaunch(d: TestDaemon, cwd: string, sid: string, agentId: str
   };
   const prompt = '[subtask:A] fix parse\n[scope: src/**]';
   await post({ hook_event_name: 'UserPromptSubmit', prompt: L1_PROMPT });
-  await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'agentic-router:coder', prompt, model: 'haiku', effort: 'low' } });
-  await post({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'agentic-router:coder', prompt, model: 'haiku', effort: 'low' },
+  await post({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt, model: 'haiku', effort: 'low' } });
+  await post({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt, model: 'haiku', effort: 'low' },
     tool_response: { isAsync: true, status: 'async_launched', agentId, prompt, resolvedModel: 'claude-haiku-5-5' } });
   return post;
 }
@@ -107,7 +107,7 @@ test('E2 order (async PostToolUse before SubagentStart): the start still records
   try {
     const post = await asyncLaunch(d, repo, 'e2-order', 'ag-e2');
     assert.deepEqual(rows(d, 'SELECT pairing, cwd, snapshot FROM agents'), [{ pairing: 'confirmed', cwd: null, snapshot: null }]);
-    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-e2', agent_type: 'agentic-router:coder' });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'ag-e2', agent_type: 'do-it-all-claude-code:coder' });
     const [a] = rows(d, 'SELECT pairing, cwd, snapshot, subtask_id FROM agents');
     assert.equal(a!.pairing, 'confirmed');
     assert.equal(a!.cwd, repo);
@@ -118,7 +118,7 @@ test('E2 order (async PostToolUse before SubagentStart): the start still records
     assert.equal(JSON.parse(fs.readFileSync(path.join(d.home, 'agents', 'ag-e2.json'), 'utf8')).subtaskId, 'A');
 
     write(repo, 'src/parse.ts', 'export const parse = () => 4;\n');
-    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-e2', agent_type: 'agentic-router:coder', stop_hook_active: false }), {});
+    assert.deepEqual(await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-e2', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false }), {});
     assert.equal(scopeDetail(d), 'shared work tree (the user\'s checkout; 2 uncommitted change(s) that were already there are not counted): 1 file(s) changed during the subtask');
     assert.deepEqual(rows(d, 'SELECT status, verdict FROM subtasks'), [{ status: 'passed', verdict: 'meet' }]);
   } finally { rmrf(repo); }
@@ -129,7 +129,7 @@ test('no start snapshot at all: the scope is reported against HEAD as baseline u
   try {
     const post = await asyncLaunch(d, repo, 'no-snap', 'ag-ns');   // SubagentStart never arrives
     write(repo, 'src/parse.ts', 'export const parse = () => 5;\n');
-    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-ns', agent_type: 'agentic-router:coder', stop_hook_active: false });
+    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-ns', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false });
     assert.deepEqual(out, {});
     assert.equal(scopeDetail(d), 'no start snapshot (baseline unknown): 3 uncommitted change(s) against HEAD; outside the allowed scope [src/**]: docs/notes.md, scratch.txt '
       + '(may include the user\'s own uncommitted changes; not counted as a failure)');
@@ -156,7 +156,7 @@ test('decision 95: the subagent may further edit an in-scope file the user had a
     write(repo, 'src/parse.ts', 'export const parse = () => "user draft";\n');   // the user's uncommitted in-scope change
     const post = await dispatch(d, repo, 'further-in', 'ag-f1');
     write(repo, 'src/parse.ts', 'export const parse = (s = "") => s.length; // finished by the subagent\n');
-    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f1', agent_type: 'agentic-router:coder', stop_hook_active: false,
+    const out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f1', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false,
       agent_transcript_path: editTranscript(d, 'ag-f1', repo, 'src/parse.ts') });
     assert.deepEqual(out, {});
     assert.deepEqual(rows(d, 'SELECT status, verdict FROM subtasks'), [{ status: 'passed', verdict: 'meet' }]);
@@ -170,7 +170,7 @@ test('decision 95: a further edit to the user\'s out-of-scope file counts only w
     let post = await dispatch(d, repo, 'further-out-1', 'ag-f2');
     write(repo, 'src/parse.ts', 'export const parse = () => 6;\n');
     write(repo, 'docs/notes.md', 'notes\nuser edit, not committed\nthe user kept typing\n');
-    let out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f2', agent_type: 'agentic-router:coder', stop_hook_active: false,
+    let out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f2', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false,
       agent_transcript_path: editTranscript(d, 'ag-f2', repo, 'src/parse.ts') });
     assert.deepEqual(out, {});
     assert.match(scopeDetail(d), /changed outside the scope but not by this subagent's edit tools \(may be another process; not counted\): docs\/notes\.md/);
@@ -178,7 +178,7 @@ test('decision 95: a further edit to the user\'s out-of-scope file counts only w
     // made by the subagent's Edit tool: fails
     post = await dispatch(d, repo, 'further-out-2', 'ag-f3');
     write(repo, 'docs/notes.md', 'notes\nuser edit, not committed\nthe user kept typing\nand the subagent edited it\n');
-    out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f3', agent_type: 'agentic-router:coder', stop_hook_active: false,
+    out = await post({ hook_event_name: 'SubagentStop', agent_id: 'ag-f3', agent_type: 'do-it-all-claude-code:coder', stop_hook_active: false,
       agent_transcript_path: editTranscript(d, 'ag-f3', repo, 'docs/notes.md') });
     assert.equal(out.decision, 'block');
     assert.match(out.reason ?? '', /changed outside the allowed scope \[src\/\*\*\]: docs\/notes\.md/);

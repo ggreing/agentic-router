@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import { costUsd } from '@agentic-router/core/pricing';
+import { costUsd } from '@do-it-all-claude-code/core/pricing';
 import { proveProxy } from '../src/proof.ts';
 import { reservationFor, requestShape } from '../src/reserve.ts';
 import { createProxy } from '../src/server.ts';
@@ -21,7 +21,7 @@ import { selfSignedCert } from './tls.ts';
 
 const body = JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] });
 
-function tlsFiles(dir: string, cn = 'agentic-router local proxy') {
+function tlsFiles(dir: string, cn = 'do-it-all-claude-code local proxy') {
   const c = selfSignedCert(cn, ['localhost'], ['127.0.0.1']);
   fs.mkdirSync(dir, { recursive: true });
   const certFile = path.join(dir, 'proxy-cert.pem');

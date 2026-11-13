@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import type { UsageRow } from '@agentic-router/core';
+import type { UsageRow } from '@do-it-all-claude-code/core';
 import { Ledger } from '../src/ledger.ts';
 import type { Logger } from '../src/log.ts';
 import { CROSS_CHECK_TOLERANCE, MAX_ROWS_PER_POST, crossCheck, validRow } from '../src/proxyusage.ts';
@@ -96,9 +96,9 @@ test('decision 130: a subagent\'s rows (agent id = hook agent id) are its subtas
     await post({ hook_event_name: 'UserPromptSubmit', prompt: L2_PROMPT, prompt_id: 'p-1' });
     assert.deepEqual(await post({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1',
-      tool_input: { subagent_type: 'agentic-router:coder', prompt: '[subtask:A] work\n[scope: src/**]', model: 'haiku', effort: 'low' },
+      tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: '[subtask:A] work\n[scope: src/**]', model: 'haiku', effort: 'low' },
     }), {});
-    await post({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'agentic-router:coder' });
+    await post({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'do-it-all-claude-code:coder' });
     const req = String(rows(d, 'SELECT id FROM requests')[0]!.id);
     // a transcript cost first (subscription-style), then the proxy rows arrive
     d.ledger.replaceAgentCosts('a1', [{ requestId: req, subtaskId: 'A', agentId: 'a1', source: 'transcript', modelId: 'claude-haiku-5-5', calls: 2,

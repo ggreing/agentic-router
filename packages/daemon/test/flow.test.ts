@@ -1,11 +1,11 @@
 // End-to-end handler flow over HTTP, driven by the recorded spike runs (fixtures), a temp router
 // home and temp git repos. Fixture paths are retargeted to the temp repo; probe agents become
-// agentic-router:coder.
+// do-it-all-claude-code:coder.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PRESETS, PROTECTED_WRITE_PATHS, costUsd, formatTriageContext, scopeKey, triage, type Usage } from '@agentic-router/core';
+import { DEFAULT_PRESETS, PROTECTED_WRITE_PATHS, costUsd, formatTriageContext, scopeKey, triage, type Usage } from '@do-it-all-claude-code/core';
 import { AWAITING_USER_MARKER } from '../src/continuation.ts';
 import type { StatusView } from '../src/router.ts';
 import {
@@ -214,7 +214,7 @@ const base = (sessionId: string, cwd: string) => ({ session_id: sessionId, cwd, 
 const prompt = (sessionId: string, cwd: string, text: string): HookInput => ({ ...base(sessionId, cwd), hook_event_name: 'UserPromptSubmit', prompt: text });
 const agentCall = (sessionId: string, cwd: string, o: { type?: string; prompt: string; model?: string; effort?: string }): HookInput => ({
   ...base(sessionId, cwd), hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `tu-${Math.random()}`,
-  tool_input: { subagent_type: o.type ?? 'agentic-router:coder', prompt: o.prompt, description: 'd', ...(o.model ? { model: o.model } : {}), ...(o.effort ? { effort: o.effort } : {}) },
+  tool_input: { subagent_type: o.type ?? 'do-it-all-claude-code:coder', prompt: o.prompt, description: 'd', ...(o.model ? { model: o.model } : {}), ...(o.effort ? { effort: o.effort } : {}) },
 });
 const reasonOf = (o: Out) => o.hookSpecificOutput?.permissionDecision === 'deny' ? o.hookSpecificOutput.permissionDecisionReason ?? '' : '';
 
@@ -224,8 +224,8 @@ test('Agent call rules: tag, role, managed types only, fixed L0 team, budget', (
   await out(d, prompt('rules', cwd, L0_PROMPT));
   assert.equal(rows(d, 'SELECT level FROM requests')[0]!.level, 'L0');
   assert.match(reasonOf(await out(d, agentCall('rules', cwd, { prompt: 'no tag here', model: 'haiku', effort: 'low' }))), /must start with "\[subtask:<ID>\]"/);
-  assert.match(reasonOf(await out(d, agentCall('rules', cwd, { type: 'agentic-router:lead', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' }))), /unknown router agent type/);
-  assert.match(reasonOf(await out(d, agentCall('rules', cwd, { type: 'agentic-router:reviewer', prompt: '[subtask:R] x', model: 'haiku', effort: 'low' }))), /L0 team is fixed \(coder x1\)/);
+  assert.match(reasonOf(await out(d, agentCall('rules', cwd, { type: 'do-it-all-claude-code:lead', prompt: '[subtask:A] x', model: 'haiku', effort: 'low' }))), /unknown router agent type/);
+  assert.match(reasonOf(await out(d, agentCall('rules', cwd, { type: 'do-it-all-claude-code:reviewer', prompt: '[subtask:R] x', model: 'haiku', effort: 'low' }))), /L0 team is fixed \(coder x1\)/);
   assert.match(reasonOf(await out(d, agentCall('rules', cwd, { prompt: '[subtask:A] x\n[scope: ../up/**]', model: 'haiku', effort: 'low' }))), /repo-relative/);
   assert.match(reasonOf(await out(d, agentCall('rules', cwd, { prompt: '[subtask:A] x' }))), /pass model and effort/);
   // not ours: untouched, not recorded as a subtask
@@ -236,7 +236,7 @@ test('Agent call rules: tag, role, managed types only, fixed L0 team, budget', (
   assert.match(reasonOf(await out(d, agentCall('rules', cwd, { prompt: '[subtask:A2] x', model: 'haiku', effort: 'low' }))),
     /slot\(s\) of the L0 team are busy; wait for one to finish \(a subtask that was allowed but never started can be dispatched again with the same ID\)/);
   // once its subagent runs, the ID is busy
-  await out(d, { ...base('rules', cwd), hook_event_name: 'SubagentStart', agent_id: 'ag-rules', agent_type: 'agentic-router:coder' });
+  await out(d, { ...base('rules', cwd), hook_event_name: 'SubagentStart', agent_id: 'ag-rules', agent_type: 'do-it-all-claude-code:coder' });
   assert.match(reasonOf(await out(d, agentCall('rules', cwd, { prompt: '[subtask:A] third', model: 'haiku', effort: 'low' }))), /already running/);
   assert.deepEqual(rows(d, 'SELECT id, status, attempts FROM subtasks'), [{ id: 'A', status: 'running', attempts: 2 }]);
 
@@ -253,14 +253,14 @@ test('pairing by order is repaired from PostToolUse(Agent) when subagents start 
   await out(d, prompt(sid, cwd, L1_PROMPT));
   assert.deepEqual(await out(d, agentCall(sid, cwd, { prompt: '[subtask:A] a', model: 'haiku', effort: 'low' })), {});
   assert.deepEqual(await out(d, agentCall(sid, cwd, { prompt: '[subtask:B] b', model: 'haiku', effort: 'low' })), {});   // L1: lead may add a 2nd coder (slot 1)
-  const start = (agentId: string) => ({ ...base(sid, cwd), hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'agentic-router:coder' });
+  const start = (agentId: string) => ({ ...base(sid, cwd), hook_event_name: 'SubagentStart', agent_id: agentId, agent_type: 'do-it-all-claude-code:coder' });
   await Promise.all([out(d, start('ag-1')), out(d, start('ag-2'))]);
   const bound = Object.fromEntries(rows(d, 'SELECT id, agent_id FROM subtasks').map(r => [r.id, r.agent_id]));
   assert.notEqual(bound.A, bound.B);
   // the results say: ag-2 ran B, ag-1 ran A (whatever the start order was)
   const done = (agentId: string, tag: string): HookInput => ({
     ...base(sid, cwd), hook_event_name: 'PostToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:${tag}] x`, model: 'haiku', effort: 'low' },
+    tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:${tag}] x`, model: 'haiku', effort: 'low' },
     tool_response: { status: 'completed', agentId, prompt: `[subtask:${tag}] x`, resolvedModel: 'claude-haiku-5-5', usage: { input_tokens: 10, output_tokens: 10 } },
   });
   // force the wrong pairing first, then let PostToolUse repair it
@@ -323,7 +323,7 @@ test('session_start after compact or resume re-injects the ledger summary', () =
   await out(d, prompt(sid, cwd, L1_PROMPT));
   await out(d, agentCall(sid, cwd, { prompt: '[subtask:A] a\n[scope: src/**]', model: 'haiku', effort: 'low' }));
   const ctx = (await out(d, start('compact'))).hookSpecificOutput?.additionalContext ?? '';
-  assert.match(ctx, /^\[agentic-router\] level L1/);
+  assert.match(ctx, /^\[do-it-all-claude-code\] level L1/);
   assert.match(ctx, /ledger \(after compaction\)/);
   assert.match(ctx, /A coder#0 @s1 \(model=haiku, effort=low\) pending/);
   assert.match((await out(d, start('resume'))).hookSpecificOutput?.additionalContext ?? '', /ledger \(resumed session\)/);

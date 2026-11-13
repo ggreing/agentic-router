@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import zlib from 'node:zlib';
-import { CACHE_MULTIPLIER, PRICING_PER_MTOK } from '@agentic-router/core/pricing';
+import { CACHE_MULTIPLIER, PRICING_PER_MTOK } from '@do-it-all-claude-code/core/pricing';
 import { MAX_TOKENS_FALLBACK, requestShape, reservationFor } from '../src/reserve.ts';
 import { FakeUpstream, SSE_HEADERS, auth, call, messageStream, startProxy, type TestProxy } from './helpers.ts';
 

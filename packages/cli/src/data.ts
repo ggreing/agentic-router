@@ -1,13 +1,13 @@
-// `agentic-router data export` and `data purge` (spec 3.7, 4.4). With the daemon running they go through its
+// `do-it-all-claude-code data export` and `data purge` (spec 3.7, 4.4). With the daemon running they go through its
 // routes (it owns the ledger); with no daemon the CLI opens the ledger itself and runs the same code
-// (@agentic-router/daemon data.ts, loaded only here so other commands do not load the daemon). A purge is never
+// (@do-it-all-claude-code/daemon data.ts, loaded only here so other commands do not load the daemon). A purge is never
 // run beside a daemon that is alive but not answering.
 
-const lib = () => import('@agentic-router/daemon');
+const lib = () => import('@do-it-all-claude-code/daemon');
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths, routerHome } from '@agentic-router/core';
-import type { Ledger, PurgeResult } from '@agentic-router/daemon';
+import { paths, routerHome } from '@do-it-all-claude-code/core';
+import type { Ledger, PurgeResult } from '@do-it-all-claude-code/daemon';
 import { daemonIdentity, daemonProcessAlive, daemonRequest } from './daemonctl.ts';
 import { removeEndpointFiles } from './endpointfiles.ts';
 import { readConfig } from './setup.ts';
@@ -81,7 +81,7 @@ export async function dataExport(f: Flags, d: DataDeps): Promise<number> {
   if (api) {
     const q = new URLSearchParams({ ...(since.value ? { since: since.value } : {}), ...(until.value ? { until: until.value } : {}) }).toString();
     const r = await api.get(`${EXPORT_PATH}${q ? `?${q}` : ''}`);
-    if (!r || r.status !== 200) { d.out(r?.status === 404 ? 'This daemon has no data export: restart it with `agentic-router stop` and `agentic-router start` after updating.' : `The daemon could not export (HTTP ${r?.status ?? 'no answer'}).`); return 1; }
+    if (!r || r.status !== 200) { d.out(r?.status === 404 ? 'This daemon has no data export: restart it with `do-it-all-claude-code stop` and `do-it-all-claude-code start` after updating.' : `The daemon could not export (HTTP ${r?.status ?? 'no answer'}).`); return 1; }
     text = r.body;
   } else {
     const o = await d.openLedger();
@@ -120,11 +120,11 @@ export async function dataPurge(f: Flags, d: DataDeps): Promise<number> {
   const before = await dateFlag(f, 'before', d);
   if (!before.ok) return 2;
   const all = f.all === true;
-  if (all === !!before.value) { d.out('usage: agentic-router data purge --before <date> | --all [--yes]'); return 2; }
+  if (all === !!before.value) { d.out('usage: do-it-all-claude-code data purge --before <date> | --all [--yes]'); return 2; }
   const scope = all ? '(all of them)' : `closed before ${before.value}`;
   const body = all ? { all: true } : { before: before.value };
   const api = await d.daemon();
-  if (!api && d.daemonStuck()) { d.out('The daemon is running but not answering: stop it with `agentic-router stop` first.'); return 1; }
+  if (!api && d.daemonStuck()) { d.out('The daemon is running but not answering: stop it with `do-it-all-claude-code stop` first.'); return 1; }
   const run = async (dryRun: boolean): Promise<PurgeResult | null> => {
     if (api) {
       const r = await api.post(PURGE_PATH, { ...body, dryRun });
@@ -149,7 +149,7 @@ export async function dataPurge(f: Flags, d: DataDeps): Promise<number> {
   if (!plan) return 1;
   const kept = plan.keptOpen ? ` ${plan.keptOpen} open or waiting request(s) and everything of their sessions are kept.` : '';
   if (!Object.keys(plan.rows).length && !Object.keys(plan.files ?? {}).length) { d.out(`Nothing to remove.${kept}`); return 0; }
-  d.out(`This removes ${describe(plan, scope)}.${kept} It cannot be undone; \`agentic-router data export\` first keeps a copy.`);
+  d.out(`This removes ${describe(plan, scope)}.${kept} It cannot be undone; \`do-it-all-claude-code data export\` first keeps a copy.`);
   if (f.yes !== true) {
     if (!d.isTTY) { d.out('Not a terminal: re-run with --yes to purge.'); return 1; }
     if (!await d.confirm('Purge? [y/N] ')) { d.out('Nothing removed.'); return 1; }

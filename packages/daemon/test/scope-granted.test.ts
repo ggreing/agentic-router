@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROTECTED_WRITE_PATHS } from '@agentic-router/core';
+import { PROTECTED_WRITE_PATHS } from '@do-it-all-claude-code/core';
 import { takeSnapshot } from '../src/git.ts';
 import { checkScope, type ScopeSpec } from '../src/verify.ts';
 import { git, makeRepo, rmrf, write } from './helpers.ts';

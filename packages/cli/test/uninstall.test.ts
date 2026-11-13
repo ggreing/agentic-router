@@ -1,4 +1,4 @@
-// `agentic-router uninstall` (audit B4): takes out what init and the mode commands put in, keeps what the user
+// `do-it-all-claude-code uninstall` (audit B4): takes out what init and the mode commands put in, keeps what the user
 // set, asks first, stops the daemon, deletes the key unless --keep-key. Temp settings and project, fake keychain.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { uninstall, type UninstallDeps } from '../src/uninstall.ts';
 let tmp = '';
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-cli-un-'));
-  process.env.AGENTIC_ROUTER_HOME = path.join(tmp, 'home');
+  process.env.DO_IT_ALL_CLAUDE_CODE_HOME = path.join(tmp, 'home');
 });
 const read = (f: string) => JSON.parse(fs.readFileSync(f, 'utf8')) as Record<string, any>;   // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -24,7 +24,7 @@ async function installed(): Promise<{ settings: string; project: string; plugin:
   fs.writeFileSync(settings, JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-status --fancy' }, env: { FOO: 'bar' } }));
   const plugin = path.join(tmp, 'plugin');
   fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
-  fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'agentic-router' }));
+  fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'do-it-all-claude-code' }));
   planStatusLine(settings, path.join(plugin, 'statusline.mjs'), config)!.apply();
   planApiSettings(settings, 'proxy', 47811, path.join(tmp, 'proxy'))!.apply();
   const project = path.join(tmp, 'proj');
@@ -55,7 +55,7 @@ test('audit B4: uninstall takes out the router\'s entries, puts the wrapped stat
   const { d, log, calls } = deps(i);
   assert.equal(await uninstall({}, d), 0);
   assert.deepEqual(read(i.settings), { model: 'opus', statusLine: { type: 'command', command: 'my-status --fancy' }, env: { FOO: 'bar' } });
-  assert.ok(!fs.existsSync(`${i.settings}.agentic-router.bak`), 'the backup is gone');
+  assert.ok(!fs.existsSync(`${i.settings}.do-it-all-claude-code.bak`), 'the backup is gone');
   assert.deepEqual(read(path.join(i.project, '.claude', 'settings.local.json')), { permissions: { allow: ['Bash(npm test)'] } });
   assert.equal(fs.readFileSync(path.join(i.project, '.gitignore'), 'utf8'), 'node_modules/\n');
   assert.deepEqual(calls, ['stop', 'deleteKey'], 'the daemon stops first; the key goes last');
@@ -85,9 +85,9 @@ test('audit B4: --keep-key keeps the key; declining or no terminal without --yes
 test('decision 149: with config.json gone, the status line comes back from the backup; the user\'s own apiKeyHelper too', async () => {
   const i = await installed();
   // the user had a helper of their own before API mode: it is only in the backup
-  const bak = `${i.settings}.agentic-router.bak`;
+  const bak = `${i.settings}.do-it-all-claude-code.bak`;
   fs.writeFileSync(bak, JSON.stringify({ ...read(bak), apiKeyHelper: 'corp-vault get anthropic' }));
-  fs.rmSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'config.json'));
+  fs.rmSync(path.join(process.env.DO_IT_ALL_CLAUDE_CODE_HOME!, 'config.json'));
   const { d, log } = deps(i);
   assert.equal(await uninstall({}, d), 0);
   const after = read(i.settings);
@@ -99,8 +99,8 @@ test('decision 149: with config.json gone, the status line comes back from the b
 
 test('decision 149: the backup is kept, and its path said, when what it holds could not be put back', async () => {
   const i = await installed();
-  const bak = `${i.settings}.agentic-router.bak`;
-  fs.rmSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'config.json'));
+  const bak = `${i.settings}.do-it-all-claude-code.bak`;
+  fs.rmSync(path.join(process.env.DO_IT_ALL_CLAUDE_CODE_HOME!, 'config.json'));
   // the user replaced the router's status line meanwhile: it is not ours to change, so the backup's stays the only copy
   fs.writeFileSync(i.settings, JSON.stringify({ ...read(i.settings), statusLine: { type: 'command', command: 'other-status' } }));
   const { d, log } = deps(i);
@@ -112,7 +112,7 @@ test('decision 149: the backup is kept, and its path said, when what it holds co
 
 test('decision 149: an unreadable backup is kept; an unparseable settings file stops uninstall with nothing changed', async () => {
   const i = await installed();
-  const bak = `${i.settings}.agentic-router.bak`;
+  const bak = `${i.settings}.do-it-all-claude-code.bak`;
   fs.writeFileSync(bak, '{ not json');
   let r = deps(i);
   assert.equal(await uninstall({}, r.d), 0);
@@ -130,7 +130,7 @@ test('decision 149: an unreadable backup is kept; an unparseable settings file s
 
 test('decisions 156-157: uninstall deletes the local TLS folder and the daemon\'s endpoint file, but keeps a bundle the user\'s NODE_EXTRA_CA_CERTS names', async () => {
   const i = await installed();
-  const home = process.env.AGENTIC_ROUTER_HOME!;
+  const home = process.env.DO_IT_ALL_CLAUDE_CODE_HOME!;
   const tls = path.join(home, 'tls');
   const fill = () => {
     fs.mkdirSync(tls, { recursive: true });
@@ -151,4 +151,22 @@ test('decisions 156-157: uninstall deletes the local TLS folder and the daemon\'
   assert.equal(await uninstall({}, r.d), 0);
   assert.deepEqual(fs.readdirSync(tls), ['ca-bundle.pem']);
   assert.match(r.log.join('\n'), /keep ca-bundle\.pem, which your NODE_EXTRA_CA_CERTS names \(point it back at your own file\)/);
+});
+
+test('decision 161: uninstall finds what the previous release wrote: its status line, and a backup under the old name when it is the only one', async () => {
+  const i = await installed();
+  // as the previous release left it: its plugin's status line, and its backup holding the user's original
+  const s = read(i.settings);
+  s.statusLine = { type: 'command', command: 'node "/opt/agentic-router/plugin/statusline.mjs"' };
+  fs.writeFileSync(i.settings, JSON.stringify(s));
+  fs.rmSync(`${i.settings}.do-it-all-claude-code.bak`, { force: true });
+  fs.writeFileSync(`${i.settings}.agentic-router.bak`, JSON.stringify({ model: 'opus', statusLine: { type: 'command', command: 'my-status --fancy' } }));
+  const cfg = path.join(process.env.DO_IT_ALL_CLAUDE_CODE_HOME!, 'config.json');
+  const c = read(cfg); delete c.wrappedStatusLine; fs.writeFileSync(cfg, JSON.stringify(c));
+  fs.writeFileSync(`${i.settings}.do-it-all-claude-code.before-move.bak`, '{}');   // the backup init made when it moved the home
+  const { d } = deps(i);
+  assert.equal(await uninstall({ yes: true }, d), 0);
+  assert.deepEqual(read(i.settings).statusLine, { type: 'command', command: 'my-status --fancy' }, 'put back from the old backup');
+  assert.ok(!fs.existsSync(`${i.settings}.agentic-router.bak`), 'and that backup is removed');
+  assert.ok(!fs.existsSync(`${i.settings}.do-it-all-claude-code.before-move.bak`), 'and the one made by the move');
 });

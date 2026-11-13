@@ -15,6 +15,7 @@ import http from 'node:http';
 import https from 'node:https';
 
 export const PROOF_PATH = '/proxy/v1/proof';
+// A wire label, not a name shown anywhere: it keeps the previous product name (decision 161), as the seal label does.
 export const PROOF_LABEL = 'agentic-router proxy proof v1';
 /** A nonce is 16 to 64 base64url characters (the helper sends 32 random bytes, 43 characters). */
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;

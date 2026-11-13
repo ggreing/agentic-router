@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, formatTriageContext, triage, withLeadModel } from '@agentic-router/core';
+import { DEFAULT_PRESETS, formatTriageContext, triage, withLeadModel } from '@do-it-all-claude-code/core';
 import {
   arrangementOf, bestArrangement, calibration, cascade, effectiveCost, judgeAnswers, loadPromptSet, regretTable, scoreBy, scoreSet, summariseRuns,
   type Classifier, type LabelledPrompt, type MeasuredRun,
@@ -152,7 +152,7 @@ test('the judge answer is used by its score in three bands (decision 115)', () =
   assert.ok(between.confidence < 0.6);
   const rubric = formatTriageContext(between, DEFAULT_PRESETS[between.level]);
   assert.match(rubric, /could not tell the size/);
-  assert.match(rubric, /subagent_type "agentic-router:architect"/);
+  assert.match(rubric, /subagent_type "do-it-all-claude-code:architect"/);
   // the stored rationale carries numbers, never the judge's sentence about the prompt
   for (const r of [team, direct, between]) {
     assert.match(r.rationale, /stage-2 judge said (direct|team) \(confidence 0\.\d\d, about 3 files\), team score 0\.\d\d/);

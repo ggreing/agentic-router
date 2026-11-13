@@ -24,10 +24,10 @@ const session = (d: TestDaemon, sid: string, cwd: string) => async (h: HookInput
 let seq = 0;
 const call = (tag: string, model: string, effort: string): HookInput => ({
   hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: `toolu_s${++seq}`,
-  tool_input: { subagent_type: 'agentic-router:coder', prompt: `[subtask:${tag}] work\n[scope: src/**]`, model, effort },
+  tool_input: { subagent_type: 'do-it-all-claude-code:coder', prompt: `[subtask:${tag}] work\n[scope: src/**]`, model, effort },
 });
-const start = (id: string): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: id, agent_type: 'agentic-router:coder' });
-const stop = (id: string, again = false): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: id, agent_type: 'agentic-router:coder', stop_hook_active: again });
+const start = (id: string): HookInput => ({ hook_event_name: 'SubagentStart', agent_id: id, agent_type: 'do-it-all-claude-code:coder' });
+const stop = (id: string, again = false): HookInput => ({ hook_event_name: 'SubagentStop', agent_id: id, agent_type: 'do-it-all-claude-code:coder', stop_hook_active: again });
 const notify = (id: string): HookInput => ({ hook_event_name: 'UserPromptSubmit', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n</task-notification>` });
 const denied = (o: Out) => (o.hookSpecificOutput?.permissionDecision === 'deny' ? o.hookSpecificOutput.permissionDecisionReason ?? '' : '');
 

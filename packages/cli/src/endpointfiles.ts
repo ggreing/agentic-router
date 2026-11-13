@@ -6,7 +6,7 @@
 // directory if that left it empty.
 import fs from 'node:fs';
 import path from 'node:path';
-import { ENDPOINT_FILE, SOCKET_NAME, privateDir, readEndpoint, socketCandidates, type SocketEnv } from '@agentic-router/core';
+import { ENDPOINT_FILE, SOCKET_NAME, privateDir, readEndpoint, socketCandidates, type SocketEnv } from '@do-it-all-claude-code/core';
 
 /** Paths that would be removed (dryRun) or were removed. */
 export function removeEndpointFiles(home: string, o: SocketEnv & { dryRun?: boolean } = {}): string[] {

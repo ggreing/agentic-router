@@ -4,7 +4,7 @@
 // Binding. An MCP tools/call carries no session id, but its `_meta` carries the tool-use id, and the
 // PreToolUse hook for the same call carries that id with the session. So the hook leaves a ticket and the
 // call takes it: exact, single use, short-lived. A call from a subagent never gets a ticket.
-import { NEVER_GRANTABLE_WRITE_PATHS, PROTECTED_WRITE_PATHS, normalizeScopeGlob } from '@agentic-router/core';
+import { NEVER_GRANTABLE_WRITE_PATHS, PROTECTED_WRITE_PATHS, normalizeScopeGlob } from '@do-it-all-claude-code/core';
 import { matchesAny } from './glob.ts';
 
 /** `_meta` key of a tools/call under which Claude Code sends the tool-use id. */
@@ -53,7 +53,7 @@ export function toolUseIdOf(meta: Record<string, unknown> | undefined): string |
 
 // ------------------------------------------------------------------ scope globs (decision 129)
 
-const NEVER_SEGMENTS = new Set(['.git', '.agentic-router']);
+const NEVER_SEGMENTS = new Set(['.git', '.do-it-all-claude-code', '.agentic-router'])   // and the previous release's folder (decision 161);
 const isProtectedSegment = (seg: string) => seg.startsWith('.env') || seg === '.claude' || seg === '.npmrc' || seg === '.gitlab-ci.yml';
 
 export interface SortedGlobs {

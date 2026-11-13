@@ -21,7 +21,7 @@ process.stdin.on('end', () => {
       command: typeof input.command === 'string' ? input.command.slice(0, 200) : undefined,
       file_path: typeof input.file_path === 'string' ? input.file_path : undefined,
       path: typeof input.path === 'string' ? input.path : undefined,
-      envProjectDir: process.env.CLAUDE_PROJECT_DIR ?? null, envRouterHome: process.env.AGENTIC_ROUTER_HOME ?? null,
+      envProjectDir: process.env.CLAUDE_PROJECT_DIR ?? null, envRouterHome: process.env.DO_IT_ALL_CLAUDE_CODE_HOME ?? null,
     };
     if (dir) fs.appendFileSync(path.join(dir, 'probe.jsonl'), JSON.stringify(entry) + '\n');
   } catch { /* never interfere */ }

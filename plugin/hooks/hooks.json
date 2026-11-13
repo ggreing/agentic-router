@@ -9,10 +9,10 @@
       { "matcher": "Agent", "hooks": [
         { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "PreToolUse"], "timeout": 10 }
       ] },
-      { "matcher": "mcp__plugin_agentic-router_router__.*", "hooks": [
+      { "matcher": "mcp__plugin_do-it-all-claude-code_router__.*", "hooks": [
         { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/relay.mjs", "PreToolUse"], "timeout": 10 }
       ] },
-      { "matcher": "Edit|Write|NotebookEdit|MultiEdit|Read|Grep|Glob|Bash|PowerShell|mcp__plugin_agentic-router_router__.*", "hooks": [
+      { "matcher": "Edit|Write|NotebookEdit|MultiEdit|Read|Grep|Glob|Bash|PowerShell|mcp__plugin_do-it-all-claude-code_router__.*", "hooks": [
         { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 10, "onFailure": "block" }
       ] }
     ],

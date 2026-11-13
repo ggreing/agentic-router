@@ -9,7 +9,7 @@
 // A POST /v1/messages holds its worst case (reserve.ts) against the daily caps from the check to the end of its
 // response, and starts only when that hold fits in what is left: a cap is passed only by what the request body
 // cannot show (content the API fetches itself), not by requests in flight.
-import { sealedCall, type BudgetAnswer } from '@agentic-router/core';
+import { sealedCall, type BudgetAnswer } from '@do-it-all-claude-code/core';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { DaemonTarget } from './usage.ts';
@@ -87,16 +87,16 @@ export class Budget {
     const s = this.spent(a.tokenId);
     const reserved = a.reserveUsd > 0 ? a.reserveUsd : 0;
     if (s.token >= this.#tokenCap) {
-      return { block: { kind: 'token_daily', message: `agentic-router: the daily cap for this local token is reached (${usd(s.token)} of ${usd(this.#tokenCap)}). It resets at local midnight; change proxy.tokenDailyCapUsd in config.json to raise it.` } };
+      return { block: { kind: 'token_daily', message: `do-it-all-claude-code: the daily cap for this local token is reached (${usd(s.token)} of ${usd(this.#tokenCap)}). It resets at local midnight; change proxy.tokenDailyCapUsd in config.json to raise it.` } };
     }
     if (s.day >= this.#dailyCap) {
-      return { block: { kind: 'daily', message: `agentic-router: the daily API budget is reached (${usd(s.day)} of ${usd(this.#dailyCap)}). It resets at local midnight; change proxy.dailyCapUsd in config.json to raise it.` } };
+      return { block: { kind: 'daily', message: `do-it-all-claude-code: the daily API budget is reached (${usd(s.day)} of ${usd(this.#dailyCap)}). It resets at local midnight; change proxy.dailyCapUsd in config.json to raise it.` } };
     }
     // the request's own worst case must fit in what is left (in-flight holds included): a request is never started
     // that could take a cap past its limit on its own
     const doesNotFit = (kind: 'token_daily' | 'daily', capName: string, cap: number, spent: number, setting: string): Block => ({
       kind,
-      message: `agentic-router: this request is held at up to ${money(reserved)} (its worst case${a.reserveBasis ? `: ${a.reserveBasis}` : ''}), `
+      message: `do-it-all-claude-code: this request is held at up to ${money(reserved)} (its worst case${a.reserveBasis ? `: ${a.reserveBasis}` : ''}), `
         + `more than the ${money(Math.max(0, cap - spent))} left of ${capName} (${usd(spent)} of ${usd(cap)} used or held). `
         + `A lower max_tokens or a shorter conversation needs less; ${setting} in config.json raises the cap, and it resets at local midnight.`,
     });
@@ -112,7 +112,7 @@ export class Budget {
       if (r && r.value && r.value.spentUsd + r.added >= r.value.budgetUsd) {
         this.settle(reservationId, 0);
         const spent = r.value.spentUsd + r.added;
-        return { block: { kind: 'request', message: `agentic-router: the budget of this request is reached (${usd(spent)} of ${usd(r.value.budgetUsd)}). Raise it with /router level, or start a new request.` } };
+        return { block: { kind: 'request', message: `do-it-all-claude-code: the budget of this request is reached (${usd(spent)} of ${usd(r.value.budgetUsd)}). Raise it with /router level, or start a new request.` } };
       }
     }
     return { reservationId };

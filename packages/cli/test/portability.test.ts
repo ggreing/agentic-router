@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { claudeConfigDir, defaultClaudeSettings } from 'agentic-router';
+import { claudeConfigDir, defaultClaudeSettings } from 'do-it-all-claude-code';
 import { environmentChecks } from '../src/doctor.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -32,7 +32,7 @@ test('doctor flags a version-manager node, a relative router home and requires G
   const nvm = environmentChecks({}, 'linux', '/home/u/.nvm/versions/node/v24.1.0/bin/node');
   assert.ok(nvm.some(c => c.name === 'node from a version manager' && !c.blocking));
   assert.ok(!nvm.some(c => c.name.startsWith('git bash')), 'no Git Bash check off Windows');
-  assert.ok(environmentChecks({ AGENTIC_ROUTER_HOME: 'rel' }, 'linux', '/usr/bin/node').some(c => c.name === 'AGENTIC_ROUTER_HOME' && !c.ok));
+  assert.ok(environmentChecks({ DO_IT_ALL_CLAUDE_CODE_HOME: 'rel' }, 'linux', '/usr/bin/node').some(c => c.name === 'DO_IT_ALL_CLAUDE_CODE_HOME' && !c.ok));
   const win = environmentChecks({}, 'win32', 'C:/Program Files/nodejs/node.exe');
   assert.ok(win.some(c => c.name === 'git bash (Windows)' && c.blocking));
 });

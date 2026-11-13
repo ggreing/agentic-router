@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FORBIDDEN_ROLE_TOOLS, ladderStep, readRoleFile, type Role } from '@agentic-router/core';
+import { FORBIDDEN_ROLE_TOOLS, ladderStep, readRoleFile, type Role } from '@do-it-all-claude-code/core';
 import { defaultStartStep, ROLES } from '../src/policy.ts';
 import { takeSnapshot } from '../src/git.ts';
 import { resolveVerifyCommands } from '../src/verify-source.ts';
@@ -33,7 +33,7 @@ for (const role of ROLES) {
     assert.equal(f.name, role);
     assert.equal(f.role, role);
     assert.match(f.description ?? '', /\[subtask:<ID>\]/);
-    assert.match(f.description ?? '', /Use only when the Agentic Router lead calls it/);
+    assert.match(f.description ?? '', /Use only when the Do It All Claude Code lead calls it/);
     assert.deepEqual(f.tools, TOOLS[role]);
     for (const t of FORBIDDEN_ROLE_TOOLS) assert.ok(!f.tools.includes(t), `${role} must not have ${t}`);
     // default model/effort = the role's default start step (the Agent call's model/effort wins)

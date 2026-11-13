@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { costUsd, type Usage } from '@agentic-router/core';
+import { costUsd, type Usage } from '@do-it-all-claude-code/core';
 import { relativeWithin } from './canonical.ts';
 
 export const MAX_TRANSCRIPT_BYTES = 256 * 1024 * 1024;

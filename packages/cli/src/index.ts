@@ -1,20 +1,21 @@
 #!/usr/bin/env node
-// agentic-router <init|start|stop|status|doctor|dashboard|routing|data|policy|uninstall|supervise|mode|token|key|proxy>
+// do-it-all-claude-code <init|start|stop|status|doctor|dashboard|routing|data|policy|uninstall|supervise|mode|token|key|proxy>
 import fs from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { paths, type Level } from '@agentic-router/core';
+import { paths, type Level } from '@do-it-all-claude-code/core';
 import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planBackupClean, planProject, planStatusLine, promptStorageSummary, readConfig, type PlannedChange } from './setup.ts';
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
-import { planApiSettings } from './apimode.ts';
+import { keyHelper, localTokenHelper, planApiSettings } from './apimode.ts';
+import { migrateHome, realKeys } from './migrate.ts';
 import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, realLogin, realReload, realVault, setMode, tlsChoice, tokenRotate, type ApiDeps } from './apicmds.ts';
 import { dashboardCommand } from './dashboard.ts';
 import { dataExport, dataPurge, realDataDeps } from './data.ts';
 import { uninstall } from './uninstall.ts';
 import { loadGuard, policyCommand } from './policy.ts';
-import { deleteKey, keyStatus } from '@agentic-router/proxy';
+import { deleteKey, keyStatus } from '@do-it-all-claude-code/proxy';
 import { autoReleaseSummary, configuredAutoRelease, routingReset } from './routing.ts';
 import { runSupervisor } from './supervise.ts';
 
@@ -34,7 +35,7 @@ function flags(argv: string[]): Record<string, string | boolean> {
 
 async function confirm(changes: PlannedChange[], yes: boolean): Promise<boolean> {
   if (!changes.length) return false;
-  console.log('\nThese files outside ~/.agentic-router will change:');
+  console.log('\nThese files outside ~/.do-it-all-claude-code will change:');
   for (const c of changes) console.log(`  - ${c.file}: ${c.summary}`);
   if (yes) return true;
   if (!process.stdin.isTTY) { console.log('Not a terminal: re-run with --yes to apply.'); return false; }
@@ -66,6 +67,14 @@ async function init(f: Record<string, string | boolean>) {
   const mode = f.mode;
   if (mode !== undefined && mode !== 'api') { console.error('--mode takes "api" (subscription mode is the default)'); process.exitCode = 2; return; }
   const api = mode === 'api' ? apiDeps(f) : undefined;
+  const pluginDir = typeof f['plugin-dir'] === 'string' ? path.resolve(f['plugin-dir']) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../plugin');
+  // decision 161: the previous release's home is moved first (everything below works on the new one)
+  const migrated = await migrateHome({
+    env: process.env, settingsFile: typeof f['claude-settings'] === 'string' ? f['claude-settings'] : defaultClaudeSettings(),
+    statusLine: `node "${path.join(pluginDir, 'statusline.mjs')}"`, helpers: { localToken: localTokenHelper(), key: keyHelper() },
+    yes: f.yes === true, isTTY: process.stdin.isTTY === true, ask, out: line => console.log(line), keys: realKeys,
+  });
+  if (migrated === 'stop') { process.exitCode = 1; return; }
   // API-key mode checks the login and the keychain before anything is written
   if (api) {
     const pre = await preflightApi(f, api);
@@ -79,7 +88,6 @@ async function init(f: Record<string, string | boolean>) {
     if (!Number.isFinite(v) || v <= 0) { console.error(`--budget-${l} must be a positive number of USD (got ${JSON.stringify(raw)})`); process.exitCode = 2; return; }
     budgets[l] = v;
   }
-  const pluginDir = typeof f['plugin-dir'] === 'string' ? path.resolve(f['plugin-dir']) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../plugin');
   const local = await ensureLocalState(budgets, pluginDir, { newPort: f['new-port'] === true });
   const token = local.token;
   const config = api ? await configureApi(local.config, api) : local.config;
@@ -114,7 +122,7 @@ async function init(f: Record<string, string | boolean>) {
     if (api && realReload()) console.log('The supervisor applies the new API-key settings to the running proxy.');
   }
   console.log(`\nLoad the plugin in Claude Code: claude --plugin-dir "${pluginDir}"  (marketplace install comes with the first release)`);
-  if (api) console.log('API-key mode: run `agentic-router start` (daemon and proxy), then start new Claude Code sessions. `agentic-router doctor` checks the setup.');
+  if (api) console.log('API-key mode: run `do-it-all-claude-code start` (daemon and proxy), then start new Claude Code sessions. `do-it-all-claude-code doctor` checks the setup.');
 }
 
 async function apiCommand(cmd: string, args: string[], f: Record<string, string | boolean>): Promise<number> {
@@ -122,13 +130,13 @@ async function apiCommand(cmd: string, args: string[], f: Record<string, string 
   if (cmd === 'mode') {
     if (args[0] === 'subscription') return modeSubscription(f, d);
     if (args[0] === 'api') return modeApi(f, d);
-    if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: agentic-router mode <subscription|api|direct|proxy> [--yes]'); return 2; }
+    if (args[0] !== 'direct' && args[0] !== 'proxy') { console.log('usage: do-it-all-claude-code mode <subscription|api|direct|proxy> [--yes]'); return 2; }
     return setMode(args[0], f, d);
   }
   if (cmd === 'token' && args[0] === 'rotate') return tokenRotate(d, { grace: f['no-grace'] !== true });
   if (cmd === 'key' && args[0] === 'set') return keySet(f, d);
   if (cmd === 'proxy' && args[0] === 'allow-upstream') return allowUpstream(args[1], f, d, paths.config());
-  console.log('usage: agentic-router token rotate [--no-grace] | key set [--key-stdin] | proxy allow-upstream <https origin> [--use] [--yes]');
+  console.log('usage: do-it-all-claude-code token rotate [--no-grace] | key set [--key-stdin] | proxy allow-upstream <https origin> [--use] [--yes]');
   return 2;
 }
 
@@ -136,7 +144,7 @@ async function routingResetCommand(): Promise<number> {
   const cfg = readConfig();
   let token = '';
   try { token = fs.readFileSync(paths.token(), 'utf8').trim(); } catch { /* below */ }
-  if (!cfg || !token) { console.log('Not set up yet: run `agentic-router init` first.'); return 2; }
+  if (!cfg || !token) { console.log('Not set up yet: run `do-it-all-claude-code init` first.'); return 2; }
   return routingReset({ port: cfg.daemonPort, token });
 }
 
@@ -174,5 +182,5 @@ if (isMain) {
     process.exitCode = positional[0] === 'export' ? await dataExport(f, d) : await dataPurge(f, d);
   }
   else if (cmd === 'mode' || cmd === 'token' || cmd === 'key' || cmd === 'proxy') process.exitCode = await apiCommand(cmd, positional, f);
-  else console.log('usage: agentic-router <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate [--no-grace]|key set|proxy allow-upstream <origin>>');
+  else console.log('usage: do-it-all-claude-code <init [--mode api]|start|stop|status|doctor|dashboard [--no-open]|routing reset|data export|data purge|uninstall [--keep-key]|policy show|accept|revoke|mode subscription|api|direct|proxy|token rotate [--no-grace]|key set|proxy allow-upstream <origin>>');
 }

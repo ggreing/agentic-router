@@ -106,7 +106,7 @@ export function forward(req: http.IncomingMessage, res: http.ServerResponse, o: 
       if (out.upstreamAnswered) return;
       up.destroy(new Error('upstream response headers timeout'));
       out.status = 504;
-      localError(res, 504, 'api_error', 'agentic-router proxy: the upstream did not answer in time', true);
+      localError(res, 504, 'api_error', 'do-it-all-claude-code proxy: the upstream did not answer in time', true);
       settle();
     }, o.headersTimeoutMs);
 
@@ -146,7 +146,7 @@ export function forward(req: http.IncomingMessage, res: http.ServerResponse, o: 
       if (out.clientAborted || settled) { settle(); return; }
       if (out.upstreamAnswered) { out.upstreamBroken = true; res.destroy(); settle(); return; }
       out.status = 502;
-      localError(res, 502, 'api_error', `agentic-router proxy: the upstream could not be reached (${(e as NodeJS.ErrnoException).code ?? 'error'})`, true);
+      localError(res, 502, 'api_error', `do-it-all-claude-code proxy: the upstream could not be reached (${(e as NodeJS.ErrnoException).code ?? 'error'})`, true);
       settle();
     });
 

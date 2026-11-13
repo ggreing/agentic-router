@@ -35,14 +35,14 @@ test('teams.yaml: the user\'s file, then the project\'s, then config budgets; th
     assert.deepEqual([st.level, st.leadDirect, st.presetSource, st.budgetUsd], ['L1', false, 'user', 1.5]);   // config budget on top
     assert.match(ctx, /Routing is ON for this request/);
     // the project turns it back and sets its own budget; config.budgetsUsd still wins
-    fs.mkdirSync(path.join(repo, '.agentic-router'), { recursive: true });
-    fs.writeFileSync(path.join(repo, '.agentic-router', 'teams.yaml'), 'L1:\n  lead_direct: true\nL2:\n  budget_usd: 7\n');
+    fs.mkdirSync(path.join(repo, '.do-it-all-claude-code'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.do-it-all-claude-code', 'teams.yaml'), 'L1:\n  lead_direct: true\nL2:\n  budget_usd: 7\n');
     await ask(d, 's2', path.join(repo), L1_PROMPT);
     st = await status(d, 's2');
     assert.deepEqual([st.leadDirect, st.presetSource, st.budgetUsd], [true, 'user+project', 1.5]);
     assert.deepEqual(JSON.parse(String(rows(d, "SELECT team FROM requests WHERE session_id = 's2'")[0]!.team)).roles.map((r: { role: string }) => r.role), ['coder']);   // the L1 team (decision 118)
     // an invalid project file is ignored (logged once), the user's still applies
-    fs.writeFileSync(path.join(repo, '.agentic-router', 'teams.yaml'), 'L1:\n  roles: nope\n');
+    fs.writeFileSync(path.join(repo, '.do-it-all-claude-code', 'teams.yaml'), 'L1:\n  roles: nope\n');
     await ask(d, 's3', repo, L1_PROMPT);
     await ask(d, 's4', repo, L1_PROMPT);
     st = await status(d, 's4');
@@ -55,7 +55,7 @@ test('decision 107: config.forceLevel plans every new request at that level; the
   const ctx = await ask(d, 'f1', d.home, L0_PROMPT);
   const st = await status(d, 'f1');
   assert.deepEqual([st.level, st.leadDirect, st.forcedFrom, st.budgetUsd], ['L2', false, 'L0', 5]);
-  assert.match(ctx, /^\[agentic-router\] level L2 .*forced L2; rule said L0/);
+  assert.match(ctx, /^\[do-it-all-claude-code\] level L2 .*forced L2; rule said L0/);
   assert.match(ctx, /Routing is ON for this request/);   // a team level: the team brief, no lead judgement
   assert.equal(formatStatus({ request: st, roles: [], costUsd: 0 }), '[Router] L2 forced | $0.00');
   // it wins over a pending /router level
