@@ -361,7 +361,8 @@ function previousInstall(o: Partial<MigrateDeps> = {}) {
   const keys = fakeKeys({ [LEGACY_VAULT_SERVICE]: FAKE_KEY });
   const processes = fakeProcesses(oldHome, { 301: { cmd: SUP, start: BEFORE() }, 302: { cmd: DAEMON, start: BEFORE() }, 303: { cmd: PROXY, start: BEFORE() } }, { supervisor: 301, children: [302, 303] });
   const d: MigrateDeps = {
-    env: { AGENTIC_ROUTER_HOME: oldHome }, newHome, platform: process.platform, settingsFile,
+    // macOS stores a key only from a terminal prompt (tested on its own below), so the move runs the stdin path there too
+    env: { AGENTIC_ROUTER_HOME: oldHome }, newHome, platform: process.platform === 'darwin' ? 'linux' : process.platform, settingsFile,
     statusLine: 'node "/repo/plugin/statusline.mjs"', helpers: { localToken: 'node "/repo/proxy/bin/local-token.mjs"', key: 'node "/repo/proxy/bin/key-helper.mjs"' },
     yes: true, isTTY: false, ask: async () => true, out: l => out.push(l), processes, keys, ...o,
   };
@@ -396,6 +397,15 @@ test('decision 161: init moves the previous home, its settings entries, the back
   // run again: nothing left to move; doctor no longer warns
   assert.equal(await migrateHome(t.d), 'none');
   assert.equal(legacyHomeCheck({ AGENTIC_ROUTER_HOME: t.oldHome }, undefined, t.newHome), null);
+});
+
+test('decision 161: on macOS without a terminal the home moves, the previous keychain entry stays, and the report says how to finish', { skip: !POSIX }, async () => {
+  const t = previousInstall({ platform: 'darwin', isTTY: false });
+  assert.equal(await migrateHome(t.d), 'moved', t.out.join('\n'));
+  assert.ok(!fs.existsSync(t.oldHome) && fs.existsSync(path.join(t.newHome, 'token')));
+  assert.deepEqual(t.keys.entries, { [LEGACY_VAULT_SERVICE]: FAKE_KEY }, 'the previous entry is kept');
+  assert.ok(!t.keys.calls.some(c => c.startsWith('read') || c.startsWith('store') || c.startsWith('remove')));
+  assert.match(t.out.join('\n'), /API key: macOS stores a key only interactively, and this is not a terminal: run do-it-all-claude-code key set, then delete the previous entry "agentic-router"/);
 });
 
 test('review M1: a folder open to other users is moved and then closed', { skip: !POSIX }, async () => {
