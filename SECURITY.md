@@ -38,8 +38,13 @@ reach them; tokens still matter because they sit in local files.
 
 - It never reads or stores subscription (Claude.ai) credentials.
 - It never sends prompt text anywhere except Anthropic through Claude Code's own traffic; the router makes
-  no outbound call of its own, in either mode. Prompt text is stored locally only when you turn on
-  `recordPrompts`, and the stored copy never leaves the machine.
+  no outbound call of its own, in either mode, except the opt-in update check. That check runs only if you
+  turn it on (`do-it-all-claude-code init` asks; an existing install stays off until you do); when on, the
+  daemon reads GitHub's public release list at most once a day, following your `HTTPS_PROXY`/`NO_PROXY` and
+  skipping rather than going around an unusable proxy. GitHub sees an ordinary web request (your IP address
+  and a generic client name) and nothing else — no prompts, no usage, no identifiers — and the result is
+  shown only to you, never to the model. Prompt text is stored locally only when you turn on `recordPrompts`,
+  and the stored copy never leaves the machine.
 - It never stores API keys outside the OS keychain — not in environment variables, not in plaintext files.
 
 ## Limits

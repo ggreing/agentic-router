@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Update check (opt-in)
+
+- The router can check for a newer release, off unless you turn it on. `do-it-all-claude-code init` asks
+  (`[Y/n]`, Enter for yes; `--yes` turns it on, and with no terminal it is left unset); an existing install
+  stays off until you turn it on, and `doctor` suggests it meanwhile. `do-it-all-claude-code update on|off|check`
+  controls it later — `check` looks now whatever the setting and prints what you have against the newest
+  release. When on, the daemon reads GitHub's public release list at most once a day (a failed try counts, so
+  it does not retry in a loop), following your `HTTPS_PROXY`/`NO_PROXY` and skipping an unusable proxy rather
+  than going around it. GitHub sees an ordinary web request (your IP address and a generic client name);
+  nothing else is sent — no prompts, no usage, no identifiers. A newer version shows in the status line and
+  as a one-line message at session start, to you only (never sent to the model) and at most once a day per
+  version. There is no auto-update.
+
 ## [0.3.0] — 2026-11-13
 
 Third pre-release: the project is renamed. Nothing else changes in how it works.

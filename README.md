@@ -122,10 +122,22 @@ The full list of what's refused, and why, is in [docs/worker-permissions.md](doc
 
 ## Your data
 
-Everything stays in one SQLite file on your machine, and the router makes no network calls of its own.
+Everything stays in one SQLite file on your machine, and the router makes no network calls of its own,
+apart from the optional update check (see Updates below).
 By default it doesn't keep your prompts or the text of what workers report, only ids, sizes, outcomes and
 costs. If you want prompts kept for your own analysis, turn on `recordPrompts`; turning it off again
 deletes them at the next daemon start. Event records are kept for 30 days.
+
+## Updates
+
+The router can tell you when a newer version is out — off unless you turn it on. `do-it-all-claude-code init`
+asks (press Enter for yes); later, `do-it-all-claude-code update on` turns it on, `off` turns it off, and
+`check` looks right now whatever the setting and prints what you have against the newest release. An existing
+install stays off until you turn it on, and `doctor` offers it meanwhile. When on, the daemon checks GitHub's
+public release list at most once a day. GitHub sees an ordinary web request from your machine — your IP
+address and a generic client name — and nothing else: no prompts, no usage, no identifiers. A newer version
+then shows in the status line (` | update 0.4.0`) and as a one-line note at the start of a session, only to
+you and at most once a day per version. Nothing updates itself.
 
 ## The dashboard
 
