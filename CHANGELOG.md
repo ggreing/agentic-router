@@ -5,6 +5,10 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-13
+
+Fourth pre-release: an optional update check, and the end of two transitions from earlier releases.
+
 ### Update check (opt-in)
 
 - The router can check for a newer release, off unless you turn it on. `do-it-all-claude-code init` asks
@@ -17,6 +21,24 @@ All notable changes to this project are documented here. This project adheres to
   nothing else is sent — no prompts, no usage, no identifiers. A newer version shows in the status line and
   as a one-line message at session start, to you only (never sent to the model) and at most once a day per
   version. There is no auto-update.
+
+### Changed
+
+- `bearerApi` is now **off by default**: the daemon's local API accepts only sealed messages. `bearerApi: on`
+  still works this release for a client from before sealing, but it is **deprecated** — `doctor` warns and the
+  daemon logs a line — and will be removed.
+- The legacy `.agentic-router/` project folder is **no longer read**. `doctor` and `do-it-all-claude-code
+  policy show` tell you to rename it to `.do-it-all-claude-code/`; once renamed, a policy you had already
+  accepted counts again (acceptance is keyed by the repository and the file's content). Both names stay
+  write-protected for workers.
+
+### Upgrading
+
+- If a project still has a `.agentic-router/` folder, rename it to `.do-it-all-claude-code/` — its contents
+  are otherwise ignored now. An already-accepted policy is recognized again after the rename, with no need to
+  accept it afresh.
+- Upgrading straight from 0.2.0 or 0.3.0 to this release still migrates your home: run
+  `do-it-all-claude-code init`, which moves an old install as described under 0.3.0.
 
 ## [0.3.0] — 2026-11-13
 
@@ -195,7 +217,8 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
-[Unreleased]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ggreing/do-it-all-claude-code/releases/tag/v0.1.0

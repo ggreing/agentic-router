@@ -104,10 +104,10 @@ do-it-all-claude-code policy accept
 Acceptance is tied to the file's content. If it changes, say after a `git pull`, it's ignored again until
 you accept the new version. `do-it-all-claude-code doctor` shows where things stand.
 
-A project that still has a `.agentic-router/` folder from before the rename is still read this release, file
-by file (`policy.json`, `verify.json`, `teams.yaml`), with the new `.do-it-all-claude-code/` folder winning
-where both have a file. `do-it-all-claude-code doctor` points it out so you can rename it, and a policy you
-had accepted carries over the rename.
+A `.agentic-router/` folder from before the rename is **no longer read**. Rename it to
+`.do-it-all-claude-code/`; `do-it-all-claude-code doctor` and `do-it-all-claude-code policy show` point this
+out. A policy you had accepted is recognized again after the rename (acceptance is keyed by the repository
+and the file's content). Both folder names stay write-protected for workers.
 
 ## Workers need the daemon
 

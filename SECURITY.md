@@ -25,7 +25,8 @@ The plugin hooks (`plugin/`), the local daemon, the API-key proxy, the CLI, and 
 - **Local proxy token** (the token Claude Code sends to the local proxy): run
   `do-it-all-claude-code token rotate`. The proxy keeps accepting the old token for about 10 more minutes so
   in-flight sessions keep working; Claude Code picks up the new one through its `apiKeyHelper`.
-- **Daemon token** (the bearer for the daemon's local API at `127.0.0.1`, stored at
+- **Daemon token** (the shared secret the router's own programs seal their messages with, for the daemon's
+  local API at `127.0.0.1`, stored at
   `<router-home>/token`, mode `0600`): `init` writes this token once, as 32 random bytes, and keeps an
   existing one. To regenerate it, stop the daemon (`do-it-all-claude-code stop`), delete `<router-home>/token`,
   run `do-it-all-claude-code init` (which writes a fresh token and restores `0600`), then start the daemon
