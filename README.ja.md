@@ -1,4 +1,4 @@
-# Agentic Router Proxy
+# Do It All Claude Code
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@ Claude Code を Opus や Sonnet で動かすと、メインセッションがほ
 を新しく起動する必要があり、大きいタスクではチームのほうがメインセッション 1 つより目に見えて時間が
 かかりました。数値と測り方は [docs/measurements](docs/measurements/) にあります。
 
-CLI とパッケージの名前は `agentic-router` です。
+CLI とパッケージの名前は `do-it-all-claude-code` です。
 
 ## 仕組み
 
@@ -44,16 +44,16 @@ Sonnet のとき、あるいはどのモデルか判別できないときに、�
 要ります。
 
 ```
-git clone https://github.com/ggreing/agentic-router && cd agentic-router
+git clone https://github.com/ggreing/do-it-all-claude-code && cd do-it-all-claude-code
 npm ci
 npm run build:dashboard
 node packages/cli/src/index.ts init
 node packages/cli/src/index.ts start
 ```
 
-パッケージを公開するまでは `node packages/cli/src/index.ts` が CLI で、以下では `agentic-router` と略します。
+パッケージを公開するまでは `node packages/cli/src/index.ts` が CLI で、以下では `do-it-all-claude-code` と略します。
 `init` はプラグインとステータスラインを登録しますが、Claude Code の設定を変える前に確認を取ります。うまく
-いかないときは `agentic-router doctor` でセットアップを点検してください。
+いかないときは `do-it-all-claude-code doctor` でセットアップを点検してください。
 
 よく使うコマンドはこのあたりです。
 
@@ -62,7 +62,7 @@ node packages/cli/src/index.ts start
 | `status`, `stop` | デーモンの状態を見る、止める |
 | `dashboard` | ローカルダッシュボードを開く |
 | `mode subscription\|api\|direct\|proxy` | モードを切り替える（下記） |
-| `policy show\|accept` | プロジェクトの `.agentic-router/policy.json` を確認してから適用する |
+| `policy show\|accept` | プロジェクトの `.do-it-all-claude-code/policy.json` を確認してから適用する |
 | `data export`, `data purge` | ルーターが記録した内容を書き出す、消す |
 | `uninstall` | `init` がしたことを元に戻す（データフォルダは残る） |
 
@@ -72,7 +72,7 @@ node packages/cli/src/index.ts start
 リプションの資格情報を読むことも保存することもありません。Claude Code はこれまでどおり Anthropic と直接
 やり取りします。
 
-API キーで使うには `agentic-router init --mode api` を実行します。API の手前に小さなローカルプロキシが
+API キーで使うには `do-it-all-claude-code init --mode api` を実行します。API の手前に小さなローカルプロキシが
 入り、呼び出しごとに実際のトークンコストを記録し、1 日の予算を適用します。既定ではローカルトークンごとに
 1 日 $100、合計で 1 日 $300 です。各リクエストは最悪のケース（プロンプトの大きさと `max_tokens` をその
 モデルの最高レートで見積もった値）をこの上限に対して確保し、リクエストが終わるまで保持します。その分が
@@ -80,7 +80,7 @@ API キーで使うには `agentic-router init --mode api` を実行します。
 込むもの（ID で参照したファイル、URL で参照した画像、ウェブ検索などのサーバーツール）は本文に無く、呼び
 出しが精算されるときに課金されるので、1 日が上限を少し超えて終わることがあります。キー自体は OS の
 キーチェーンにだけ置きます。プロキシが邪魔なときは
-`agentic-router mode direct` で迂回し、`agentic-router mode proxy` で戻せます。
+`do-it-all-claude-code mode direct` で迂回し、`do-it-all-claude-code mode proxy` で戻せます。
 
 **ローカル TLS。** API キーモードでは Claude Code は `https://127.0.0.1:<port>` でプロキシに接続し、この
 ルーターだけが持つ証明書を使います。`openssl` で作り、`127.0.0.1` と `localhost` にのみ有効で、ほかのサイト
@@ -104,9 +104,9 @@ TLS ハンドシェイクを完了できないので、ローカルトークン�
 
 逆方向では、そのままだと Claude Code が `127.0.0.1:<port>` のローカルプロキシ宛てに送る自分のリクエスト
 （ローカルトークンを含む）も社内プロキシを経由してしまいます。そこでプロキシが設定されていると、
-`agentic-router init --mode api` と `mode api` が Claude Code の設定の `NO_PROXY` に `127.0.0.1` と
+`do-it-all-claude-code init --mode api` と `mode api` が Claude Code の設定の `NO_PROXY` に `127.0.0.1` と
 `localhost` を追加し（既存の項目は残します）、`mode direct`・`mode subscription`・`uninstall` は自分が
-追加した分だけを取り除きます。`agentic-router doctor` は両方向を確認します。
+追加した分だけを取り除きます。`do-it-all-claude-code doctor` は両方向を確認します。
 
 ## ワーカーと権限
 
@@ -131,7 +131,7 @@ claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 
 ## ダッシュボード
 
-`agentic-router dashboard` を実行すると、デーモンが出す読み取り専用のページが開きます。最近のリクエスト、
+`do-it-all-claude-code dashboard` を実行すると、デーモンが出す読み取り専用のページが開きます。最近のリクエスト、
 誰が何をしたか、どの検査を通ったか、コスト（リードとワーカー）、そしてリクエストの大きさについてのルーター
 の最初の見立てがどれだけ当たったかを見られます。英語・韓国語・日本語・簡体字中国語に対応しています。
 

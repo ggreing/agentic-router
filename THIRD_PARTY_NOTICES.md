@@ -1,6 +1,6 @@
 # Third-party notices
 
-The Agentic Router Proxy source depends on third-party software. Most of it is development-only
+The Do It All Claude Code source depends on third-party software. Most of it is development-only
 (build, test and type tooling) and is not distributed. The one runtime dependency that is bundled
 into shipped artifacts is the dashboard's web framework, listed below. When the built dashboard
 assets are distributed, this notice is distributed with them.

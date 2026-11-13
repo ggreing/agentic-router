@@ -1,4 +1,4 @@
-# Agentic Router Proxy
+# Do It All Claude Code
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
@@ -10,7 +10,7 @@
 33%，通过的任务也一样。多数情况下是主会话把修改交给一个 Haiku 编码者。代价是更慢：每交一次就得新起一个
 工作者，在较大的任务上，团队明显比主会话单干更费时间。数字和测法都在 [docs/measurements](docs/measurements/)。
 
-CLI 和软件包都叫 `agentic-router`。
+CLI 和软件包都叫 `do-it-all-claude-code`。
 
 ## 工作原理
 
@@ -37,15 +37,15 @@ CLI 和软件包都叫 `agentic-router`。
 还没发布到 npm。需要 Node 24 以上、Claude Code 2.1.295 或更新版本，Windows 上还要有 Git Bash。
 
 ```
-git clone https://github.com/ggreing/agentic-router && cd agentic-router
+git clone https://github.com/ggreing/do-it-all-claude-code && cd do-it-all-claude-code
 npm ci
 npm run build:dashboard
 node packages/cli/src/index.ts init
 node packages/cli/src/index.ts start
 ```
 
-在发布软件包之前，`node packages/cli/src/index.ts` 就是 CLI，下文简写成 `agentic-router`。`init` 会注册
-插件和一行状态栏，但在改动你的 Claude Code 配置前会先征求同意。要是哪里不对劲，用 `agentic-router doctor`
+在发布软件包之前，`node packages/cli/src/index.ts` 就是 CLI，下文简写成 `do-it-all-claude-code`。`init` 会注册
+插件和一行状态栏，但在改动你的 Claude Code 配置前会先征求同意。要是哪里不对劲，用 `do-it-all-claude-code doctor`
 检查一下安装。
 
 你大概会常用这些命令：
@@ -55,7 +55,7 @@ node packages/cli/src/index.ts start
 | `status`, `stop` | 查看或停止守护进程 |
 | `dashboard` | 打开本地仪表板 |
 | `mode subscription\|api\|direct\|proxy` | 切换模式（见下文） |
-| `policy show\|accept` | 在项目的 `.agentic-router/policy.json` 生效前先查看 |
+| `policy show\|accept` | 在项目的 `.do-it-all-claude-code/policy.json` 生效前先查看 |
 | `data export`, `data purge` | 导出或删除路由器记录的内容 |
 | `uninstall` | 撤销 `init` 做的事（数据文件夹保留） |
 
@@ -64,11 +64,11 @@ node packages/cli/src/index.ts start
 默认用你的 Claude 订阅。这种模式下没有代理，路由器既不读取也不保存你的订阅凭据，Claude Code 照旧直接和
 Anthropic 通信。
 
-要用 API 密钥，运行 `agentic-router init --mode api`，它会在 API 前面放一个小的本地代理。代理记录每次调用
+要用 API 密钥，运行 `do-it-all-claude-code init --mode api`，它会在 API 前面放一个小的本地代理。代理记录每次调用
 的真实令牌成本，并施加每天的预算：默认是每个本地令牌每天 $100、总共每天 $300。每个请求会按最坏情况（提示
 大小和 `max_tokens` 以该模型的最高费率计价）占住这些上限，直到请求结束；放不下时就不开始该请求。不过这种
 占用只覆盖请求正文：API 自己去取的内容（用 ID 引用的文件、用 URL 引用的图片，以及网页搜索这类服务器工具）
-不在正文里，只有在调用结算时才计费，所以一天仍可能略微超出上限。密钥本身只放在操作系统的密钥库里。要是代理碍事，`agentic-router mode direct` 可以绕过它，`agentic-router mode
+不在正文里，只有在调用结算时才计费，所以一天仍可能略微超出上限。密钥本身只放在操作系统的密钥库里。要是代理碍事，`do-it-all-claude-code mode direct` 可以绕过它，`do-it-all-claude-code mode
 proxy` 再把它放回来。
 
 **本地 TLS。** 在 API 密钥模式下，Claude Code 通过 `https://127.0.0.1:<port>` 连接代理，使用只有这个路由器
@@ -88,9 +88,9 @@ TLS 握手，所以本地令牌和提示都不会送到那里。如果你自己�
 `NODE_EXTRA_CA_CERTS`。不支持 SOCKS；遇到路由器无法使用的代理设置，它会停止启动，而不是悄悄绕过代理。
 
 反过来，若不处理，Claude Code 发给 `127.0.0.1:<port>` 本地代理的自身请求（含本地令牌）也会经过你的
-公司代理。所以设置了代理时，`agentic-router init --mode api` 和 `mode api` 会把 `127.0.0.1` 和 `localhost`
+公司代理。所以设置了代理时，`do-it-all-claude-code init --mode api` 和 `mode api` 会把 `127.0.0.1` 和 `localhost`
 加到 Claude Code 设置的 `NO_PROXY` 里（保留你自己的条目）；`mode direct`、`mode subscription` 和
-`uninstall` 只移除它们自己加的那部分。`agentic-router doctor` 会检查两个方向。
+`uninstall` 只移除它们自己加的那部分。`do-it-all-claude-code doctor` 会检查两个方向。
 
 ## 工作者与权限
 
@@ -112,7 +112,7 @@ claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 
 ## 仪表板
 
-运行 `agentic-router dashboard`，会打开守护进程提供的一个只读页面：最近的请求、谁做了什么、哪些检查通过了、
+运行 `do-it-all-claude-code dashboard`，会打开守护进程提供的一个只读页面：最近的请求、谁做了什么、哪些检查通过了、
 成本（主控对工作者），以及路由器对请求大小的第一判断有多准。支持英语、韩语、日语和简体中文。
 
 ## 确认委派是否仍然划算

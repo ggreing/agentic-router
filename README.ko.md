@@ -1,4 +1,4 @@
-# Agentic Router Proxy
+# Do It All Claude Code
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@ Claude Code를 Opus나 Sonnet으로 쓰면 메인 세션이 거의 모든 일을
 큰 과제에서는 팀이 메인 세션 혼자 할 때보다 눈에 띄게 오래 걸렸습니다. 수치와 측정 방법은
 [docs/measurements](docs/measurements/)에 있습니다.
 
-CLI와 패키지 이름은 `agentic-router`입니다.
+CLI와 패키지 이름은 `do-it-all-claude-code`입니다.
 
 ## 어떻게 동작하나
 
@@ -44,16 +44,16 @@ CLI와 패키지 이름은 `agentic-router`입니다.
 있어야 합니다.
 
 ```
-git clone https://github.com/ggreing/agentic-router && cd agentic-router
+git clone https://github.com/ggreing/do-it-all-claude-code && cd do-it-all-claude-code
 npm ci
 npm run build:dashboard
 node packages/cli/src/index.ts init
 node packages/cli/src/index.ts start
 ```
 
-패키지를 배포하기 전까지는 `node packages/cli/src/index.ts`가 CLI이고, 아래에서는 `agentic-router`라고
+패키지를 배포하기 전까지는 `node packages/cli/src/index.ts`가 CLI이고, 아래에서는 `do-it-all-claude-code`라고
 줄여 씁니다. `init`은 플러그인과 상태 라인을 등록하는데, Claude Code 설정을 바꾸기 전에 먼저 물어봅니다.
-뭔가 이상하면 `agentic-router doctor`로 설정을 점검해 보세요.
+뭔가 이상하면 `do-it-all-claude-code doctor`로 설정을 점검해 보세요.
 
 자주 쓸 명령은 이 정도입니다.
 
@@ -62,7 +62,7 @@ node packages/cli/src/index.ts start
 | `status`, `stop` | 데몬 상태 보기, 끄기 |
 | `dashboard` | 로컬 대시보드 열기 |
 | `mode subscription\|api\|direct\|proxy` | 모드 바꾸기 (아래 참고) |
-| `policy show\|accept` | 프로젝트의 `.agentic-router/policy.json`을 확인하고 적용 승인 |
+| `policy show\|accept` | 프로젝트의 `.do-it-all-claude-code/policy.json`을 확인하고 적용 승인 |
 | `data export`, `data purge` | 라우터가 기록한 내용 내보내기, 지우기 |
 | `uninstall` | `init`이 한 일 되돌리기 (데이터 폴더는 남음) |
 
@@ -71,13 +71,13 @@ node packages/cli/src/index.ts start
 기본은 Claude 구독입니다. 이 모드에는 프록시가 없고, 라우터는 구독 자격증명을 읽지도 저장하지도
 않습니다. Claude Code는 지금처럼 Anthropic과 직접 통신합니다.
 
-API 키로 쓰려면 `agentic-router init --mode api`를 실행하세요. API 앞에 작은 로컬 프록시가 붙어서 호출마다
+API 키로 쓰려면 `do-it-all-claude-code init --mode api`를 실행하세요. API 앞에 작은 로컬 프록시가 붙어서 호출마다
 실제 토큰 비용을 기록하고 하루 예산을 적용합니다. 기본값은 로컬 토큰당 하루 $100, 전체 하루 $300입니다.
 요청마다 최악의 경우(프롬프트 크기와 `max_tokens`를 그 모델의 최고 요율로 계산한 값)를 이 상한에 걸어 두고
 요청이 끝날 때까지 유지하며, 그 몫이 들어가지 않으면 요청을 시작하지 않습니다. 그래도 이 예약이 덮는 것은
 요청 본문뿐입니다. API가 스스로 가져오는 것(아이디로 참조한 파일, URL로 참조한 이미지, 웹 검색 같은 서버
 도구)은 본문에 없고 호출이 정산될 때 과금되므로, 하루가 상한을 조금 넘겨 끝날 수 있습니다. API 키는 OS
-키체인에만 둡니다. 프록시가 거슬리면 `agentic-router mode direct`로 우회하고, `agentic-router mode proxy`로
+키체인에만 둡니다. 프록시가 거슬리면 `do-it-all-claude-code mode direct`로 우회하고, `do-it-all-claude-code mode proxy`로
 되돌리면 됩니다.
 
 **로컬 TLS.** API 키 모드에서 Claude Code는 `https://127.0.0.1:<port>`로 프록시에 연결하며, 이 라우터만
@@ -99,9 +99,9 @@ Node 내장 프록시 지원(Node 24.5 이상)을 쓰므로 HTTPS는 CONNECT 터
 SOCKS는 지원하지 않고, 라우터가 쓸 수 없는 프록시 설정이면 프록시를 몰래 우회하는 대신 시작을 멈춥니다.
 
 반대 방향으로, 그냥 두면 Claude Code가 `127.0.0.1:<port>`의 로컬 프록시로 보내는 자기 요청(로컬 토큰
-포함)도 회사 프록시를 거치게 됩니다. 그래서 프록시가 설정돼 있으면 `agentic-router init --mode api`와
+포함)도 회사 프록시를 거치게 됩니다. 그래서 프록시가 설정돼 있으면 `do-it-all-claude-code init --mode api`와
 `mode api`가 Claude Code 설정의 `NO_PROXY`에 `127.0.0.1`과 `localhost`를 더하고(기존 항목은 유지),
-`mode direct`, `mode subscription`, `uninstall`은 자신이 더한 것만 뺍니다. `agentic-router doctor`가 양쪽
+`mode direct`, `mode subscription`, `uninstall`은 자신이 더한 것만 뺍니다. `do-it-all-claude-code doctor`가 양쪽
 방향을 모두 점검합니다.
 
 ## 작업자와 권한
@@ -126,7 +126,7 @@ claude --allowedTools "Bash(npm test)" "Bash(npm run *)"
 
 ## 대시보드
 
-`agentic-router dashboard`를 실행하면 데몬이 띄우는 읽기 전용 페이지가 열립니다. 최근 요청, 누가 무엇을
+`do-it-all-claude-code dashboard`를 실행하면 데몬이 띄우는 읽기 전용 페이지가 열립니다. 최근 요청, 누가 무엇을
 했는지, 어떤 검사를 통과했는지, 비용(총괄과 작업자), 그리고 요청 크기에 대한 라우터의 첫 판단이 얼마나
 맞았는지를 볼 수 있습니다. 영어, 한국어, 일본어, 중국어(간체)를 지원합니다.
 

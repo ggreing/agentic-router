@@ -12,7 +12,7 @@ Steps to cut a public release. Replace `X.Y.Z` with the version (for example `0.
 ## 2. Versions
 
 - Bump the version in every manifest and keep them identical: root `package.json`, each
-  `packages/*/package.json`, every workspace dependency pin (`@agentic-router/*`), the plugin
+  `packages/*/package.json`, every workspace dependency pin (`@do-it-all-claude-code/*`), the plugin
   (`plugin/.claude-plugin/plugin.json`), and any hard-coded VERSION constant (e.g. `PROXY_VERSION` in
   `packages/proxy/src/server.ts`). The daemon version is read from `package.json`.
 - Regenerate the lockfile: `npm install --package-lock-only`.

@@ -6,7 +6,7 @@ real Claude Code, for a real router coder subagent, with the router daemon writi
 **No API call is made and nothing is billed.** The model is played by a local fake (`fake.mjs`) that
 listens on 127.0.0.1 only. Claude Code runs with a fresh temp config directory (no login) and a dummy key
 that only the fake accepts. The daemon runs in a temp router home, and the subagent works in a temp
-fixture repository. Your own `~/.claude` and `~/.agentic-router` are not read or changed.
+fixture repository. Your own `~/.claude` and `~/.do-it-all-claude-code` are not read or changed.
 
 ## Run
 

@@ -5,6 +5,44 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Renamed to Do It All Claude Code
+
+- The project is now **Do It All Claude Code** (was Agentic Router Proxy). The CLI and the published
+  package are `do-it-all-claude-code`, so the install name is the command; the internal packages are
+  `@do-it-all-claude-code/{core,daemon,adapter-claude-code,proxy,dashboard}`, the proxy binary is
+  `do-it-all-claude-code-proxy`, the router home is `~/.do-it-all-claude-code`, the per-project folder is
+  `.do-it-all-claude-code/`, the environment variables start with `DO_IT_ALL_CLAUDE_CODE_`, and the agent
+  types are `do-it-all-claude-code:coder` and the like. The repository is now
+  `github.com/ggreing/do-it-all-claude-code` (GitHub redirects the old URL).
+- A project that still has a `.agentic-router/` folder keeps working this release: each file in it
+  (`policy.json`, `verify.json`, `teams.yaml`) is read when the new `.do-it-all-claude-code/` folder does
+  not have that file, and the new folder wins where both do. `do-it-all-claude-code doctor` flags the old
+  folder so you can rename it, and an accepted policy carries over the rename.
+
+### Upgrading from 0.2.0
+
+- Stop the old install with the **old** CLI first, from your current checkout:
+  `node packages/cli/src/index.ts stop`.
+- `git pull`, then `npm ci` and `npm run build:dashboard`. The remote is now `ggreing/do-it-all-claude-code`;
+  GitHub redirects the old URL, and you can update your remote with
+  `git remote set-url origin https://github.com/ggreing/do-it-all-claude-code`.
+- Run `do-it-all-claude-code init`. When it finds an old install (`DO_IT_ALL_CLAUDE_CODE_HOME` or
+  `AGENTIC_ROUTER_HOME`, or `~/.agentic-router`), it lists what it will change — including, by pid, the
+  processes it will stop — and asks first. On yes it stops the old supervisor, daemon and proxy; moves the
+  router home (ledger, tokens, the TLS certificate and bundle, config) to `~/.do-it-all-claude-code`; backs
+  up Claude Code's settings (the backup is named in its report) and rewrites only its own entries there — its
+  MCP tools, its agent types, rules for its own commands, the status line, the key helper, env values such as
+  `NODE_EXTRA_CA_CERTS`, and paths under the old folder — leaving your other rules exactly as they are; and
+  moves the API key in the OS keychain to the new name without showing it (on macOS you paste it once when
+  asked). It prints what moved.
+- `init` only migrates a source that is a real folder (not a link), holds the router's config or token, and
+  on macOS and Linux is owned by you; otherwise it changes nothing and says why. It stops only processes it
+  can confirm are the previous release's; if it cannot confirm one, it leaves everything and asks you to stop
+  it. If both an old and a new install already exist, it changes nothing and says so.
+- Then `do-it-all-claude-code start`, and restart any open Claude Code sessions. After migration
+  `AGENTIC_ROUTER_HOME` is no longer read; `doctor` warns when it is still set ("previous home",
+  "AGENTIC_ROUTER_HOME").
+
 ## [0.2.0] — 2026-11-13
 
 Second pre-release: mostly security work for shared machines and API-key mode, plus better triage outside English.
@@ -140,6 +178,6 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
-[Unreleased]: https://github.com/ggreing/agentic-router/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/ggreing/agentic-router/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/ggreing/agentic-router/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ggreing/do-it-all-claude-code/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/ggreing/do-it-all-claude-code/releases/tag/v0.1.0

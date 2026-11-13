@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the Agentic Router Proxy
+about: Report a problem with the Do It All Claude Code
 title: ""
 labels: bug
 ---
@@ -22,17 +22,17 @@ A clear description of the problem, and what you expected instead.
 
 ## Environment
 
-- Agentic Router Proxy version (or commit): 
+- Do It All Claude Code version (or commit): 
 - Claude Code version (`claude --version`): 
 - OS and version (e.g. Windows 11, macOS 14, Ubuntu 24.04): 
 - On Windows, Git Bash version (`bash --version`): 
 - Mode (`subscription` / `api` / `direct`): 
 - Node version (`node --version`): 
 
-## `agentic-router doctor` output
+## `do-it-all-claude-code doctor` output
 
 <!--
-Paste the output of `agentic-router doctor` below. It helps pinpoint setup issues.
+Paste the output of `do-it-all-claude-code doctor` below. It helps pinpoint setup issues.
 IMPORTANT: review it first and remove anything private — local file paths, usernames,
 project names, tokens or API keys. The output can contain file paths from your machine.
 -->

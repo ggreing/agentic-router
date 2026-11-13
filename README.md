@@ -1,4 +1,4 @@
-# Agentic Router Proxy
+# Do It All Claude Code
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@ handed the edit to a single Haiku coder. It's slower, though: each hand-off adds
 the bigger tasks the team took noticeably longer than one session working alone. The numbers and how we
 got them are in [docs/measurements](docs/measurements/).
 
-The CLI and package are called `agentic-router`.
+The CLI and package are called `do-it-all-claude-code`.
 
 ## How it works
 
@@ -45,7 +45,7 @@ Nothing is on npm yet. You need Node 24+, Claude Code 2.1.295 or newer, and Git 
 Windows.
 
 ```
-git clone https://github.com/ggreing/agentic-router && cd agentic-router
+git clone https://github.com/ggreing/do-it-all-claude-code && cd do-it-all-claude-code
 npm ci
 npm run build:dashboard
 node packages/cli/src/index.ts init
@@ -53,8 +53,8 @@ node packages/cli/src/index.ts start
 ```
 
 `node packages/cli/src/index.ts` is the CLI until there's a published package; below it's written as
-`agentic-router`. `init` registers the plugin and a status line and asks before it changes your Claude
-Code settings. `agentic-router doctor` checks the setup if something looks off.
+`do-it-all-claude-code`. `init` registers the plugin and a status line and asks before it changes your Claude
+Code settings. `do-it-all-claude-code doctor` checks the setup if something looks off.
 
 Other commands you'll probably use:
 
@@ -63,7 +63,7 @@ Other commands you'll probably use:
 | `status`, `stop` | show or stop the daemon |
 | `dashboard` | open the local dashboard |
 | `mode subscription\|api\|direct\|proxy` | switch modes (below) |
-| `policy show\|accept` | review a project's `.agentic-router/policy.json` before it takes effect |
+| `policy show\|accept` | review a project's `.do-it-all-claude-code/policy.json` before it takes effect |
 | `data export`, `data purge` | export or delete what the router has recorded |
 | `uninstall` | undo what `init` did; your data folder stays |
 
@@ -72,14 +72,14 @@ Other commands you'll probably use:
 By default it runs on your Claude subscription. In that mode there's no proxy and the router never reads
 or stores your subscription credentials; Claude Code talks to Anthropic exactly as before.
 
-With an API key, `agentic-router init --mode api` puts a small local proxy in front of the API. It records
+With an API key, `do-it-all-claude-code init --mode api` puts a small local proxy in front of the API. It records
 the real token cost of every call and applies daily budgets — $100 per day per local token and $300 per day
 in total by default. Each request holds its worst case (its prompt size and `max_tokens` at the model's
 highest rates) against those caps until it finishes, and does not start when that would not fit. Even so,
 the hold covers only the request body: content the API fetches for itself — files referenced by id, images
 by URL, and server tools such as web search — is charged when the call settles, so a day can still end a
-little over the cap. The key itself lives only in the OS keychain. If the proxy ever gets in your way, `agentic-router mode direct`
-bypasses it and `agentic-router mode proxy` puts it back.
+little over the cap. The key itself lives only in the OS keychain. If the proxy ever gets in your way, `do-it-all-claude-code mode direct`
+bypasses it and `do-it-all-claude-code mode proxy` puts it back.
 
 **Local TLS.** In API-key mode Claude Code reaches the proxy over `https://127.0.0.1:<port>` with a
 certificate only this router holds — made with `openssl`, good for `127.0.0.1` and `localhost` only and
@@ -103,9 +103,9 @@ setting the router cannot use stops it from starting rather than quietly going a
 
 In the other direction, Claude Code would otherwise send its own requests for the local proxy at
 `127.0.0.1:<port>` (local token included) through your corporate proxy too. So when a proxy is set,
-`agentic-router init --mode api` and `mode api` add `127.0.0.1` and `localhost` to `NO_PROXY` in Claude
+`do-it-all-claude-code init --mode api` and `mode api` add `127.0.0.1` and `localhost` to `NO_PROXY` in Claude
 Code's settings, keeping your own entries; `mode direct`, `mode subscription` and `uninstall` remove only
-what they added. `agentic-router doctor` checks both directions.
+what they added. `do-it-all-claude-code doctor` checks both directions.
 
 ## Workers and permissions
 
@@ -129,7 +129,7 @@ deletes them at the next daemon start. Event records are kept for 30 days.
 
 ## The dashboard
 
-`agentic-router dashboard` opens a read-only page served by the daemon: recent requests, who did what,
+`do-it-all-claude-code dashboard` opens a read-only page served by the daemon: recent requests, who did what,
 which checks passed, what it cost (lead versus workers), and how often the router's first guess about a
 request's size turned out right. It's available in English, Korean, Japanese and Simplified Chinese.
 

@@ -1,4 +1,4 @@
-# Contributing to Agentic Router Proxy
+# Contributing to Do It All Claude Code
 
 Thanks for your interest. This project is pre-release; interfaces and defaults may still change. Please
 open an issue to discuss anything substantial before you start.

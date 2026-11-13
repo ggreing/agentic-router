@@ -5,7 +5,7 @@ certificate comes from the CLI's `localtls.ts` (openssl), the proxy is the real 
 and the apiKeyHelper is the real `packages/proxy/bin/local-token.mjs`, which checks the proxy's proof (and that the
 session's `ANTHROPIC_BASE_URL` is that proxy) before it prints the local token. The proxy forwards to a fake Messages
 API on `127.0.0.1` that accepts one dummy key. **No API call is made and nothing is billed.** A fresh temp config dir
-and a temp router home are used; your own `~/.claude` and `~/.agentic-router` are not read or changed.
+and a temp router home are used; your own `~/.claude` and `~/.do-it-all-claude-code` are not read or changed.
 
 ## Run
 

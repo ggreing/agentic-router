@@ -55,7 +55,7 @@ environment) is still refused, and with `"Bash(cat *)"` allowed, `cat .env` stil
 They can't write outside their subtask's paths (`[scope: ...]`), or to CI configuration, `.claude/`,
 `.git/`, `.mcp.json`, `.husky/`, `CLAUDE.md` and other files that change how the repository or the agent
 runs. They can't read, search for or list credential files (`.env`, `.npmrc`, `~/.ssh`, `~/.aws`, the macOS
-keychains, desktop keyrings, ...) or the router's folder (`~/.agentic-router`), under any name the same
+keychains, desktop keyrings, ...) or the router's folder (`~/.do-it-all-claude-code`), under any name the same
 directory has (a home reached through a link counts as the home); `.env.example` and other templates are fine. They can't run
 commands outside the worker allowlist (network tools, shells, interpreters with inline code), print the
 environment or reference secret-looking variables, use shell syntax the guard can't follow (`$'...'`,
@@ -92,22 +92,27 @@ The refusal message says what to do instead. The common ones:
 
 ## Project policy
 
-A repository can add commands to the worker allowlist in `.agentic-router/policy.json` (`bashAllow`) and
+A repository can add commands to the worker allowlist in `.do-it-all-claude-code/policy.json` (`bashAllow`) and
 name environment variables to pass to verification (`verifyEnv`). The file does nothing until you accept
 it:
 
 ```
-agentic-router policy show
-agentic-router policy accept
+do-it-all-claude-code policy show
+do-it-all-claude-code policy accept
 ```
 
 Acceptance is tied to the file's content. If it changes, say after a `git pull`, it's ignored again until
-you accept the new version. `agentic-router doctor` shows where things stand.
+you accept the new version. `do-it-all-claude-code doctor` shows where things stand.
+
+A project that still has a `.agentic-router/` folder from before the rename is still read this release, file
+by file (`policy.json`, `verify.json`, `teams.yaml`), with the new `.do-it-all-claude-code/` folder winning
+where both have a file. `do-it-all-claude-code doctor` points it out so you can rename it, and a policy you
+had accepted carries over the rename.
 
 ## Workers need the daemon
 
 A worker can only write once the router has a scope record for it, and the daemon writes that record when
 the lead dispatches the worker. If the daemon isn't running, router workers can read but not edit.
-`agentic-router status` tells you whether it's up.
+`do-it-all-claude-code status` tells you whether it's up.
 
 See [SECURITY.md](../SECURITY.md) for what the guard can't protect against.

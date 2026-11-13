@@ -20,16 +20,16 @@ The plugin hooks (`plugin/`), the local daemon, the API-key proxy, the CLI, and 
 ## If a credential leaks
 
 - **Anthropic API key** (API-key mode): revoke it in the Anthropic Console first, then set a new one with
-  `agentic-router key set` (the key is read over stdin/TTY and stored only in the OS keychain). Check the
+  `do-it-all-claude-code key set` (the key is read over stdin/TTY and stored only in the OS keychain). Check the
   proxy log and the daily totals for unexpected usage.
 - **Local proxy token** (the token Claude Code sends to the local proxy): run
-  `agentic-router token rotate`. The proxy keeps accepting the old token for about 10 more minutes so
+  `do-it-all-claude-code token rotate`. The proxy keeps accepting the old token for about 10 more minutes so
   in-flight sessions keep working; Claude Code picks up the new one through its `apiKeyHelper`.
 - **Daemon token** (the bearer for the daemon's local API at `127.0.0.1`, stored at
   `<router-home>/token`, mode `0600`): `init` writes this token once, as 32 random bytes, and keeps an
-  existing one. To regenerate it, stop the daemon (`agentic-router stop`), delete `<router-home>/token`,
-  run `agentic-router init` (which writes a fresh token and restores `0600`), then start the daemon
-  again. The default router home is `~/.agentic-router` (overridable with `AGENTIC_ROUTER_HOME`).
+  existing one. To regenerate it, stop the daemon (`do-it-all-claude-code stop`), delete `<router-home>/token`,
+  run `do-it-all-claude-code init` (which writes a fresh token and restores `0600`), then start the daemon
+  again. The default router home is `~/.do-it-all-claude-code` (overridable with `DO_IT_ALL_CLAUDE_CODE_HOME`).
 
 All local endpoints bind to `127.0.0.1` only and check the `Host`/`Origin` headers, so a web page cannot
 reach them; tokens still matter because they sit in local files.
@@ -55,7 +55,7 @@ away from the router folder and from credential files, on every path spelling it
 places the router's tokens in a worker's environment or on a command line; and it keeps the records the
 guard trusts (scope records, the accepted project policy) where workers may not write. What it cannot do:
 stop code that you allow a worker to run. A test, a build script or any other program that runs with
-your approval has your user's file access, including to `~/.agentic-router` and your credential files.
+your approval has your user's file access, including to `~/.do-it-all-claude-code` and your credential files.
 Treat an allow rule for a command that runs code as you would treat running that code yourself.
 
 **Searches.** A search that names no files opens whatever the search tool opens below its start

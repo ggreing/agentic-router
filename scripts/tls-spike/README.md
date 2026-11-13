@@ -6,7 +6,7 @@ it fail with a TLS error rather than silently falling back to plain HTTP?
 
 This drives a real `claude -p` against a local fake that speaks HTTPS and listens on `127.0.0.1` only, with a
 fresh temp config directory (no login) and a dummy key that only the fake accepts. **No API call is made and
-nothing is billed.** Your own `~/.claude` and `~/.agentic-router` are not read or changed. It reuses the
+nothing is billed.** Your own `~/.claude` and `~/.do-it-all-claude-code` are not read or changed. It reuses the
 shape of `scripts/guard-e2e`.
 
 ## Run
@@ -42,7 +42,7 @@ distinguished_name = dn
 x509_extensions = v3ext
 prompt = no
 [dn]
-CN = agentic-router-tls-spike
+CN = do-it-all-claude-code-tls-spike
 [v3ext]
 subjectAltName = IP:127.0.0.1, DNS:localhost
 basicConstraints = critical, CA:TRUE

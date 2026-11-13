@@ -1,4 +1,4 @@
-# @agentic-router/dashboard
+# @do-it-all-claude-code/dashboard
 
 Read-only local web dashboard for the router. The daemon serves the built assets at
 `http://127.0.0.1:<daemon port>/dashboard`; all data stays on the machine and the dashboard never writes
@@ -6,7 +6,7 @@ anything or sends anything off the device.
 
 ## Opening it
 
-Run `agentic-router dashboard`. The command mints a one-time login code and opens the dashboard URL with
+Run `do-it-all-claude-code dashboard`. The command mints a one-time login code and opens the dashboard URL with
 that code in the page fragment (`…/dashboard#code=<code>`). The page exchanges the code once for an
 HttpOnly, SameSite=Strict session cookie and then clears the code from the address bar. The long-lived
 local token never reaches the browser, the URL, or any log; the code is single-use and expires in a
@@ -52,9 +52,9 @@ step-up numbers alongside them.
 ## Develop
 
 ```
-npm run -w @agentic-router/dashboard dev         # Vite dev server (mock data by default)
-npm run -w @agentic-router/dashboard typecheck   # vue-tsc (see the TypeScript note)
-npm run -w @agentic-router/dashboard build       # typecheck + vite build -> dist/
+npm run -w @do-it-all-claude-code/dashboard dev         # Vite dev server (mock data by default)
+npm run -w @do-it-all-claude-code/dashboard typecheck   # vue-tsc (see the TypeScript note)
+npm run -w @do-it-all-claude-code/dashboard build       # typecheck + vite build -> dist/
 ```
 
 Data source: `VITE_USE_MOCK` defaults on, so the SPA runs and builds with sample data and no daemon
