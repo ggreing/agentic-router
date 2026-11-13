@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/). Dates are in UTC.
 
+## [Unreleased]
+
+### API-key mode
+
+- The proxy now holds each request's worst case — its prompt size and `max_tokens` priced at the model's
+  highest rates — against the daily caps until the request finishes, and refuses a request that would not
+  fit. This tightens the budgets that 0.1.0 noted were not hard caps.
+- **Corporate proxy support.** The proxy reaches the API through the proxy your environment names (the first
+  of `https_proxy`, `HTTPS_PROXY`, `http_proxy`, `HTTP_PROXY`, with `NO_PROXY` honoured), using Node's
+  built-in proxy support (Node 24.5+): HTTPS goes through a CONNECT tunnel with the API's certificate still
+  verified end to end. A TLS-inspecting proxy needs its root certificate trusted by Node (e.g.
+  `NODE_EXTRA_CA_CERTS`); SOCKS is not supported, and an unusable proxy setting stops the router from
+  starting rather than going around it. So that Claude Code's own calls to the local proxy are not sent
+  through the corporate proxy, `init --mode api` and `mode api` add `127.0.0.1` and `localhost` to
+  `NO_PROXY` in Claude Code's settings (keeping your entries); `mode direct`, `mode subscription` and
+  `uninstall` remove only what they added. `agentic-router doctor` checks both directions.
+
+### Security
+
+- Messages between the router's own programs (hooks, status line, MCP server, CLI) and the daemon are now
+  encrypted and authenticated with a key derived from the token. A program that takes the daemon's port
+  while it is down can read neither the token nor your prompts and cannot answer in the daemon's place
+  (decision 156).
+
+### Delegation
+
+- A reviewer's or tester's verdict can name the writer subtask it is about with a `Subtask:` line, so a
+  reject that covers several writers is credited to the right one instead of to none.
+- Triage handles more languages more accurately: Traditional Chinese task sets, Korean grammatical particles
+  after file names, and length thresholds weighted per script for CJK.
+
+### The guard
+
+- Path comparisons are canonicalized on both sides, and a directory is checked under every spelling it can
+  take on Linux, macOS and Windows, closing cross-platform ways around a scope.
+
+### Project
+
+- Continuous integration builds and tests on Linux, Windows and macOS.
+
 ## [0.1.0] — 2026-11-12
 
 First public pre-release.
@@ -75,4 +115,5 @@ First public pre-release.
   (or the dashboard shows a short page telling you to). `agentic-router doctor` reports the build
   state.
 
+[Unreleased]: https://github.com/ggreing/agentic-router/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ggreing/agentic-router/releases/tag/v0.1.0

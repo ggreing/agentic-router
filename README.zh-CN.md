@@ -65,9 +65,22 @@ node packages/cli/src/index.ts start
 Anthropic 通信。
 
 要用 API 密钥，运行 `agentic-router init --mode api`，它会在 API 前面放一个小的本地代理。代理记录每次调用
-的真实令牌成本，预算用完后就不再发出新调用：默认是每个本地令牌每天 $100、总共每天 $300，另外还有按请求的
-预算。已经在传输中的调用会让它跑完，所以可能会略微超出。密钥本身只放在操作系统的密钥库里。要是代理碍事，
-`agentic-router mode direct` 可以绕过它，`agentic-router mode proxy` 再把它放回来。
+的真实令牌成本，并施加每天的预算：默认是每个本地令牌每天 $100、总共每天 $300。每个请求会按最坏情况（提示
+大小和 `max_tokens` 以该模型的最高费率计价）占住这些上限，直到请求结束；放不下时就不开始该请求。不过这种
+占用只覆盖请求正文：API 自己去取的内容（用 ID 引用的文件、用 URL 引用的图片，以及网页搜索这类服务器工具）
+不在正文里，只有在调用结算时才计费，所以一天仍可能略微超出上限。密钥本身只放在操作系统的密钥库里。要是代理碍事，`agentic-router mode direct` 可以绕过它，`agentic-router mode
+proxy` 再把它放回来。
+
+**在公司代理后面。** 代理通过你环境里指定的代理访问 API：`https_proxy`、`HTTPS_PROXY`、`http_proxy`、
+`HTTP_PROXY` 中第一个设置的那个（Claude Code 使用的顺序），并尊重 `NO_PROXY`。它用 Node 内置的代理支持
+（Node 24.5 及以上），所以 HTTPS 走 CONNECT 隧道，API 的证书仍然端到端验证。代理 URL 里的凭据只发给代理，
+不会出现在日志、错误或 `doctor` 里。会解密 TLS 的代理需要让 Node 信任它的根证书，例如通过
+`NODE_EXTRA_CA_CERTS`。不支持 SOCKS；遇到路由器无法使用的代理设置，它会停止启动，而不是悄悄绕过代理。
+
+反过来，若不处理，Claude Code 发给本地代理的自身调用（`http://127.0.0.1:<port>`，含本地令牌）也会经过你的
+公司代理。所以设置了代理时，`agentic-router init --mode api` 和 `mode api` 会把 `127.0.0.1` 和 `localhost`
+加到 Claude Code 设置的 `NO_PROXY` 里（保留你自己的条目）；`mode direct`、`mode subscription` 和
+`uninstall` 只移除它们自己加的那部分。`agentic-router doctor` 会检查两个方向。
 
 ## 工作者与权限
 

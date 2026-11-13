@@ -73,11 +73,27 @@ By default it runs on your Claude subscription. In that mode there's no proxy an
 or stores your subscription credentials; Claude Code talks to Anthropic exactly as before.
 
 With an API key, `agentic-router init --mode api` puts a small local proxy in front of the API. It records
-the real token cost of every call and stops sending new calls once a budget is used up: $100 per day per
-local token and $300 per day in total by default, plus a per-request budget. Calls that are already
-streaming are allowed to finish, so you can end up slightly over. The key itself lives only in the OS
-keychain. If the proxy ever gets in your way, `agentic-router mode direct` bypasses it and
-`agentic-router mode proxy` puts it back.
+the real token cost of every call and applies daily budgets — $100 per day per local token and $300 per day
+in total by default. Each request holds its worst case (its prompt size and `max_tokens` at the model's
+highest rates) against those caps until it finishes, and does not start when that would not fit. Even so,
+the hold covers only the request body: content the API fetches for itself — files referenced by id, images
+by URL, and server tools such as web search — is charged when the call settles, so a day can still end a
+little over the cap. The key itself lives only in the OS keychain. If the proxy ever gets in your way, `agentic-router mode direct`
+bypasses it and `agentic-router mode proxy` puts it back.
+
+**Behind a corporate proxy.** The proxy reaches the API through whatever proxy your environment names — the
+first of `https_proxy`, `HTTPS_PROXY`, `http_proxy` and `HTTP_PROXY` (the order Claude Code uses), with
+`NO_PROXY` honoured. It uses Node's built-in proxy support (Node 24.5 or later), so HTTPS goes through a
+CONNECT tunnel and the API's certificate is still verified end to end. Any credentials in the proxy URL go
+only to the proxy and never appear in logs, errors or `doctor`. A TLS-inspecting proxy needs its root
+certificate trusted by Node, for example through `NODE_EXTRA_CA_CERTS`. SOCKS is not supported, and a proxy
+setting the router cannot use stops it from starting rather than quietly going around the proxy.
+
+In the other direction, Claude Code would otherwise send its own calls to the local proxy
+(`http://127.0.0.1:<port>`, local token included) through your corporate proxy too. So when a proxy is set,
+`agentic-router init --mode api` and `mode api` add `127.0.0.1` and `localhost` to `NO_PROXY` in Claude
+Code's settings, keeping your own entries; `mode direct`, `mode subscription` and `uninstall` remove only
+what they added. `agentic-router doctor` checks both directions.
 
 ## Workers and permissions
 

@@ -80,10 +80,20 @@ a stopped or crashed daemon blocks worker edits rather than leaving them uncheck
 **Outside the guard's reach.** The guard applies to this plugin's subagents only. The main session, other
 plugins' agents, and anything else running on the machine are not restricted by it.
 
-**Shared machines.** On a machine with other local users, another user could bind the daemon's or proxy's
-port while it is down, and hooks would then send it the local token and hook data. The router binds
-`127.0.0.1` only, which does not separate users. Use it on a machine you don't share, or keep the daemon
-running; proving the listener's identity before sending the token is planned.
+**Shared machines.** The router's own programs (hooks, status line, MCP server, CLI) never send the daemon's
+token. Each message to the daemon is encrypted and authenticated with a key derived from it, so a program
+that takes the daemon's port while it is down can read neither the token nor your prompts and cannot answer
+in the daemon's place. It can still see that requests happen, and their size and timing.
+
+On macOS and Linux the router's own programs reach the daemon through a Unix socket inside the router home,
+which only your user can enter, so another local user can neither connect to it nor stand in for the
+daemon, and does not see those requests at all. If there is no private place for the socket (the home's
+path is too long and no private directory can be made), the daemon uses the local port with sealed messages
+and `daemon.log` says so. Windows uses the local port with sealed messages.
+
+In API-key mode, Claude Code sends its requests to the local proxy directly, and that connection is not
+protected yet: a program that takes the proxy's port while the proxy is down receives the requests sent to
+it, prompts and the local token included.
 
 **What real isolation would take.** Running workers as another OS user or in a container. That is not
 part of this release.

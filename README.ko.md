@@ -72,10 +72,26 @@ node packages/cli/src/index.ts start
 않습니다. Claude Code는 지금처럼 Anthropic과 직접 통신합니다.
 
 API 키로 쓰려면 `agentic-router init --mode api`를 실행하세요. API 앞에 작은 로컬 프록시가 붙어서 호출마다
-실제 토큰 비용을 기록하고, 예산을 다 쓰면 새 호출을 더 보내지 않습니다. 기본값은 로컬 토큰당 하루 $100,
-전체 하루 $300이고, 요청마다 예산도 따로 있습니다. 이미 응답을 받고 있는 호출은 끝까지 받기 때문에
-예산을 조금 넘을 수 있습니다. API 키는 OS 키체인에만 둡니다. 프록시가 거슬리면
-`agentic-router mode direct`로 우회하고, `agentic-router mode proxy`로 되돌리면 됩니다.
+실제 토큰 비용을 기록하고 하루 예산을 적용합니다. 기본값은 로컬 토큰당 하루 $100, 전체 하루 $300입니다.
+요청마다 최악의 경우(프롬프트 크기와 `max_tokens`를 그 모델의 최고 요율로 계산한 값)를 이 상한에 걸어 두고
+요청이 끝날 때까지 유지하며, 그 몫이 들어가지 않으면 요청을 시작하지 않습니다. 그래도 이 예약이 덮는 것은
+요청 본문뿐입니다. API가 스스로 가져오는 것(아이디로 참조한 파일, URL로 참조한 이미지, 웹 검색 같은 서버
+도구)은 본문에 없고 호출이 정산될 때 과금되므로, 하루가 상한을 조금 넘겨 끝날 수 있습니다. API 키는 OS
+키체인에만 둡니다. 프록시가 거슬리면 `agentic-router mode direct`로 우회하고, `agentic-router mode proxy`로
+되돌리면 됩니다.
+
+**회사 프록시 뒤에서.** 프록시는 환경이 지정한 프록시를 통해 API에 닿습니다. `https_proxy`, `HTTPS_PROXY`,
+`http_proxy`, `HTTP_PROXY` 중 처음 설정된 것(Claude Code가 쓰는 순서)을 쓰고 `NO_PROXY`를 존중합니다.
+Node 내장 프록시 지원(Node 24.5 이상)을 쓰므로 HTTPS는 CONNECT 터널로 지나가고 API 인증서는 끝까지
+검증됩니다. 프록시 URL에 든 자격증명은 프록시에만 가고 로그·오류·`doctor`에는 나타나지 않습니다. TLS를
+들여다보는 프록시라면 그 루트 인증서를 Node가 신뢰해야 하며, 예를 들어 `NODE_EXTRA_CA_CERTS`로 지정합니다.
+SOCKS는 지원하지 않고, 라우터가 쓸 수 없는 프록시 설정이면 프록시를 몰래 우회하는 대신 시작을 멈춥니다.
+
+반대 방향으로, 그냥 두면 Claude Code가 로컬 프록시로 보내는 자기 호출(`http://127.0.0.1:<port>`, 로컬
+토큰 포함)도 회사 프록시를 거치게 됩니다. 그래서 프록시가 설정돼 있으면 `agentic-router init --mode api`와
+`mode api`가 Claude Code 설정의 `NO_PROXY`에 `127.0.0.1`과 `localhost`를 더하고(기존 항목은 유지),
+`mode direct`, `mode subscription`, `uninstall`은 자신이 더한 것만 뺍니다. `agentic-router doctor`가 양쪽
+방향을 모두 점검합니다.
 
 ## 작업자와 권한
 
