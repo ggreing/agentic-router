@@ -26,6 +26,9 @@ All notable changes to this project are documented here. This project adheres to
   encrypted and authenticated with a key derived from the token. A program that takes the daemon's port
   while it is down can read neither the token nor your prompts and cannot answer in the daemon's place
   (decision 156).
+- On macOS and Linux the router's programs reach the daemon through a Unix socket in the router home that
+  only your user can enter, and never fall back to the port when the socket is gone; Windows keeps the
+  local port with sealed messages.
 
 ### Delegation
 
