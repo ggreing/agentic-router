@@ -36,6 +36,8 @@ function fake(o: { status?: Awaited<ReturnType<ApiDeps['vault']['status']>>; log
     isTTY: o.tty ?? false,
     readStdin: async () => o.stdin ?? '',
     out: line => { f.lines.push(line); },
+    // decision 157: these tests cover plain HTTP; local TLS (openssl) has its own (localtls.test.ts)
+    openssl: null,
   };
   return f;
 }
@@ -183,8 +185,11 @@ test('doctor in API-key mode: version, settings, project overrides, credential v
     keyStatus: async () => 'present', proxyHealth: async () => ({ ok: true, upstream: 'https://api.anthropic.com' }), supervise: null,
   };
   const ok = await apiChecks(base);
-  assert.ok(ok.every(x => x.ok), JSON.stringify(ok.filter(x => !x.ok)));
-  const by = async (o: Partial<ApiCheckInput>) => (await apiChecks({ ...base, ...o })).filter(x => !x.ok).map(x => [x.name, x.blocking]);
+  // decision 157: local TLS is off here (no openssl in these tests): a warning with the reason, never blocking
+  const tlsOff = ok.find(x => x.name === 'local TLS')!;
+  assert.deepEqual([tlsOff.ok, tlsOff.blocking], [false, false]);
+  assert.ok(ok.filter(x => x.name !== 'local TLS').every(x => x.ok), JSON.stringify(ok.filter(x => !x.ok)));
+  const by = async (o: Partial<ApiCheckInput>) => (await apiChecks({ ...base, ...o })).filter(x => !x.ok && x.name !== 'local TLS').map(x => [x.name, x.blocking]);
   assert.deepEqual(await by({ claudeVersion: '2.1.250' }), [['claude code (API mode)', true]]);
   assert.deepEqual(await by({ env: { ANTHROPIC_AUTH_TOKEN: 'x' } }), [['ANTHROPIC_AUTH_TOKEN in environment', true]]);
   assert.deepEqual(await by({ env: { NODE_TLS_REJECT_UNAUTHORIZED: '0' } }), [['NODE_TLS_REJECT_UNAUTHORIZED', true]]);
@@ -205,18 +210,40 @@ test('doctor in API-key mode: version, settings, project overrides, credential v
   assert.match(drift.detail, /ANTHROPIC_BASE_URL.*run agentic-router mode proxy/);
 });
 
-test('the real proxy health route is read with the local token', async () => {
+test('decision 156: the proxy health is read only after the proxy proved itself; a program that cannot is reported, and gets no token', async () => {
   const { proxyHealth } = await import('../src/supervise.ts');
-  const server = http.createServer((req, res) => {
-    if (req.headers.authorization === 'Bearer tok-1234567890') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true,"upstream":"https://api.anthropic.com","inflight":2}'); }
-    else { res.writeHead(401); res.end(); }
+  const { proofOf } = await import('@agentic-router/proxy');
+  const TOKEN = 'tok-1234567890-abcdefghijklmnopqrstuvwxyz';
+  const seen: Array<string | undefined> = [];
+  let port = 0;
+  const proxyLike = (knows: boolean) => http.createServer((req, res) => {
+    seen.push(req.headers.authorization);
+    let b = '';
+    req.on('data', c => { b += String(c); });
+    req.on('end', () => {
+      if (req.url === '/proxy/v1/proof') {
+        const nonce = (JSON.parse(b) as { nonce: string }).nonce;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ proof: knows ? proofOf(TOKEN, port, nonce) : 'guess' }));
+      }
+      if (req.headers.authorization === `Bearer ${TOKEN}`) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true,"upstream":"https://api.anthropic.com","inflight":2}'); }
+      res.writeHead(401); res.end();
+    });
   });
-  await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
-  const port = (server.address() as { port: number }).port;
-  try {
-    assert.deepEqual(await proxyHealth(port, 'tok-1234567890'), { ok: true, upstream: 'https://api.anthropic.com', inflight: 2 });
-    assert.equal(await proxyHealth(port, 'wrong'), null);
-  } finally { server.close(); }
+  for (const knows of [true, false]) {
+    const server = proxyLike(knows);
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    port = (server.address() as { port: number }).port;
+    seen.length = 0;
+    try {
+      if (knows) assert.deepEqual(await proxyHealth(port, TOKEN), { ok: true, upstream: 'https://api.anthropic.com', inflight: 2, tls: false });
+      else {
+        assert.deepEqual(await proxyHealth(port, TOKEN), { ok: false, other: true });
+        assert.ok(seen.every(a => a === undefined), 'the token was never sent to it');
+      }
+    } finally { server.close(); }
+  }
+  assert.equal(await proxyHealth(port, TOKEN), null, 'nothing listens: down');
 });
 
 test('spec 2.1: subscription settings take out only what API-key mode put in', () => {

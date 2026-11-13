@@ -14,6 +14,7 @@ import { Budget, daemonBudgetSource, type BudgetSource } from './budget.ts';
 import type { ProxySettings } from './config.ts';
 import { agentProxyEnv, type UpstreamProxy } from './egress.ts';
 import { forward, localError } from './forward.ts';
+import { NONCE_RE, PROOF_PATH, proofOf } from './proof.ts';
 import { MAX_REQUEST_BYTES, requestShape, reservationFor } from './reserve.ts';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyPaths } from './paths.ts';
@@ -28,6 +29,9 @@ export const PROXY_VERSION = '0.1.0';
  */
 export const BUDGET_BLOCK_STATUS = 429;
 export const BUDGET_BLOCK_ERROR_TYPE = 'rate_limit_error';
+
+/** How often the proxy looks for a renewed local TLS certificate (decision 157). */
+export const TLS_RELOAD_MS = 60_000;
 
 /** In-flight streams get this long to finish when the proxy stops. */
 export const DRAIN_MS = 30_000;
@@ -62,7 +66,7 @@ export function classifyRoute(method: string | undefined, canon: string): 'messa
 
 export interface ProxyOptions {
   paths: ProxyPaths;
-  settings: Pick<ProxySettings, 'upstream' | 'tokenDailyCapUsd' | 'dailyCapUsd' | 'headersTimeoutMs'>;
+  settings: Pick<ProxySettings, 'upstream' | 'tokenDailyCapUsd' | 'dailyCapUsd' | 'headersTimeoutMs' | 'tls'>;
   /** The vault key holder (vault.loadKey). */
   key: { get(): string };
   tokens: LocalTokens;
@@ -79,6 +83,8 @@ export interface ProxyOptions {
   testUpstreamCa?: string;
   /** Tests only: a smaller body limit than the API's (MAX_REQUEST_BYTES). */
   maxRequestBytes?: number;
+  /** Tests only: how often a renewed TLS certificate is looked for (TLS_RELOAD_MS). */
+  tlsReloadMs?: number;
 }
 
 /** The whole request body, or why not: 'too_large' (more than `limit`; the rest is not kept) or 'aborted'. */
@@ -101,7 +107,7 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | 't
 }
 
 export interface Proxy {
-  readonly server: http.Server;
+  readonly server: http.Server | https.Server;
   readonly reporter: UsageReporter;
   readonly budget: Budget;
   listen(port: number): Promise<number>;
@@ -115,7 +121,7 @@ export function daemonFromHome(paths: ProxyPaths): () => DaemonTarget | undefine
     try {
       const c = JSON.parse(fs.readFileSync(paths.config, 'utf8')) as { daemonPort?: unknown };
       const token = fs.readFileSync(paths.daemonToken, 'utf8').trim();
-      return Number.isInteger(c.daemonPort) && token ? { port: c.daemonPort as number, token } : undefined;
+      return Number.isInteger(c.daemonPort) && token ? { port: c.daemonPort as number, token, home: paths.home } : undefined;
     } catch {
       return undefined;
     }
@@ -178,6 +184,19 @@ export function createProxy(o: ProxyOptions): Proxy {
     const url = req.url ?? '/';
     const route = url.split('?')[0]!;
     if (req.method === 'HEAD' && route === '/api/hello') { res.writeHead(200); res.end(); return; }
+    // decision 156: the proof that this is the router's proxy, asked for before the token is handed over (proof.ts)
+    if (route === PROOF_PATH) {
+      if (req.method !== 'POST') { drainLimited(req); localError(res, 405, 'invalid_request_error', 'agentic-router proxy: POST a nonce'); return; }
+      const read = await readBody(req, 1024);
+      if (read === 'aborted') return;
+      let nonce: unknown;
+      try { nonce = read === 'too_large' ? undefined : (JSON.parse(read.toString('utf8')) as { nonce?: unknown }).nonce; } catch { nonce = undefined; }
+      if (typeof nonce !== 'string' || !NONCE_RE.test(nonce)) { localError(res, 400, 'invalid_request_error', 'agentic-router proxy: a nonce of 16 to 64 base64url characters is needed'); return; }
+      const body = JSON.stringify({ v: 1, proof: proofOf(o.tokens.current(), listenPort, nonce) });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
     const presented = bearer(req.headers.authorization) ?? (typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : undefined);
     const auth = o.tokens.accept(presented);
     if (route === '/proxy/v1/health') {
@@ -256,12 +275,32 @@ export function createProxy(o: ProxyOptions): Proxy {
     }
   };
 
-  const server = http.createServer({ requestTimeout: REQUEST_TIMEOUT_MS, headersTimeout: 60_000, keepAliveTimeout: 65_000 }, (req, res) => {
+  const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
     handle(req, res).catch(e => {
       o.log.error('request failed', { error: errorText(e) });
       localError(res, 502, 'api_error', 'agentic-router proxy: internal error', true);
     });
-  });
+  };
+  const serverOptions = { requestTimeout: REQUEST_TIMEOUT_MS, headersTimeout: 60_000, keepAliveTimeout: 65_000 };
+  // decision 157: HTTPS with the router's local certificate; a plain-HTTP request to this port fails its handshake
+  // (there is no plain listener to fall back to). A renewed certificate is picked up without a restart.
+  const tls = o.settings.tls;
+  const readTls = () => ({ cert: fs.readFileSync(tls!.certFile), key: fs.readFileSync(tls!.keyFile) });
+  const server: http.Server | https.Server = tls
+    ? https.createServer({ ...serverOptions, ...readTls(), minVersion: 'TLSv1.2' }, listener)
+    : http.createServer(serverOptions, listener);
+  let tlsWatch: NodeJS.Timeout | undefined;
+  if (tls) {
+    const stamp = () => { try { return `${fs.statSync(tls.certFile).mtimeMs}/${fs.statSync(tls.keyFile).mtimeMs}`; } catch { return ''; } };
+    let seen = stamp();
+    tlsWatch = setInterval(() => {
+      const now = stamp();
+      if (!now || now === seen) return;
+      try { (server as https.Server).setSecureContext({ ...readTls(), minVersion: 'TLSv1.2' }); seen = now; o.log.info('local TLS certificate reloaded'); }
+      catch (e) { o.log.error('local TLS certificate not reloaded', { error: errorText(e) }); }
+    }, o.tlsReloadMs ?? TLS_RELOAD_MS);
+    tlsWatch.unref();
+  }
 
   return {
     server, reporter, budget,
@@ -287,6 +326,7 @@ export function createProxy(o: ProxyOptions): Proxy {
       await reporter.close();
       budget.close();
       agent.destroy();
+      if (tlsWatch) clearInterval(tlsWatch);
     },
   };
 }

@@ -56,3 +56,12 @@ test('the live lookup: this process\'s own listener is reported as the user\'s o
     assert.ok(!/ANOTHER/.test(phrase));
   } finally { await new Promise<void>(r => s.close(() => r())); }
 });
+
+test('sameWindowsUser: the domain counts, not only the name', async () => {
+  const { sameWindowsUser } = await import('../src/portowner.ts');
+  assert.equal(sameWindowsUser('DESKTOP\\Alice', 'alice', 'desktop'), true);
+  assert.equal(sameWindowsUser('CORP\\alice', 'alice', 'DESKTOP'), false, 'the same name in another domain is someone else');
+  assert.equal(sameWindowsUser('CORP\\alice', 'alice', undefined), false, 'own domain unknown: not taken as ours');
+  assert.equal(sameWindowsUser('alice', 'alice', 'DESKTOP'), true);
+  assert.equal(sameWindowsUser('DESKTOP\\bob', 'alice', 'DESKTOP'), false);
+});

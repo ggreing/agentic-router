@@ -14,7 +14,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { redact } from '@agentic-router/core';
 import { NO_PROXY_VARS, PROXY_VARS, noProxyCovers, shownProxyUrl, splitNoProxy } from '@agentic-router/proxy';
-import { backupNote, readConfig, readJsonFile, writeBackup, writeConfig, writeJsonAtomic, type PlannedChange } from './setup.ts';
+import type { TlsChoice } from './localtls.ts';
+import { backupNote, readConfig, readJsonFile, writeBackup, writeConfig, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
 export type ApiMode = 'proxy' | 'direct';
 
@@ -28,13 +29,13 @@ export function proxyPackageDir(): string {
 export const proxyEntry = (dir = proxyPackageDir()) => path.join(dir, 'src', 'main.ts');
 export const localTokenHelper = (dir = proxyPackageDir()) => `node "${path.join(dir, 'bin', 'local-token.mjs')}"`;
 export const keyHelper = (dir = proxyPackageDir()) => `node "${path.join(dir, 'bin', 'key-helper.mjs')}"`;
-export const proxyBaseUrl = (port: number) => `http://127.0.0.1:${port}`;
+export const proxyBaseUrl = (port: number, tls = false) => `${tls ? 'https' : 'http'}://127.0.0.1:${port}`;
 
 /** True when an apiKeyHelper command is one of ours (any install location). */
 export function isRouterHelper(command: unknown): boolean {
   return typeof command === 'string' && /(local-token|key-helper)\.mjs/.test(command) && /agentic-router|[\\/]proxy[\\/]bin[\\/]/i.test(command);
 }
-export const isOurBaseUrl = (v: unknown): boolean => typeof v === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
+export const isOurBaseUrl = (v: unknown): boolean => typeof v === 'string' && /^https?:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(v);
 
 // ------------------------------------------------------------------ Claude Code behind a corporate proxy
 //
@@ -121,8 +122,67 @@ export function recordNoProxy(records: NoProxyAdded[] | null): void {
   writeConfig({ ...cfg, noProxyAdded: [...byName.values()] });
 }
 
-/** What Claude Code's user settings should hold in a mode, as a planned change (null: already so). */
-export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: number, pkgDir = proxyPackageDir(), shellEnv: NodeJS.ProcessEnv = process.env): PlannedChange | null {
+// ------------------------------------------------------------------ decisions 156-157: helper cache and local TLS
+//
+// The local-token helper proves the proxy before it prints (decision 156 d1), but Claude Code caches what it
+// printed (5 minutes by default): a program that takes the port inside that time would still be sent the cached
+// token. Proxy mode shortens the cache to HELPER_TTL_MS in the settings env block (a value of the user's own that is
+// shorter stays); Claude Code also re-runs the helper on a 401, which is what a token from before a proxy restart
+// gets. With local TLS (decision 157, localtls.ts) the base URL is https and NODE_EXTRA_CA_CERTS names the router's
+// certificate (or a bundle with the user's). Each value set is recorded in config.json (apiEnvAdded) with what was
+// there before, and only a value still as written is taken out or put back.
+
+export const HELPER_TTL_ENV = 'CLAUDE_CODE_API_KEY_HELPER_TTL_MS';
+export const HELPER_TTL_MS = 60_000;
+export const EXTRA_CA_ENV = 'NODE_EXTRA_CA_CERTS';
+export interface EnvAdded { name: string; value: string; previous: string | null }
+
+/** Sets env[name] (records it, keeping the first previous value); returns a note, or '' when already so. */
+function setRecorded(env: Record<string, unknown>, records: EnvAdded[], name: string, value: string, why: string): string {
+  if (env[name] === value) return '';
+  const prev = records.find(r => r.name === name);
+  // what is there now is the user's latest unless it is still the value this router wrote (then its own previous
+  // value stays the one to put back): undo restores the user's latest value, not the first one seen
+  const ours = !!prev && env[name] === prev.value;
+  const previous = ours ? prev!.previous : typeof env[name] === 'string' ? env[name] as string : null;
+  const note = typeof env[name] === 'string' && !ours ? `env.${name}: replace "${String(env[name])}" with "${value}" (${why}; yours is put back by the other modes)` : `env.${name} = "${value}" (${why})`;
+  env[name] = value;
+  const i = records.findIndex(r => r.name === name);
+  const rec = { name, value, previous };
+  if (i >= 0) records[i] = rec; else records.push(rec);
+  return note;
+}
+
+/** Takes out (or puts back what was there before) each recorded value still as written; mutates env and records. */
+export function undoEnvAdded(env: Record<string, unknown>, records: EnvAdded[], only?: string): string[] {
+  const notes: string[] = [];
+  for (const r of [...records]) {
+    if (only && r.name !== only) continue;
+    records.splice(records.indexOf(r), 1);
+    if (env[r.name] !== r.value) continue;   // changed since: the user's now
+    if (r.previous === null) { delete env[r.name]; notes.push(`env.${r.name}: remove (set by API-key mode)`); }
+    else { env[r.name] = r.previous; notes.push(`env.${r.name}: put back "${r.previous}"`); }
+  }
+  return notes;
+}
+
+/** config.json's records after a settings change (apiEnvAdded, proxy.tls, localTls); written at apply time. */
+export function recordApiState(o: { envAdded: EnvAdded[]; tls?: TlsChoice }): void {
+  const cfg = readConfig();
+  if (!cfg) return;
+  const { apiEnvAdded: _e, localTls: _l, ...rest } = cfg;
+  const next: CliConfig = { ...rest, ...(o.envAdded.length ? { apiEnvAdded: o.envAdded } : {}) };
+  if (o.tls) {
+    next.proxy = { ...cfg.proxy, tls: o.tls.on };
+    const lt = o.tls.on ? (o.tls.bundleFrom?.length ? { bundleFrom: o.tls.bundleFrom } : undefined) : { off: o.tls.reason };
+    if (lt) next.localTls = lt;
+  } else if (cfg.localTls) next.localTls = cfg.localTls;
+  writeConfig(next);
+}
+
+/** What Claude Code's user settings should hold in a mode, as a planned change (null: already so). `tls` (proxy
+ *  mode): from localtls.prepareTls; without it the proxy is reached over plain HTTP. */
+export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: number, pkgDir = proxyPackageDir(), shellEnv: NodeJS.ProcessEnv = process.env, tls?: TlsChoice): PlannedChange | null {
   const settings = readJsonFile<Record<string, any>>(settingsFile, {});
   const env: Record<string, unknown> = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
   const helper = mode === 'proxy' ? localTokenHelper(pkgDir) : keyHelper(pkgDir);
@@ -136,7 +196,7 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
   } else if (prevHelper === undefined) notes.push(`apiKeyHelper: ${mode === 'proxy' ? 'the router\'s local token' : 'the API key from the OS keychain'}`);
   for (const k of CREDENTIAL_ENV) if (k in env) { delete env[k]; notes.push(`env.${k}: remove (it would take precedence over apiKeyHelper)`); }
   if (mode === 'proxy') {
-    const url = proxyBaseUrl(proxyPort);
+    const url = proxyBaseUrl(proxyPort, tls?.on === true);
     if (env.ANTHROPIC_BASE_URL !== url) {
       notes.push(env.ANTHROPIC_BASE_URL !== undefined && !isOurBaseUrl(env.ANTHROPIC_BASE_URL)
         ? `env.ANTHROPIC_BASE_URL: replace "${String(env.ANTHROPIC_BASE_URL)}" with ${url}` : `env.ANTHROPIC_BASE_URL = ${url}`);
@@ -148,21 +208,42 @@ export function planApiSettings(settingsFile: string, mode: ApiMode, proxyPort: 
     if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
   }
   // Claude Code behind a corporate proxy: loopback on its NO_PROXY in proxy mode, taken out again in direct mode
-  const recorded = readConfig()?.noProxyAdded;
+  const cfgNow = readConfig();
+  const recorded = cfgNow?.noProxyAdded;
   let records: NoProxyAdded[] | null = [];
   if (mode === 'proxy') { const np = addLoopbackNoProxy(env, shellEnv, proxyPort); notes.push(...np.notes); records = np.records; }
   else if (recorded?.length) { notes.push(...removeLoopbackNoProxy(env, recorded)); records = null; }
-  const unchanged = prevHelper === helper && notes.length === 0;
+  // decisions 156-157: a short helper cache and the local TLS trust in proxy mode; taken out in direct mode
+  const envAdded: EnvAdded[] = [...(cfgNow?.apiEnvAdded ?? [])];
+  // only with a config.json to record them in: a value that cannot be taken out again is not set
+  if (mode === 'proxy' && cfgNow) {
+    const own = Number(env[HELPER_TTL_ENV]);
+    if (!(typeof env[HELPER_TTL_ENV] === 'string' && Number.isFinite(own) && own > 0 && own <= HELPER_TTL_MS)) {
+      const n = setRecorded(env, envAdded, HELPER_TTL_ENV, String(HELPER_TTL_MS), 'the proxy is checked again within a minute, not five');
+      if (n) notes.push(n);
+    }
+    if (tls?.on && tls.caFile) {
+      const n = setRecorded(env, envAdded, EXTRA_CA_ENV, tls.caFile, tls.note ?? 'Claude Code trusts the local proxy\'s own certificate');
+      if (n) notes.push(n);
+    } else notes.push(...undoEnvAdded(env, envAdded, EXTRA_CA_ENV));
+    if (tls && !tls.on) notes.push(`local TLS off: ${tls.reason}; the helper still checks the proxy before it gives out the token`);
+    if (tls?.on) notes.push(...tls.pending);   // L3: made at apply time, after the change was confirmed
+  } else notes.push(...undoEnvAdded(env, envAdded));
+  const tlsChanged = mode === 'proxy' && tls !== undefined && (cfgNow?.proxy?.tls === true) !== tls.on;
+  const unchanged = prevHelper === helper && notes.filter(n => !n.startsWith('local TLS off:')).length === 0 && !tlsChanged;
   if (unchanged) return null;
   return {
     file: settingsFile,
     summary: `API-key mode (${mode}): ${notes.join('; ')}${backupNote(settingsFile)}`,
     apply() {
+      // the certificate and the bundle first: if they cannot be made, nothing has changed
+      if (mode === 'proxy' && tls?.on && cfgNow) tls.materialize();
       writeBackup(settingsFile);   // decision 142: without credential env values
       const next: Record<string, any> = { ...settings, apiKeyHelper: helper };
       if (Object.keys(env).length) next.env = env; else delete next.env;
       writeJsonAtomic(settingsFile, next);
       recordNoProxy(records);
+      recordApiState({ envAdded, ...(mode === 'proxy' && tls ? { tls } : {}) });
     },
   };
 }
@@ -181,9 +262,13 @@ export function planSubscriptionSettings(settingsFile: string): PlannedChange | 
   if (ours) notes.push('apiKeyHelper: remove the router\'s helper');
   if (isOurBaseUrl(env.ANTHROPIC_BASE_URL)) { delete env.ANTHROPIC_BASE_URL; notes.push('env.ANTHROPIC_BASE_URL: remove (back to the claude.ai login)'); }
   if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
-  const recorded = readConfig()?.noProxyAdded;
+  const cfgNow = readConfig();
+  const recorded = cfgNow?.noProxyAdded;
   if (recorded?.length) notes.push(...removeLoopbackNoProxy(env, recorded));
-  if (!notes.length) return null;
+  const envAdded: EnvAdded[] = [...(cfgNow?.apiEnvAdded ?? [])];
+  const hadEnvAdded = envAdded.length > 0;
+  notes.push(...undoEnvAdded(env, envAdded));
+  if (!notes.length && !hadEnvAdded) return null;
   const backup = settingsFile + '.agentic-router.bak';
   if (ours && fs.existsSync(backup)) {
     const before = readJsonFile<Record<string, any>>(backup, {}).apiKeyHelper;
@@ -198,6 +283,7 @@ export function planSubscriptionSettings(settingsFile: string): PlannedChange | 
       if (Object.keys(env).length) next.env = env; else delete next.env;
       writeJsonAtomic(settingsFile, next);
       if (recorded?.length) recordNoProxy(null);
+      if (hadEnvAdded) recordApiState({ envAdded: [] });
     },
   };
 }

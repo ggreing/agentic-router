@@ -22,13 +22,14 @@ async function main(): Promise<void> {
     // a corporate proxy for the upstream (HTTPS_PROXY and the like); one it cannot use stops the start (EgressError)
     const egress = upstreamProxy(process.env);
     for (const s of egress?.secrets ?? []) masker.add(s);
-    LocalTokens.ensure(paths.proxyToken);
+    // decision 156: a fresh local token at every start (no grace): one handed out before is refused with 401
+    LocalTokens.freshAtStart(paths.proxyToken);
     const tokens = new LocalTokens(paths.proxyToken, { onChange: (added, removed) => { masker.add(added); masker.remove(removed); } });
     const key = await loadKey();
     masker.add(key.get());
     const proxy = createProxy({ paths, settings, key, tokens, log, ...(egress ? { egress } : {}) });
     const port = await proxy.listen(settings.port);
-    log.info('proxy listening', { port, upstream: settings.upstream.origin, via: egress ? `${egress.shown} (${egress.from})` : 'direct', key: key.masked });
+    log.info('proxy listening', { port, upstream: settings.upstream.origin, via: egress ? `${egress.shown} (${egress.from})` : 'direct', tls: settings.tls ? 'on' : 'off', key: key.masked });
     void proxy.reporter.replay();
     let stopping = false;
     const stop = (signal: string) => {

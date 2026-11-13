@@ -9,7 +9,7 @@ import { SettingsParseError, defaultClaudeSettings, ensureLocalState, planBackup
 import { start, status, stop } from './daemonctl.ts';
 import { doctor } from './doctor.ts';
 import { planApiSettings } from './apimode.ts';
-import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, realLogin, realVault, setMode, tokenRotate, type ApiDeps } from './apicmds.ts';
+import { allowUpstream, configureApi, keySet, modeApi, modeSubscription, preflightApi, realLogin, realReload, realVault, setMode, tlsChoice, tokenRotate, type ApiDeps } from './apicmds.ts';
 import { dashboardCommand } from './dashboard.ts';
 import { dataExport, dataPurge, realDataDeps } from './data.ts';
 import { uninstall } from './uninstall.ts';
@@ -105,8 +105,14 @@ async function init(f: Record<string, string | boolean>) {
   step('project settings', () => planProject(typeof f.project === 'string' ? f.project : process.cwd()));
   // decision 142: a backup made before it may hold an API key or token in plain text
   step('settings backup', () => { const c = planBackupClean(typeof f['claude-settings'] === 'string' ? f['claude-settings'] : defaultClaudeSettings()); return c ? [c] : []; });
-  if (api) step('API-key mode settings', () => { const c = planApiSettings(api.settingsFile, 'proxy', config.proxyPort!); return c ? [c] : []; });
-  if (await confirm(changes, f.yes === true)) for (const c of changes) c.apply();
+  // decision 157: local TLS when openssl is there and the environment allows it (the certificate is made now; the
+  // settings change is shown with the rest)
+  if (api) step('API-key mode settings', () => { const c = planApiSettings(api.settingsFile, 'proxy', config.proxyPort!, undefined, process.env, tlsChoice(api.settingsFile, readConfig() ?? config)); return c ? [c] : []; });
+  if (await confirm(changes, f.yes === true)) {
+    for (const c of changes) c.apply();
+    // L1: a running supervisor restarts the proxy when its TLS setting changed (as mode api does)
+    if (api && realReload()) console.log('The supervisor applies the new API-key settings to the running proxy.');
+  }
   console.log(`\nLoad the plugin in Claude Code: claude --plugin-dir "${pluginDir}"  (marketplace install comes with the first release)`);
   if (api) console.log('API-key mode: run `agentic-router start` (daemon and proxy), then start new Claude Code sessions. `agentic-router doctor` checks the setup.');
 }

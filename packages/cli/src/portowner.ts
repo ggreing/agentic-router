@@ -48,6 +48,19 @@ export function parseLsof(text: string): { pid: number; user: string } | undefin
   return f && /^\d+$/.test(f[1] ?? '') && f[2] ? { pid: Number(f[1]), user: f[2] } : undefined;
 }
 
+/**
+ * Whether tasklist's "DOMAIN\name" is this user. The domain counts: an account of the same name in another
+ * domain (or a local account next to a domain one) is someone else. Without a known domain of our own, a name
+ * that carries one is not taken as ours.
+ */
+export function sameWindowsUser(listed: string, myName: string, myDomain: string | undefined): boolean {
+  const parts = listed.toLowerCase().split('\\');
+  const name = parts.pop();
+  const domain = parts.join('\\');
+  if (name !== myName.toLowerCase()) return false;
+  return domain ? !!myDomain && domain === myDomain.toLowerCase() : true;
+}
+
 /** The process and user that listen on 127.0.0.1:<port>, as far as this system tells without extra tools. */
 export async function portOwnerInfo(port: number, platform: NodeJS.Platform = process.platform): Promise<PortOwner | undefined> {
   try {
@@ -59,8 +72,7 @@ export async function portOwnerInfo(port: number, platform: NodeJS.Platform = pr
       const pid = parseNetstat(await run('netstat', ['-ano', '-p', 'TCP'], 5000), port);
       if (pid === undefined) return undefined;
       const user = parseTasklistUser(await run('tasklist', ['/FI', `PID eq ${pid}`, '/V', '/FO', 'CSV'], 8000));
-      const me = os.userInfo().username.toLowerCase();
-      return { pid, ...(user ? { user, mine: user.toLowerCase().split('\\').pop() === me } : {}) };
+      return { pid, ...(user ? { user, mine: sameWindowsUser(user, os.userInfo().username, process.env.USERDOMAIN) } : {}) };
     }
     const l = parseLsof(await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], 5000));
     if (l) return { pid: l.pid, user: l.user, mine: l.user === os.userInfo().username };

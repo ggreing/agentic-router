@@ -9,6 +9,7 @@ import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
 import type { Ledger, PurgeResult } from '@agentic-router/daemon';
 import { daemonIdentity, daemonProcessAlive, daemonRequest } from './daemonctl.ts';
+import { removeEndpointFiles } from './endpointfiles.ts';
 import { readConfig } from './setup.ts';
 
 export const EXPORT_PATH = '/router/v1/data/export';
@@ -105,10 +106,11 @@ export async function dataExport(f: Flags, d: DataDeps): Promise<number> {
 function describe(r: PurgeResult, scope: string): string {
   const rows = Object.values(r.rows).reduce((a, b) => a + b, 0);
   const f = r.files ?? {};
-  const files = Object.entries(f).filter(([k]) => k !== 'logs').reduce((a, [, n]) => a + n, 0);
+  const files = Object.entries(f).filter(([k]) => k !== 'logs' && k !== 'endpoint').reduce((a, [, n]) => a + n, 0);
   const parts = [`${r.requests} closed request(s) ${scope}`];
   if (rows) parts.push(`${rows} row(s) in all (subtasks, events, signals, costs, proxy rows, session records)`);
   if (files) parts.push(`${files} file(s) (spool, scope and agent files)`);
+  if (f.endpoint) parts.push(`the stopped daemon's endpoint file and socket (${f.endpoint})`);
   if (f.logs) parts.push(`${f.logs} log file(s) emptied`);
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]!;
 }
@@ -133,7 +135,13 @@ export async function dataPurge(f: Flags, d: DataDeps): Promise<number> {
     const { liveSessions, purge, purgeFiles } = await lib();
     try {
       const r = purge(o.ledger.db, { ...(all ? { all } : { before: before.value! }), dryRun });
-      if (all) r.files = purgeFiles({ spoolDir: paths.spoolDir(), scopesDir: paths.scopesDir(), agentsDir: paths.agentsDir(), logsDir: paths.logsDir(), root: routerHome() }, liveSessions(o.ledger.db), dryRun);
+      if (all) {
+        r.files = purgeFiles({ spoolDir: paths.spoolDir(), scopesDir: paths.scopesDir(), agentsDir: paths.agentsDir(), logsDir: paths.logsDir(), root: routerHome() }, liveSessions(o.ledger.db), dryRun);
+        // decision 156: the daemon is not running here, so its endpoint file and socket (and a fallback socket
+        // directory that is ours) go too; a running daemon keeps its own, and rewrites them at its next start
+        const ends = removeEndpointFiles(routerHome(), { dryRun });
+        if (ends.length) r.files.endpoint = ends.length;
+      }
       return r;
     } finally { o.ledger.close(); }
   };

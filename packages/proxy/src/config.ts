@@ -4,6 +4,7 @@
 // user added with `agentic-router proxy allow-upstream` (config.json is in the router home, never a project
 // file). Only tests may use a plain-http loopback upstream.
 import fs from 'node:fs';
+import path from 'node:path';
 
 export const BUILTIN_UPSTREAMS: readonly string[] = ['https://api.anthropic.com'];
 export const DEFAULT_UPSTREAM = 'https://api.anthropic.com';
@@ -28,6 +29,8 @@ export interface ProxySettings {
   dailyCapUsd: number;
   daemonPort?: number;
   headersTimeoutMs: number;
+  /** Decision 157: serve HTTPS with the router's local certificate (config.json proxy.tls, set by the CLI). */
+  tls?: { certFile: string; keyFile: string };
 }
 
 export class ConfigError extends Error {}
@@ -73,6 +76,14 @@ export function loadSettings(configFile: string, warnings: string[] = []): Proxy
   // loopback http upstream by constructing ProxySettings with checkUpstream('', [], 'http://127.0.0.1:<port>').
   const { url, test } = checkUpstream(typeof p.upstream === 'string' ? p.upstream : DEFAULT_UPSTREAM, allowed);
   const daemonPort = raw.daemonPort;
+  // decision 157: Claude Code then talks to https://127.0.0.1:<port> and trusts only this certificate, so the proxy
+  // must not start on plain HTTP instead (a missing certificate is an error, not a fallback)
+  let tls: ProxySettings['tls'];
+  if (p.tls === true) {
+    const dir = path.join(path.dirname(configFile), 'tls');
+    tls = { certFile: path.join(dir, 'proxy-cert.pem'), keyFile: path.join(dir, 'proxy-key.pem') };
+    for (const f of [tls.certFile, tls.keyFile]) if (!fs.existsSync(f)) throw new ConfigError(`proxy.tls is on but ${f} is missing: run agentic-router mode api`);
+  }
   return {
     port: port as number,
     upstream: url,
@@ -81,6 +92,7 @@ export function loadSettings(configFile: string, warnings: string[] = []): Proxy
     dailyCapUsd: positive(p.dailyCapUsd, DEFAULT_DAILY_CAP_USD, 'dailyCapUsd', warnings),
     ...(Number.isInteger(daemonPort) && (daemonPort as number) > 0 ? { daemonPort: daemonPort as number } : {}),
     headersTimeoutMs: HEADERS_TIMEOUT_MS,
+    ...(tls ? { tls } : {}),
   };
 }
 

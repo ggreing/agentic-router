@@ -14,4 +14,5 @@ export {
   EgressError, LOOPBACK_NO_PROXY, NO_PROXY_VARS, PROXY_VARS, nodeHasProxySupport, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy,
   type UpstreamProxy,
 } from './egress.ts';
+export { NONCE_RE, PROOF_PATH, proofMatches, proofOf, proveProxy } from './proof.ts';
 export { MAX_REQUEST_BYTES, MAX_TOKENS_FALLBACK, requestShape, reservationFor, type RequestShape, type Reservation } from './reserve.ts';

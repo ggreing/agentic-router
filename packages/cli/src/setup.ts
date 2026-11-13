@@ -15,6 +15,10 @@ export interface CliConfig extends RouterConfig {
   wrappedStatusLine?: { type: 'command'; command: string; padding?: number };
   /** What API-key mode added to NO_PROXY in Claude Code's settings (apimode.ts), so it can be taken out again. */
   noProxyAdded?: Array<{ name: string; created: boolean; base: string; added: string[] }>;
+  /** Decisions 156-157: other settings env values API-key mode set (helper cache, NODE_EXTRA_CA_CERTS), with what was there before. */
+  apiEnvAdded?: Array<{ name: string; value: string; previous: string | null }>;
+  /** Decision 157: why local TLS is off, or whose NODE_EXTRA_CA_CERTS file the bundle combines. */
+  localTls?: { off?: string; bundleFrom?: string[] };
 }
 
 export function isFree(port: number): Promise<boolean> {

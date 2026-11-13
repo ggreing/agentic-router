@@ -10,7 +10,7 @@ import http from 'node:http';
 import path from 'node:path';
 // Core's price table through its dependency-free subpath: the key-holding process runs no third-party code
 // (core's index pulls in zod and yaml; the wire types below are type-only imports, erased at runtime).
-import type { UsageRow, UsageRowState } from '@agentic-router/core';
+import { sealedCall, type UsageRow, type UsageRowState } from '@agentic-router/core';
 import { PRICING_PER_MTOK, costUsd } from '@agentic-router/core/pricing';
 import { errorText, type Logger } from './log.ts';
 import type { ProxyPaths } from './paths.ts';
@@ -58,7 +58,8 @@ export function tokensOf(tap: TapResult): UsageRow['usage'] {
   };
 }
 
-export interface DaemonTarget { port: number; token: string }
+/** Where the daemon is: its port and token, and the router home (its endpoint file may name a Unix socket, decision 156). */
+export interface DaemonTarget { port: number; token: string; home?: string }
 
 export interface ReporterOptions {
   paths: ProxyPaths;
@@ -73,24 +74,13 @@ export interface ReporterOptions {
 
 export const USAGE_PATH = '/router/v1/usage';
 
-/**
- * For calls to the daemon on loopback: an agent of its own, so NODE_USE_ENV_PROXY (which gives Node's global
- * agent the environment's proxy) can never send them, with the daemon token, to a corporate proxy.
- */
-export const LOOPBACK_AGENT = new http.Agent({ keepAlive: false });
-
 /** POSTs JSON to the daemon on loopback; resolves the status code (0: no answer). */
-export function postDaemon(target: DaemonTarget, p: string, body: unknown, timeoutMs: number): Promise<number> {
-  return new Promise(resolve => {
-    const data = Buffer.from(JSON.stringify(body));
-    const req = http.request({
-      host: '127.0.0.1', port: target.port, method: 'POST', path: p, timeout: timeoutMs, agent: LOOPBACK_AGENT,
-      headers: { authorization: `Bearer ${target.token}`, 'content-type': 'application/json', 'content-length': data.length, host: `127.0.0.1:${target.port}` },
-    }, res => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); res.on('error', () => resolve(0)); });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(0));
-    req.end(data);
-  });
+export async function postDaemon(target: DaemonTarget, p: string, body: unknown, timeoutMs: number): Promise<number> {
+  // decision 156: sealed with the daemon token as the shared secret, which never travels; a listener that is not the
+  // daemon gets nothing it can read and gives no answer this accepts, so the rows stay spooled for the real daemon
+  try {
+    return (await sealedCall({ port: target.port, secret: target.token, method: 'POST', path: p, body: JSON.stringify(body), timeoutMs, ...(target.home ? { home: target.home } : {}) })).status;
+  } catch { return 0; }
 }
 
 export class UsageReporter {

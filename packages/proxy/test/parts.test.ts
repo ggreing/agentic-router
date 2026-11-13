@@ -1,17 +1,18 @@
 // Settings, spool replay to the daemon, budget caps, local tokens, the helper scripts and the log mask.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Budget } from '../src/budget.ts';
 import { canonicalPath, classifyRoute } from '../src/server.ts';
 import { ConfigError, DEFAULT_DAILY_CAP_USD, DEFAULT_TOKEN_DAILY_CAP_USD, TEST_UPSTREAM_ENV, checkTlsEnv, loadSettings } from '../src/config.ts';
 import { Masker } from '../src/log.ts';
 import { proxyPaths } from '../src/paths.ts';
 import { LocalTokens, writeRotationMeta, writeTokenFile } from '../src/token.ts';
+import { sealedFake, type WireRecord } from '../../core/test/sealed-fake.ts';
 import { FakeUpstream, LOCAL_TOKEN, SSE_HEADERS, auth, call, messageStream, rmrf, sleep, spooled, startProxy, tmpHome } from './helpers.ts';
 
 const BIN = fileURLToPath(new URL('../bin/', import.meta.url));
@@ -69,20 +70,16 @@ test('settings: defaults (decision 131 caps), port required, bad caps reported, 
   } finally { rmrf(home); }
 });
 
-test('usage rows go to the spool while the daemon has no route (404) or is down, and are sent once it answers', async () => {
+test('usage rows go to the spool while the daemon has no route (404) or is down, and are sent once it answers, sealed (decision 156)', async () => {
   const up = new FakeUpstream();
   const upPort = await up.start();
   let daemonStatus = 404;
   const got: unknown[] = [];
-  const daemon = http.createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on('data', c => chunks.push(c as Buffer));
-    req.on('end', () => {
-      assert.equal(req.headers.authorization, 'Bearer daemon-token');
-      if (daemonStatus === 200) got.push(...(JSON.parse(Buffer.concat(chunks).toString()) as { rows: unknown[] }).rows);
-      res.writeHead(daemonStatus); res.end();
-    });
-  });
+  const wire: WireRecord[] = [];
+  const daemon = http.createServer(sealedFake('daemon-token', r => {
+    if (daemonStatus === 200) got.push(...(JSON.parse(r.body ?? '{}') as { rows: unknown[] }).rows);
+    return { status: daemonStatus, body: '{}' };
+  }, wire));
   await new Promise<void>(r => daemon.listen(0, '127.0.0.1', () => r()));
   const dport = (daemon.address() as { port: number }).port;
   const t = await startProxy(upPort, { daemon: () => ({ port: dport, token: 'daemon-token' }) });
@@ -101,6 +98,12 @@ test('usage rows go to the spool while the daemon has no route (404) or is down,
     await call(t.port, { headers: auth(), body: '{}' });
     for (let i = 0; i < 50 && got.length < 3; i++) { await t.proxy.reporter.flush(); await sleep(20); }
     assert.equal(got.length, 3);
+    // the token never travels and the rows are not readable on the wire
+    assert.ok(wire.length >= 3);
+    for (const w of wire) {
+      assert.equal(w.headers.authorization, undefined);
+      assert.ok(!JSON.stringify(w).includes('daemon-token') && !w.body.includes('m-1'), 'sealed');
+    }
   } finally { await t.close(); await up.close(); daemon.close(); }
 });
 
@@ -193,17 +196,58 @@ test('local tokens: a changed file is picked up, the old token stays valid for t
   } finally { rmrf(home); }
 });
 
-test('bin/local-token.mjs prints the token only; without one it fails', () => {
-  const home = tmpHome();
+/** The helper as Claude Code runs it (asynchronously, so the proxy in this process can answer its check). */
+function runHelper(home: string, extra: NodeJS.ProcessEnv = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const { ANTHROPIC_BASE_URL: _b, AGENTIC_ROUTER_HELPER_PROBE: _p, ...inherited } = process.env;
+  return new Promise(resolve => {
+    execFile(process.execPath, [path.join(BIN, 'local-token.mjs')], { env: { ...inherited, AGENTIC_ROUTER_HOME: home, ...extra }, encoding: 'utf8', timeout: 20_000 },
+      (err, stdout, stderr) => resolve({ code: err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : null) : 0, stdout, stderr }));
+  });
+}
+
+test('decision 156: bin/local-token.mjs prints the token only after the proxy on the port proves itself; to anything else, nothing', async () => {
+  const up = new FakeUpstream();
+  const t = await startProxy(await up.start());
+  const writeCfg = (port: number) => fs.writeFileSync(t.paths.config, JSON.stringify({ proxyPort: port }));
+  const squat: Array<{ url?: string; auth?: string; body: string }> = [];
+  const squatter = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', c => { b += String(c); });
+    req.on('end', () => { squat.push({ url: req.url, auth: req.headers.authorization, body: b }); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"proof":"made-up"}'); });
+  });
+  await new Promise<void>(r => squatter.listen(0, '127.0.0.1', () => r()));
   try {
-    writeTokenFile(path.join(home, 'proxy-token'), LOCAL_TOKEN);
-    const ok = spawnSync(process.execPath, [path.join(BIN, 'local-token.mjs')], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, encoding: 'utf8' });
-    assert.deepEqual([ok.status, ok.stdout], [0, LOCAL_TOKEN]);
-    fs.rmSync(path.join(home, 'proxy-token'));
-    const bad = spawnSync(process.execPath, [path.join(BIN, 'local-token.mjs')], { env: { ...process.env, AGENTIC_ROUTER_HOME: home }, encoding: 'utf8' });
-    assert.equal(bad.status, 1);
-    assert.equal(bad.stdout, '');
-  } finally { rmrf(home); }
+    writeCfg(t.port);
+    const ok = await runHelper(t.home);
+    assert.deepEqual([ok.code, ok.stdout], [0, LOCAL_TOKEN], ok.stderr);
+    // a program on the port that cannot prove it holds the token: nothing printed, and it was never sent the token
+    writeCfg((squatter.address() as { port: number }).port);
+    const bad = await runHelper(t.home);
+    assert.deepEqual([bad.code, bad.stdout], [1, '']);
+    assert.match(bad.stderr, /is not this router's proxy, or the proxy is not running: no token given out/);
+    assert.equal(squat.length, 1);
+    assert.equal(squat[0]!.url, '/proxy/v1/proof');
+    assert.ok(!squat[0]!.body.includes(LOCAL_TOKEN) && squat[0]!.auth === undefined);
+    // the proxy down, and no token file
+    await new Promise<void>(r => squatter.close(() => r()));
+    assert.deepEqual([(await runHelper(t.home)).code, (await runHelper(t.home)).stdout], [1, '']);
+    writeCfg(t.port);
+    fs.rmSync(t.paths.proxyToken);
+    const none = await runHelper(t.home);
+    assert.deepEqual([none.code, none.stdout], [1, '']);
+  } finally { squatter.close(); await t.close(); await up.close(); }
+});
+
+test('decision 156: the helper\'s copy of the proof is the proxy\'s; a proof binds the port and the nonce', async () => {
+  const helper = await import(pathToFileURL(path.join(BIN, 'local-token.mjs')).href) as { proofOf(t: string, p: number, n: string): string; PROOF_PATH: string };
+  const { proofOf, proofMatches, PROOF_PATH } = await import('../src/proof.ts');
+  assert.equal(helper.PROOF_PATH, PROOF_PATH);
+  const nonce = 'n'.repeat(43);
+  assert.equal(helper.proofOf(LOCAL_TOKEN, 4711, nonce), proofOf(LOCAL_TOKEN, 4711, nonce));
+  assert.ok(proofMatches(LOCAL_TOKEN, 4711, nonce, proofOf(LOCAL_TOKEN, 4711, nonce)));
+  assert.ok(!proofMatches(LOCAL_TOKEN, 4712, nonce, proofOf(LOCAL_TOKEN, 4711, nonce)), 'another port');
+  assert.ok(!proofMatches(LOCAL_TOKEN, 4711, 'm'.repeat(43), proofOf(LOCAL_TOKEN, 4711, nonce)), 'another nonce');
+  assert.ok(!proofMatches('other-token-0123456789abcdefghijklmn', 4711, nonce, proofOf(LOCAL_TOKEN, 4711, nonce)), 'another token');
 });
 
 test('the log mask hides the key, the tokens and key-shaped values', () => {
@@ -229,4 +273,41 @@ test('the proxy stops cleanly: an in-flight stream finishes, then rows are flush
     assert.match(r.body.toString(), /message_stop/);
     assert.deepEqual(spooled(t.paths).map(x => x.messageId), ['m-drain']);
   } finally { rmrf(t.home); await up.close(); }
+});
+
+test('review M1: the helper gives the token only to a session whose ANTHROPIC_BASE_URL is the proxy as configured now', async () => {
+  const up = new FakeUpstream();
+  const t = await startProxy(await up.start());
+  fs.writeFileSync(t.paths.config, JSON.stringify({ proxyPort: t.port }));
+  const probe = path.join(t.home, 'helper-probe.jsonl');
+  try {
+    for (const base of [`http://127.0.0.1:${t.port}`, `http://127.0.0.1:${t.port}/`]) {
+      const ok = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      assert.deepEqual([ok.code, ok.stdout], [0, LOCAL_TOKEN], `${base}: ${ok.stderr}`);
+    }
+    // review R2: localhost is refused too (the proof is made to 127.0.0.1; localhost may resolve to ::1)
+    for (const base of [`http://localhost:${t.port}`, `http://127.0.0.1:${t.port + 1}`, `https://127.0.0.1:${t.port}`, 'https://gateway.example', 'not a url']) {
+      const bad = await runHelper(t.home, { ANTHROPIC_BASE_URL: base, AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      assert.deepEqual([bad.code, bad.stdout], [1, ''], base);
+      assert.match(bad.stderr, /restart Claude Code; if it was just started, run agentic-router mode api .*\(no token given out\)/);
+    }
+    // not set (a helper run by hand): the proof alone decides
+    assert.equal((await runHelper(t.home)).stdout, LOCAL_TOKEN);
+    // the probe says whether the variable was there, never its value
+    const lines = fs.readFileSync(probe, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { baseUrl: string; matches: boolean | null });
+    assert.deepEqual(lines.map(l => [l.baseUrl, l.matches]), [['set', true], ['set', true], ['set', false], ['set', false], ['set', false], ['set', false], ['set', false]]);
+    assert.ok(!fs.readFileSync(probe, 'utf8').includes(String(t.port)), 'no value written');
+    // review R1: no path is taken from the environment, and a link in the probe's place is not followed
+    const elsewhere = path.join(t.home, 'elsewhere.txt');
+    await runHelper(t.home, { AGENTIC_ROUTER_HELPER_PROBE: elsewhere });
+    assert.ok(!fs.existsSync(elsewhere), 'a path value is not a probe switch');
+    if (process.platform !== 'win32') {
+      fs.rmSync(probe);
+      const target = path.join(t.home, 'profile-stand-in');
+      fs.writeFileSync(target, 'keep\n');
+      fs.symlinkSync(target, probe);
+      await runHelper(t.home, { AGENTIC_ROUTER_HELPER_PROBE: '1' });
+      assert.equal(fs.readFileSync(target, 'utf8'), 'keep\n', 'nothing appended through the link');
+    }
+  } finally { await t.close(); await up.close(); }
 });

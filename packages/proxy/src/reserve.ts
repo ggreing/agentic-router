@@ -2,7 +2,7 @@
 // (Appendix B: a request may not start when its worst case does not fit in what is left of a cap). The proxy reads
 // a bounded copy of the body for this and forwards the bytes exactly as received; nothing here changes them.
 //
-//   hold = (promptBytes x dearest input-side rate + max_tokens x output rate) x (2 for speed "fast")
+//   hold = (promptBytes x dearest input-side rate + max_tokens x output rate) x the model's fast multiple for speed "fast"
 //
 //   promptBytes  the decoded body length. Every token covers at least one byte of the UTF-8 JSON text, and JSON
 //                syntax, escapes and base64 media only add bytes per token, so the byte count bounds the prompt's
@@ -22,7 +22,7 @@ import { CACHE_MULTIPLIER, PRICING_PER_MTOK, type ModelPrice } from '@agentic-ro
 export const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 /** max_tokens when the body has no usable one: the largest output of the current models (the API refuses such a request, and the hold is released). */
 export const MAX_TOKENS_FALLBACK = 128_000;
-/** Fast mode bills at twice the standard rates. */
+/** Fast mode for a model the price table gives no fast multiple (the published fast prices are all 2x). */
 export const FAST_MODE_MULTIPLIER = 2;
 
 export interface RequestShape {
@@ -87,12 +87,11 @@ export interface Reservation {
 
 export function reservationFor(s: RequestShape): Reservation {
   const maxTokens = s.maxTokens ?? MAX_TOKENS_FALLBACK;
-  const cost = (p: ModelPrice) => { const r = rates(p); return s.promptBytes * r.input + maxTokens * r.output; };
+  const cost = (p: ModelPrice) => { const r = rates(p); return (s.promptBytes * r.input + maxTokens * r.output) * (s.fast ? p.fast ?? FAST_MODE_MULTIPLIER : 1); };
   const known = s.model !== null && Object.hasOwn(PRICING_PER_MTOK, s.model) ? s.model : null;
   let pricedAs = known ?? '';
   let usd = known ? cost(PRICING_PER_MTOK[known]!) : -1;
   if (!known) for (const [id, p] of Object.entries(PRICING_PER_MTOK)) { const c = cost(p); if (c > usd) { usd = c; pricedAs = id; } }
-  if (s.fast) usd *= FAST_MODE_MULTIPLIER;
   usd = Math.ceil(usd * 1e6) / 1e6;
   const model = known ? known : `${s.model === null ? 'no model' : 'an unknown model'}, priced as ${pricedAs}`;
   const basis = s.unreadable

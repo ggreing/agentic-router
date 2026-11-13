@@ -118,3 +118,21 @@ test('start and stop run the real daemon under the supervisor', async () => {
     if ((await import('../src/daemonctl.ts')).runningSupervisor()) await stop();
   }
 });
+
+test('decision 157: reconcile restarts a child whose key changed (the proxy turning local TLS on or off), and leaves an unchanged one running', async () => {
+  const listen = "process.on('message', m => { if (m && m.type === 'stop') process.exit(0); }); setInterval(() => {}, 1000);";
+  const daemon = nodeChild('daemon', listen);
+  const sup = new Supervisor({ specs: [daemon, nodeChild('proxy', listen, { key: 'tls=false' })], statusFile: path.join(tmp, 'k.json'), backoffMs: [20] });
+  sup.start();
+  try {
+    await sleep(400);
+    const before = { daemon: sup.states().daemon!.pid, proxy: sup.states().proxy!.pid! };
+    assert.deepEqual(await sup.reconcile([daemon, nodeChild('proxy', listen, { key: 'tls=false' })]), { stopped: [], started: [] }, 'same key: nothing');
+    assert.deepEqual(await sup.reconcile([daemon, nodeChild('proxy', listen, { key: 'tls=true' })]), { stopped: ['proxy'], started: ['proxy'] });
+    await sleep(400);
+    assert.throws(() => process.kill(before.proxy, 0), 'the old proxy is gone');
+    assert.notEqual(sup.states().proxy!.pid, before.proxy);
+    assert.equal(sup.states().proxy!.state, 'running');
+    assert.equal(sup.states().daemon!.pid, before.daemon, 'the daemon kept running');
+  } finally { await sup.stop(); }
+});

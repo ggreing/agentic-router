@@ -9,11 +9,10 @@
 // A POST /v1/messages holds its worst case (reserve.ts) against the daily caps from the check to the end of its
 // response, and starts only when that hold fits in what is left: a cap is passed only by what the request body
 // cannot show (content the API fetches itself), not by requests in flight.
-import type { BudgetAnswer } from '@agentic-router/core';
+import { sealedCall, type BudgetAnswer } from '@agentic-router/core';
 import { randomUUID } from 'node:crypto';
-import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { LOOPBACK_AGENT, type DaemonTarget } from './usage.ts';
+import type { DaemonTarget } from './usage.ts';
 
 export type BlockKind = 'token_daily' | 'daily' | 'request';
 export interface Block { kind: BlockKind; message: string }
@@ -30,32 +29,24 @@ const usd = (x: number) => `$${x.toFixed(2)}`;
 /** Small amounts keep their cents' fractions, so a hold of $0.004 does not read as $0.00. */
 const money = (x: number) => (x > 0 && x < 1 ? `$${x.toFixed(4)}` : usd(x));
 
-/** The daemon's request budget for a prompt (wave 2 route); undefined when it has none or does not answer. */
+/**
+ * The daemon's request budget for a prompt (wave 2 route); undefined when it has none or does not answer.
+ * Decision 156: a sealed call (core sealedCall), so the daemon token never travels: a listener on the daemon's
+ * port without the token learns nothing and cannot answer, and the request budget then fails open.
+ */
 export function daemonBudgetSource(target: () => DaemonTarget | undefined, timeoutMs = 500): BudgetSource {
-  return (sessionId, promptId) => new Promise(resolve => {
+  return async (sessionId, promptId) => {
     const t = target();
-    if (!t) { resolve(undefined); return; }
+    if (!t) return undefined;
     const q = `?session_id=${encodeURIComponent(sessionId)}&prompt_id=${encodeURIComponent(promptId)}`;
-    const req = http.request({
-      host: '127.0.0.1', port: t.port, method: 'GET', path: `${BUDGET_PATH}${q}`, timeout: timeoutMs, agent: LOOPBACK_AGENT,
-      headers: { authorization: `Bearer ${t.token}`, host: `127.0.0.1:${t.port}` },
-    }, res => {
-      const chunks: Buffer[] = [];
-      res.on('data', c => chunks.push(c as Buffer));
-      res.on('end', () => {
-        if (res.statusCode !== 200) { resolve(undefined); return; }
-        try {
-          const o = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<RequestBudget>;
-          const ok = typeof o.requestId === 'string' && typeof o.budgetUsd === 'number' && typeof o.spentUsd === 'number';
-          resolve(ok ? { requestId: o.requestId!, budgetUsd: o.budgetUsd!, spentUsd: o.spentUsd! } : undefined);
-        } catch { resolve(undefined); }
-      });
-      res.on('error', () => resolve(undefined));
-    });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(undefined));
-    req.end();
-  });
+    try {
+      const r = await sealedCall({ port: t.port, secret: t.token, method: 'GET', path: `${BUDGET_PATH}${q}`, timeoutMs, ...(t.home ? { home: t.home } : {}) });
+      if (r.status !== 200) return undefined;
+      const o = JSON.parse(r.body) as Partial<RequestBudget>;
+      const ok = typeof o.requestId === 'string' && typeof o.budgetUsd === 'number' && typeof o.spentUsd === 'number';
+      return ok ? { requestId: o.requestId!, budgetUsd: o.budgetUsd!, spentUsd: o.spentUsd! } : undefined;
+    } catch { return undefined; }
+  };
 }
 
 export class Budget {

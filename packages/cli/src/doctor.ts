@@ -7,8 +7,11 @@ import { paths, routerHome } from '@agentic-router/core';
 import { keyStatus, noProxyCovers, shownProxyUrl, splitNoProxy, upstreamProxy, type VaultErrorCode } from '@agentic-router/proxy';
 import { HINT_HEADERS_ENV, claudeCodeProxy, isRouterHelper, proxyBaseUrl, uncoveredNoProxy } from './apimode.ts';
 import { SettingsParseError, backupCredentials, backupFile, defaultClaudeSettings, promptStorageSummary, readConfig, readJsonFile, type CliConfig } from './setup.ts';
-import { health, localRequest } from './daemonctl.ts';
-import { proxyHealth, readSuperviseStatus, type SuperviseStatus } from './supervise.ts';
+import { daemonIdentity, daemonRequest, otherOnPort } from './daemonctl.ts';
+import { portOwner } from './portowner.ts';
+import { proxyHolder, type ProxyHolder } from './proxyholder.ts';
+import { RENEW_WITHIN_DAYS, WARN_WITHIN_DAYS, bundleSources, bundleStatus, certInfo, certProblems, pairMatches, pemFingerprints, tlsPaths } from './localtls.ts';
+import { proxyHealth, readSuperviseStatus, type ProxyHealth, type SuperviseStatus } from './supervise.ts';
 import type { StatusView } from '@agentic-router/daemon';
 import { autoReleaseSummary, configuredAutoRelease, routingChecks } from './routing.ts';
 import { loadGuard, policyCheck } from './policy.ts';
@@ -116,7 +119,8 @@ type DaemonStatus = { clients?: HookClient[]; routing?: StatusView['routing'] };
 async function daemonStatus(port: number): Promise<DaemonStatus | null> {
   try {
     const token = fs.readFileSync(paths.token(), 'utf8').trim();
-    const r = await localRequest(port, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
+    // decision 156: sealed, so the token is not sent to whatever holds the port
+    const r = await daemonRequest(port, 'GET', '/router/v1/status', { token, timeoutMs: 1500 });
     if (!r || r.status !== 200) return null;
     return JSON.parse(r.body) as DaemonStatus;
   } catch { return null; }
@@ -138,8 +142,62 @@ export interface ApiCheckInput {
   settingsFile: string;
   projectDir: string;
   keyStatus(): Promise<'present' | VaultErrorCode>;
-  proxyHealth(port: number): Promise<{ ok: boolean; upstream?: string; via?: string | null; inflight?: number } | null>;
+  proxyHealth(port: number): Promise<ProxyHealth | null>;
   supervise: SuperviseStatus | null;
+  /** Tests: the clock for the certificate dates, and the port-owner lookup. */
+  now?: () => Date;
+  proxyHolder?: (port: number) => Promise<ProxyHolder>;
+}
+
+/**
+ * Decision 157: local TLS in proxy mode. On: the certificate (dates, names, a key that matches, the leaf shape), what
+ * Claude Code trusts, and the bundle. Decision 158: the settings value of NODE_EXTRA_CA_CERTS replaces the launch
+ * environment's, so the settings value must hold the router's certificate; a launch value that is not the bundle is
+ * a warning (works today; would fail closed, with a TLS error, if a later Claude Code let the launch value win).
+ * Off: why, as a warning.
+ */
+export function localTlsChecks(cfg: CliConfig, settingsEnv: Record<string, unknown>, env: NodeJS.ProcessEnv, now = new Date()): Check[] {
+  if (cfg.proxy?.tls !== true) {
+    return [{ name: 'local TLS', ok: false, blocking: false, detail: `off: ${cfg.localTls?.off ?? 'not set up (run agentic-router mode api)'}; the helper still checks the proxy before it gives out the token` }];
+  }
+  const p = tlsPaths();
+  let pem = '';
+  let key = '';
+  try { pem = fs.readFileSync(p.cert, 'utf8'); } catch { /* below */ }
+  try { key = fs.readFileSync(p.key, 'utf8'); } catch { /* below */ }
+  const info = pem ? certInfo(pem) : null;
+  const { problems, daysLeft } = certProblems(info, now);
+  if (!key) problems.push('its key is missing');
+  else if (info && !pairMatches(pem, key)) problems.push('its key does not match it');
+  const out: Check[] = [];
+  if (problems.length) out.push({ name: 'local TLS', ok: false, blocking: true, detail: `${p.cert}: ${problems.join('; ')}. Run agentic-router mode api (it makes a new pair)` });
+  else if (info!.ca) out.push({ name: 'local TLS', ok: false, blocking: false, detail: `${p.cert} is a CA certificate (the older shape, whose key could make certificates Claude Code would accept for any name): it is remade as a leaf at the next agentic-router start or mode api` });
+  else out.push({ name: 'local TLS', ok: daysLeft > WARN_WITHIN_DAYS, blocking: false,
+    detail: `on: certificate for 127.0.0.1 and localhost, valid until ${info!.notAfter.toISOString().slice(0, 10)} (${daysLeft} days)${daysLeft <= RENEW_WITHIN_DAYS ? '; renewed at the next agentic-router start or mode api (restart Claude Code sessions after it)' : daysLeft <= WARN_WITHIN_DAYS ? `; renewed when ${RENEW_WITHIN_DAYS} days are left` : ''}` });
+  if (!info) return out;
+  const holds = (file: string) => { try { return pemFingerprints(fs.readFileSync(file, 'utf8')).includes(info.fingerprint); } catch { return false; } };
+  const shell = env.NODE_EXTRA_CA_CERTS?.trim();
+  const set = typeof settingsEnv.NODE_EXTRA_CA_CERTS === 'string' ? (settingsEnv.NODE_EXTRA_CA_CERTS as string).trim() : '';
+  // what Claude Code uses: the settings value (it replaces the launch one)
+  out.push(set && holds(set)
+    ? { name: 'local TLS trust', ok: true, blocking: false, detail: `NODE_EXTRA_CA_CERTS in Claude Code's settings (${set}) holds the router's certificate` }
+    : { name: 'local TLS trust', ok: false, blocking: true, detail: `NODE_EXTRA_CA_CERTS in Claude Code's settings ${set ? `(${set}) does not hold` : 'does not name'} the router's certificate: requests to the proxy fail. Run agentic-router mode api` });
+  // the bundle against its sources (review L5): a source that changed or cannot be read is reported; mode api rebuilds
+  const sources = bundleSources(cfg.localTls?.bundleFrom);
+  const usesBundle = !!set && path.resolve(set) === path.resolve(p.bundle);
+  if (usesBundle) {
+    const b = bundleStatus(routerHome(), sources);
+    if (b.unreadable.length) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${b.unreadable.join(', ')} (combined into ${p.bundle}) cannot be read, so its certificates are not trusted now. Fix it, then run agentic-router mode api` });
+    else if (!b.current) out.push({ name: 'local TLS bundle', ok: false, blocking: false, detail: `${p.bundle} is out of date: ${sources.length ? `${sources.join(', ')} changed since it was written` : 'its sources are not recorded'}. Run agentic-router mode api (it rebuilds it)` });
+  }
+  // a launch value: today the settings value wins; if a later Claude Code let the launch value win, TLS would fail closed
+  const inBundle = (f: string) => sources.some(s => path.resolve(s) === path.resolve(f));
+  if (shell && path.resolve(shell) !== path.resolve(p.bundle)) {
+    out.push(usesBundle && inBundle(shell)
+      ? { name: 'NODE_EXTRA_CA_CERTS in your environment', ok: false, blocking: false, detail: `${shell} is combined into ${p.bundle}, which Claude Code uses (its settings value replaces yours). Point your variable at ${p.bundle} so both orders work` }
+      : { name: 'NODE_EXTRA_CA_CERTS in your environment', ok: false, blocking: false, detail: `${shell} is not in what Claude Code uses (its settings value replaces yours), so those certificates are not trusted by it now (WebFetch or MCP through a TLS-inspecting proxy may fail). Run agentic-router mode api to combine them` });
+  }
+  return out;
 }
 
 const CREDENTIAL_KEYS = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'];
@@ -160,7 +218,8 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
     const helper = String(s.apiKeyHelper ?? '');
     if (mode === 'proxy') {
       if (!(isRouterHelper(helper) && helper.includes('local-token'))) problems.push('apiKeyHelper is not the router\'s local-token helper');
-      if (env.ANTHROPIC_BASE_URL !== proxyBaseUrl(i.cfg.proxyPort ?? 0)) problems.push(`env.ANTHROPIC_BASE_URL is ${JSON.stringify(env.ANTHROPIC_BASE_URL)}, not ${proxyBaseUrl(i.cfg.proxyPort ?? 0)}`);
+      const want = proxyBaseUrl(i.cfg.proxyPort ?? 0, i.cfg.proxy?.tls === true);
+      if (env.ANTHROPIC_BASE_URL !== want) problems.push(`env.ANTHROPIC_BASE_URL is ${JSON.stringify(env.ANTHROPIC_BASE_URL)}, not ${want}`);
       if (env[HINT_HEADERS_ENV] !== '1') problems.push(`env.${HINT_HEADERS_ENV} is not "1"`);
     } else {
       if (!(isRouterHelper(helper) && helper.includes('key-helper'))) problems.push('apiKeyHelper is not the router\'s keychain key helper');
@@ -180,6 +239,7 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
         ? `${corp.name} is ${corp.shown}, and ${missing.join(' / ')} does not name 127.0.0.1: Claude Code would send its requests for the local proxy, local token included, to that proxy. Run agentic-router mode api (it adds 127.0.0.1 and localhost to NO_PROXY in Claude Code's settings)`
         : `${corp.name} is ${corp.shown}; NO_PROXY keeps Claude Code's requests for the local proxy off it` });
   }
+  if (mode === 'proxy') out.push(...localTlsChecks(i.cfg, settingsEnv, i.env, i.now?.() ?? new Date()));
   if (mode === 'proxy') {
     try {
       const e = upstreamProxy(i.env);
@@ -210,7 +270,16 @@ export async function apiChecks(i: ApiCheckInput): Promise<Check[]> {
   out.push({ name: 'API key in the OS keychain', ok: ks === 'present', blocking: true, detail: ks === 'present' ? 'present' : keyHelp[ks] ?? `keychain check failed (${ks})` });
   if (mode === 'proxy' && i.cfg.proxyPort) {
     const h = await i.proxyHealth(i.cfg.proxyPort);
-    out.push({ name: 'proxy', ok: !!h?.ok, blocking: false,
+    if (h?.other) {
+      // decision 156: what answers does not prove it is this router's proxy. The user's own node process is most likely
+      // an older proxy or one restarting after a TLS switch (a warning); another user's or an unknown one is treated as
+      // a squatter (blocking). The helper gives none of them a token.
+      const holder = await (i.proxyHolder ?? proxyHolder)(i.cfg.proxyPort);
+      const proves = `it cannot prove it holds the local token${i.cfg.proxy?.tls ? ' or present the router\'s certificate' : ''}`;
+      out.push(holder.own
+        ? { name: 'proxy', ok: false, blocking: false, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which does not prove it is this router's proxy: most likely an older proxy, or one restarting after a TLS switch. agentic-router stop, then agentic-router start` }
+        : { name: 'proxy', ok: false, blocking: true, detail: `port ${i.cfg.proxyPort} is answered by ${holder.phrase}, which is not this router's proxy (${proves}). The helper gives it no token. Stop it, then agentic-router start` });
+    } else out.push({ name: 'proxy', ok: !!h?.ok, blocking: false,
       detail: h?.ok ? `running on 127.0.0.1:${i.cfg.proxyPort} -> ${h.upstream ?? '?'}${h.via ? ` via ${h.via}` : ''}` : `not answering on 127.0.0.1:${i.cfg.proxyPort}: API calls fail until it runs (agentic-router start), or switch with agentic-router mode direct` });
   }
   const degraded = Object.entries(i.supervise?.children ?? {}).filter(([, c]) => c.state === 'degraded').map(([n, c]) => `${n} (${c.restarts} restarts)`);
@@ -233,9 +302,15 @@ export async function doctor(env: NodeJS.ProcessEnv = process.env): Promise<Chec
   const cfg = readConfig();
   checks.push({ name: 'init', ok: !!cfg && fs.existsSync(paths.token()), blocking: true, detail: cfg ? `port ${cfg.daemonPort}` : 'run agentic-router init' });
   if (cfg) {
-    const h = await health(cfg.daemonPort);
-    checks.push({ name: 'daemon', ok: !!h, blocking: false, detail: h ? `running (${h.version ?? '?'})` : 'not running: Claude Code works, but without routing' });
-    const st = h ? await daemonStatus(cfg.daemonPort) : null;
+    // decision 156: who answers on the daemon port (sealed; a program without the token is named, never trusted)
+    let daemonToken = '';
+    try { daemonToken = fs.readFileSync(paths.token(), 'utf8').trim(); } catch { /* init check above */ }
+    const id = await daemonIdentity(cfg.daemonPort, daemonToken);
+    if (id.who === 'other') {
+      const owner = await portOwner(cfg.daemonPort);
+      checks.push({ name: 'daemon', ok: false, blocking: true, detail: `${otherOnPort(cfg.daemonPort)}${owner ? ` (${owner})` : ''}` });
+    } else checks.push({ name: 'daemon', ok: id.who === 'ours', blocking: false, detail: id.who === 'ours' ? `running (${id.version ?? '?'})` : 'not running: Claude Code works, but without routing' });
+    const st = id.who === 'ours' ? await daemonStatus(cfg.daemonPort) : null;
     if (st) checks.push(hookClientCheck(st, cfg.daemonPort));
     // decision 138: what auto-release does now (from the daemon), or what the config file will make it do
     if (st?.routing) checks.push(...routingChecks(st.routing));

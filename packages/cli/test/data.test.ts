@@ -104,7 +104,9 @@ test('against the real daemon, then with it stopped: export and purge reach the 
   assert.equal(await dataExport({ out: file }, d), 0);
   assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 1, 'just the header now');
   assert.equal(await dataPurge({ all: true, yes: true }, d), 0);
-  // with no daemon only its logs are left to empty (decision 142); the open request and its session stay
-  assert.match(lines.at(-1)!, /^Removed 0 closed request\(s\) \(all of them\) and \d+ log file\(s\) emptied\.$/);
+  // with no daemon only its logs are left to empty (decision 142), and its endpoint file and socket go (decision 156);
+  // the open request and its session stay
+  assert.match(lines.at(-1)!, /^Removed 0 closed request\(s\) \(all of them\)(, the stopped daemon's endpoint file and socket \(\d\))? and \d+ log file\(s\) emptied\.$/);
+  assert.ok(!fs.existsSync(path.join(process.env.AGENTIC_ROUTER_HOME!, 'endpoint.json')), 'the endpoint file is gone');
   assert.match(lines.at(-2)!, /1 open or waiting request\(s\) and everything of their sessions are kept/);
 });

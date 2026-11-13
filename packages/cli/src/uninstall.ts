@@ -8,7 +8,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { redact, routerHome } from '@agentic-router/core';
-import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper, recordNoProxy, removeLoopbackNoProxy } from './apimode.ts';
+import { HINT_HEADERS_ENV, isOurBaseUrl, isRouterHelper, recordApiState, recordNoProxy, removeLoopbackNoProxy, undoEnvAdded } from './apimode.ts';
+import { removeEndpointFiles } from './endpointfiles.ts';
+import { tlsPaths } from './localtls.ts';
 import { SettingsParseError, backupFile, isRouterStatusLine, readConfig, readJsonFile, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 
 export interface UninstallDeps {
@@ -21,7 +23,12 @@ export interface UninstallDeps {
   ask(question: string): Promise<boolean>;
   isTTY: boolean;
   out(line: string): void;
+  /** The environment uninstall runs in (default process.env): its NODE_EXTRA_CA_CERTS decides what of the TLS folder stays. */
+  env?: NodeJS.ProcessEnv;
 }
+
+/** A directory itself, not a link to one. */
+const realDir = (p: string): boolean => { try { return fs.lstatSync(p).isDirectory(); } catch { return false; } };
 
 /**
  * What the user had before the router replaced it (decision 149, audit B6): the status line it wrapped (from
@@ -53,9 +60,17 @@ export function planUserSettings(settingsFile: string, config: CliConfig | null,
   if (HINT_HEADERS_ENV in env) { delete env[HINT_HEADERS_ENV]; notes.push(`env.${HINT_HEADERS_ENV}: remove`); }
   const noProxy = config?.noProxyAdded;
   if (noProxy?.length) notes.push(...removeLoopbackNoProxy(env, noProxy));
+  // decisions 156-157: the helper cache and NODE_EXTRA_CA_CERTS API-key mode set (a value of the user's own is put back)
+  const envAdded = [...(config?.apiEnvAdded ?? [])];
+  const hadEnvAdded = envAdded.length > 0;
+  if (hadEnvAdded) notes.push(...undoEnvAdded(env, envAdded));
   if (!notes.length) return null;
   if (Object.keys(env).length) next.env = env; else delete next.env;
-  return { file: settingsFile, summary: notes.join('; '), apply() { writeJsonAtomic(settingsFile, next); if (noProxy?.length) recordNoProxy(null); } };
+  return { file: settingsFile, summary: notes.join('; '), apply() {
+    writeJsonAtomic(settingsFile, next);
+    if (noProxy?.length) recordNoProxy(null);
+    if (hadEnvAdded) recordApiState({ envAdded: [] });
+  } };
 }
 
 /** The project: worktree.baseRef while it is still the "head" init set, and the .gitignore line init added. */
@@ -122,6 +137,21 @@ export async function uninstall(f: Record<string, string | boolean>, d: Uninstal
         fs.rmSync(bak, { force: true });
       } });
   }
+  // decision 157: the local TLS key and certificate; a bundle the user's own NODE_EXTRA_CA_CERTS names is kept
+  const tls = tlsPaths();
+  const shellCa = (d.env ?? process.env).NODE_EXTRA_CA_CERTS?.trim();
+  const shellUsesBundle = !!shellCa && path.resolve(shellCa) === path.resolve(tls.bundle);
+  if (realDir(tls.dir)) {
+    changes.push({ file: tls.dir, summary: shellUsesBundle
+      ? `delete the local TLS key and certificate; keep ${path.basename(tls.bundle)}, which your NODE_EXTRA_CA_CERTS names (point it back at your own file)`
+      : 'delete the local TLS key, certificate and bundle', apply() {
+      if (shellUsesBundle) { for (const p of [tls.key, tls.cert]) fs.rmSync(p, { force: true }); }
+      else fs.rmSync(tls.dir, { recursive: true, force: true });
+    } });
+  }
+  // decision 156: the daemon's endpoint file and socket, once it has stopped
+  const endpointFiles = removeEndpointFiles(routerHome(), { dryRun: true });
+  if (endpointFiles.length) changes.push({ file: routerHome(), summary: `remove the daemon's endpoint file and socket (${endpointFiles.map(p => path.basename(p)).join(', ')})`, apply() { removeEndpointFiles(routerHome()); } });
   const key = f['keep-key'] === true ? 'kept' : await d.keyStatus();
   if (key !== 'present' && key !== 'not_found' && key !== 'kept') d.out(`The OS keychain could not be checked (${key}): an API key may remain in it under "agentic-router".`);
   d.out('agentic-router uninstall will:');

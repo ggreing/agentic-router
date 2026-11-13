@@ -274,7 +274,9 @@ export async function status(): Promise<string> {
   if (cfg.apiMode) {
     const p = cfg.apiMode === 'proxy' && cfg.proxyPort ? await proxyHealth(cfg.proxyPort, proxyToken()) : null;
     lines.push(cfg.apiMode === 'direct' ? 'API-key mode: direct (no proxy; Claude Code reads the key from the keychain)'
-      : p ? `API-key mode: proxy ON (127.0.0.1:${cfg.proxyPort} -> ${p.upstream ?? '?'}, ${p.inflight ?? 0} in flight)`
+      : p?.ok ? `API-key mode: proxy ON (${p.tls ? 'https' : 'http'}://127.0.0.1:${cfg.proxyPort} -> ${p.upstream ?? '?'}, ${p.inflight ?? 0} in flight)`
+      // decision 156: something holds the port without proving it is this router's proxy
+      : p?.other ? `API-key mode: port ${cfg.proxyPort} answers but does not prove it is this router's proxy (an older or restarting proxy, or another program; agentic-router doctor names it); the helper gives it no token`
       : `API-key mode: proxy OFF (127.0.0.1:${cfg.proxyPort} not answering): API calls fail until it is back, or run agentic-router mode direct`);
   }
   return `${lines.join('\n')}${detail}`;

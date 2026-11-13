@@ -21,6 +21,9 @@ export interface ProxyPaths {
   /** Usage rows the daemon has not taken yet. */
   spoolDir: string;
   log: string;
+  /** Decision 157: the local TLS certificate and key (made by the CLI with openssl; user-only). */
+  tlsCert: string;
+  tlsKey: string;
 }
 
 export function proxyPaths(home: string = routerHome()): ProxyPaths {
@@ -33,5 +36,7 @@ export function proxyPaths(home: string = routerHome()): ProxyPaths {
     db: path.join(root, 'proxy.db'),
     spoolDir: path.join(root, 'proxy-spool'),
     log: path.join(root, 'logs', 'proxy.log'),
+    tlsCert: path.join(root, 'tls', 'proxy-cert.pem'),
+    tlsKey: path.join(root, 'tls', 'proxy-key.pem'),
   };
 }

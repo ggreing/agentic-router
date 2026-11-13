@@ -9,11 +9,18 @@
 // route), then exits. <home>/supervise.json records each child's pid and state for status and doctor.
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import { paths, routerHome } from '@agentic-router/core';
+import { proveProxy } from '@agentic-router/proxy';
 import { proxyEntry } from './apimode.ts';
-import { daemonEntry, daemonRequest, health, localRequest } from './daemonctl.ts';
+import { daemonEntry, daemonRequest, health } from './daemonctl.ts';
+import { renewTlsIfDue } from './localtls.ts';
 import { readConfig, writeJsonAtomic } from './setup.ts';
+
+/** How often the supervisor looks at the local TLS certificate's end date (decision 157). */
+export const TLS_CHECK_MS = 6 * 3600_000;
 
 export const BACKOFF_MS = [1000, 2000, 5000, 30_000];
 export const STABLE_MS = 60_000;
@@ -49,6 +56,9 @@ export interface ChildSpec {
   stopTimeoutMs: number;
   /** Written with the child's pid (the daemon's daemon.pid keeps `stop`'s fallback working). */
   pidFile?: string;
+  /** What the child was started with that it cannot change while running (the proxy: local TLS on or off). A
+   *  reconcile restarts a child whose key changed. */
+  key?: string;
 }
 
 export interface SupervisorOptions {
@@ -152,13 +162,15 @@ export class Supervisor {
     if (this.#stopping) return { stopped: [], started: [] };
     const wanted = new Set(next.map(s => s.name));
     const have = new Map(this.#o.specs.map(s => [s.name, s]));
-    const gone = [...this.#o.specs].reverse().filter(s => !wanted.has(s.name));
-    const added = next.filter(s => !have.has(s.name));
-    this.#o.specs = [...this.#o.specs.filter(s => wanted.has(s.name)), ...added];
+    // a child whose key changed (decision 157: the proxy's TLS listener) is stopped and started again
+    const changed = new Set(next.filter(s => have.has(s.name) && (have.get(s.name)!.key ?? '') !== (s.key ?? '')).map(s => s.name));
+    const gone = [...this.#o.specs].reverse().filter(s => !wanted.has(s.name) || changed.has(s.name));
+    const added = next.filter(s => !have.has(s.name) || changed.has(s.name));
+    this.#o.specs = [...this.#o.specs.filter(s => wanted.has(s.name) && !changed.has(s.name)), ...added];
     for (const spec of gone) {
       await this.#stopOne(spec);
       delete this.#states[spec.name];
-      this.#o.log?.('child no longer wanted: stopped', { child: spec.name });
+      this.#o.log?.(changed.has(spec.name) ? 'child settings changed: restarting' : 'child no longer wanted: stopped', { child: spec.name });
     }
     for (const spec of added) {
       this.#states[spec.name] = { pid: null, state: 'stopped', restarts: 0, failures: 0 };
@@ -194,7 +206,7 @@ export function childSpecs(home = routerHome(), env: NodeJS.ProcessEnv = process
   }];
   if (cfg?.apiMode === 'proxy' && cfg.proxyPort) {
     specs.push({
-      name: 'proxy', command: process.execPath, args: [proxyEntry()], env: childEnv, stopTimeoutMs: 35_000,
+      name: 'proxy', command: process.execPath, args: [proxyEntry()], env: childEnv, stopTimeoutMs: 35_000, key: `tls=${cfg.proxy?.tls === true}`,
       stop: async child => { if (child.connected) child.send({ type: 'stop' }); },
     });
   }
@@ -213,6 +225,21 @@ export async function runSupervisor(home = routerHome()): Promise<void> {
   fs.writeFileSync(files.pid, String(process.pid));
   const sup = new Supervisor({ specs: childSpecs(home), statusFile: files.status, log });
   sup.start();
+  // decision 157: at the supervisor's start (agentic-router start) the certificate is renewed inside RENEW_WITHIN_DAYS
+  // and an older CA-shaped one is remade; the timer renews only inside TIMER_RENEW_WITHIN_DAYS or after the end,
+  // since a renewal breaks running Claude Code sessions. The proxy picks a new file up without a restart.
+  const renew = (at: 'start' | 'timer') => {
+    try {
+      const r = renewTlsIfDue(home, { at });
+      if (r.cert === 'renewed' || r.cert === 'created') log('local TLS certificate made', { at, why: r.why, note: 'Claude Code sessions started before this trust the old certificate only: restart them' });
+      if (r.cert === 'unavailable') log('local TLS certificate could not be made', { at, why: r.why });
+      if (r.bundle === 'rebuilt') log('local TLS bundle rebuilt', { at });
+      if (r.unreadable.length) log('local TLS bundle: a certificate file of yours cannot be read and is left out', { files: r.unreadable });
+    } catch (e) { log('local TLS renewal failed', { error: String(e) }); }
+  };
+  renew('start');
+  const renewTimer = setInterval(() => renew('timer'), TLS_CHECK_MS);
+  renewTimer.unref();
   log('supervisor started', { pid: process.pid, children: Object.keys(sup.states()) });
   await new Promise<void>(resolve => {
     let done = false;
@@ -220,6 +247,7 @@ export async function runSupervisor(home = routerHome()): Promise<void> {
       if (done) return;
       done = true;
       clearInterval(poll);
+      clearInterval(renewTimer);
       log('supervisor stopping', { why });
       void sup.stop().then(resolve);
     };
@@ -245,10 +273,42 @@ export function readSuperviseStatus(home = routerHome()): SuperviseStatus | null
 }
 
 /** The proxy's health route (local token), for status and doctor. */
-export async function proxyHealth(port: number, token: string, timeoutMs = 800): Promise<{ ok: boolean; upstream?: string; via?: string | null; inflight?: number } | null> {
-  const r = await localRequest(port, 'GET', '/proxy/v1/health', { token, timeoutMs });
-  if (!r || r.status !== 200) return null;
-  try { return JSON.parse(r.body) as { ok: boolean; upstream?: string; via?: string | null; inflight?: number }; } catch { return null; }
+export interface ProxyHealth { ok: boolean; upstream?: string; via?: string | null; inflight?: number; tls?: boolean; /** something that is not this router's proxy holds the port */ other?: boolean }
+
+/** The router's local TLS certificate when the proxy serves HTTPS (config.json proxy.tls), else undefined. */
+export function proxyCa(home = routerHome()): string | undefined {
+  if (readConfig()?.proxy?.tls !== true) return undefined;
+  try { return fs.readFileSync(path.join(home, 'tls', 'proxy-cert.pem'), 'utf8'); } catch { return undefined; }
+}
+
+/**
+ * The proxy's health. Decision 156: the proxy proves itself first (proof.ts), and only then is the local token sent
+ * for the health answer; null when nothing listens, `other` when something else answers (or, with local TLS, cannot
+ * complete the handshake with the router's certificate).
+ */
+// two seconds, so a busy proxy is not taken for something else
+export async function proxyHealth(port: number, token: string, timeoutMs = 2000): Promise<ProxyHealth | null> {
+  const ca = proxyCa();
+  const who = await proveProxy({ port, token, timeoutMs, ...(ca ? { ca } : {}) });
+  if (who === 'down') return null;
+  if (who === 'other') return { ok: false, other: true };
+  const body = await new Promise<string | null>(resolve => {
+    const lib = ca ? https : http;
+    const req = lib.request({
+      host: '127.0.0.1', port, method: 'GET', path: '/proxy/v1/health', agent: false, timeout: timeoutMs,
+      headers: { host: `127.0.0.1:${port}`, authorization: `Bearer ${token}` }, ...(ca ? { ca } : {}),
+    }, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', c => chunks.push(c as Buffer));
+      res.on('end', () => resolve(res.statusCode === 200 ? Buffer.concat(chunks).toString('utf8') : null));
+      res.on('error', () => resolve(null));
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+  if (body === null) return null;
+  try { return { ...(JSON.parse(body) as ProxyHealth), tls: !!ca }; } catch { return null; }
 }
 
 export { health };

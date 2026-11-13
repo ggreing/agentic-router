@@ -68,6 +68,7 @@ export interface RouterConfig {
     allowedUpstreams?: string[];   // extra https origins added by `agentic-router proxy allow-upstream` (user-confirmed)
     tokenDailyCapUsd?: number;   // per local token per day; default 100
     dailyCapUsd?: number;        // all tokens per day; default 300
+    tls?: boolean;               // decision 157: serve HTTPS with <home>/tls/proxy-cert.pem (set by `mode api` when it can)
   };
   /**
    * API-key mode (decision 130), set by `agentic-router init --mode api` / `mode`: 'proxy' runs the proxy and

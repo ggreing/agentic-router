@@ -12,6 +12,8 @@ export interface Usage {
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+  /** "fast" or "standard", as the API reports it (fast mode is billed at a multiple). */
+  speed?: string;
 }
 
 export interface TapResult {
@@ -39,6 +41,7 @@ function cleanUsage(u: unknown): Usage | undefined {
     const v = num(o[k]);
     if (v !== undefined) out[k] = v;
   }
+  if (o.speed === 'fast' || o.speed === 'standard') out.speed = o.speed;   // fast mode is billed at the model's fast multiple
   const cc = o.cache_creation;
   if (cc && typeof cc === 'object') {
     const c = cc as Record<string, unknown>;

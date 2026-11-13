@@ -9,7 +9,8 @@ import {
 } from '@agentic-router/proxy';
 import { claudeAuthStatus, detectLogin, planApiSettings, planSubscriptionSettings, type ApiMode, type CommandRunner } from './apimode.ts';
 import { runningSupervisor } from './daemonctl.ts';
-import { pickPort, readConfig, restrictHome, writeConfig, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
+import { bundleSources, prepareTls, type TlsChoice } from './localtls.ts';
+import { pickPort, readConfig, readJsonFile, restrictHome, writeConfig, writeJsonAtomic, type CliConfig, type PlannedChange } from './setup.ts';
 import { superviseFiles } from './supervise.ts';
 
 export interface ApiDeps {
@@ -27,6 +28,23 @@ export interface ApiDeps {
   out(line: string): void;
   /** Asks a running supervisor to re-read the mode (start or stop the proxy); false when none runs. */
   reload?(): boolean;
+  /** Decision 157: the openssl to make the local TLS certificate with (null: none, so TLS stays off; default: found). */
+  openssl?: string | null;
+  /** The environment Claude Code is launched from (default process.env): its proxy and NODE_EXTRA_CA_CERTS count. */
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Decision 157: whether proxy mode gets local TLS now. Makes or renews the certificate and writes a bundle when one
+ * is needed; Claude Code's settings are not changed here (planApiSettings shows that change first).
+ */
+export function tlsChoice(settingsFile: string, cfg: CliConfig, env: NodeJS.ProcessEnv = process.env, openssl?: string | null): TlsChoice {
+  let settingsEnv: Record<string, unknown> = {};
+  try {
+    const s = readJsonFile<Record<string, any>>(settingsFile, {});
+    if (s.env && typeof s.env === 'object') settingsEnv = s.env as Record<string, unknown>;
+  } catch { /* an unparseable file is reported by the settings step */ }
+  return prepareTls({ settingsEnv, shellEnv: env, bundleFrom: bundleSources(cfg.localTls?.bundleFrom), ...(openssl !== undefined ? { openssl } : {}) });
 }
 
 /** The real reload: a file the supervisor polls for (portable to Windows, where signals are hard kills). */
@@ -118,7 +136,8 @@ export async function setMode(mode: ApiMode, f: Record<string, string | boolean>
     const s = await d.vault.status();
     if (s !== 'present') { d.out(`direct mode reads the key from the keychain, but: ${s === 'not_found' ? 'no key is stored (agentic-router key set)' : vaultHelp[s] ?? s}`); return 2; }
   }
-  const change = planApiSettings(d.settingsFile, mode, cfg.proxyPort);
+  const env = d.env ?? process.env;
+  const change = planApiSettings(d.settingsFile, mode, cfg.proxyPort, undefined, env, mode === 'proxy' ? tlsChoice(d.settingsFile, cfg, env, d.openssl) : undefined);
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();
   writeConfig({ ...(readConfig() ?? cfg), apiMode: mode });
@@ -162,7 +181,8 @@ export async function modeApi(f: Record<string, string | boolean>, d: ApiDeps): 
   if (status !== 'present') { d.out(`API-key mode needs the key in the keychain, but: ${status === 'not_found' ? 'no key is stored (agentic-router key set)' : vaultHelp[status] ?? status}`); return 2; }
   const login = await loginStep(f, d, 'agentic-router mode api');
   if (!login.ok) return login.code;
-  const change = planApiSettings(d.settingsFile, 'proxy', cfg.proxyPort);
+  const env = d.env ?? process.env;
+  const change = planApiSettings(d.settingsFile, 'proxy', cfg.proxyPort, undefined, env, tlsChoice(d.settingsFile, cfg, env, d.openssl));
   if (cfg.apiMode === 'proxy' && !change) { d.out('Already in API-key mode through the proxy: nothing to change.'); return 0; }
   if (change && !await d.confirm([change], f.yes === true)) { d.out('nothing changed'); return 1; }
   change?.apply();

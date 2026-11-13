@@ -1,9 +1,11 @@
 // The local token Claude Code presents instead of the API key (decision 130: printed by bin/local-token.mjs as
 // Claude Code's apiKeyHelper; the token is never in settings.json).
 //
+// Every proxy start writes a new token (decision 156, freshAtStart): a token from before the restart gets 401.
 // Rotation (`agentic-router token rotate`) writes a new token to the file. The proxy notices on the next
 // request and keeps accepting the previous token for a grace window, because Claude Code caches the helper's
-// output (5 min by default, CLAUDE_CODE_API_KEY_HELPER_TTL_MS). After the window the old token gets 401.
+// output (CLAUDE_CODE_API_KEY_HELPER_TTL_MS: 5 min by default, 60 s in proxy mode, set by `mode api`). After the
+// window the old token gets 401.
 // Tokens are compared in constant time; a token is identified in totals and rows by a short hash only.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -116,5 +118,21 @@ export class LocalTokens {
   /** The secrets currently accepted, for log masking. */
   secrets(): string[] {
     return [this.#current, ...(this.#previous ? [this.#previous.token] : [])];
+  }
+
+  /** The current token (the file re-read first), for the proof answer (proof.ts); never sent anywhere. */
+  current(): string {
+    this.#reload();
+    return this.#current;
+  }
+
+  /**
+   * Decision 156: a fresh token at every proxy start, with no grace for the old one. A token handed out before the
+   * restart, to Claude Code or to a program that held the port meanwhile, gets 401; Claude Code then runs the
+   * helper again (it does on a 401), which checks this proxy before it prints the new token.
+   */
+  static freshAtStart(file: string): void {
+    try { fs.rmSync(metaFile(file), { force: true }); } catch { /* none */ }
+    writeTokenFile(file, newToken());
   }
 }

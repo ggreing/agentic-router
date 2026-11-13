@@ -127,3 +127,28 @@ test('decision 149: an unreadable backup is kept; an unparseable settings file s
   assert.deepEqual(r.calls, [], 'nothing stopped or deleted');
   assert.match(r.log.join('\n'), /cannot parse .* Nothing was changed/);
 });
+
+test('decisions 156-157: uninstall deletes the local TLS folder and the daemon\'s endpoint file, but keeps a bundle the user\'s NODE_EXTRA_CA_CERTS names', async () => {
+  const i = await installed();
+  const home = process.env.AGENTIC_ROUTER_HOME!;
+  const tls = path.join(home, 'tls');
+  const fill = () => {
+    fs.mkdirSync(tls, { recursive: true });
+    for (const f of ['proxy-cert.pem', 'proxy-key.pem', 'ca-bundle.pem']) fs.writeFileSync(path.join(tls, f), 'x');
+    fs.writeFileSync(path.join(home, 'endpoint.json'), '{"version":1,"pid":1,"startedAt":"","port":4711}');
+  };
+  fill();
+  let r = deps(i);
+  assert.equal(await uninstall({}, r.d), 0);
+  assert.ok(!fs.existsSync(tls), 'the TLS folder is gone');
+  assert.ok(!fs.existsSync(path.join(home, 'endpoint.json')), 'the endpoint file is gone');
+  assert.match(r.log.join('\n'), /delete the local TLS key, certificate and bundle/);
+  // the user's environment points at the bundle: it stays, and uninstall says to point the variable back
+  const j = await installed();
+  fill();
+  r = deps(j);
+  r.d.env = { NODE_EXTRA_CA_CERTS: path.join(tls, 'ca-bundle.pem') };
+  assert.equal(await uninstall({}, r.d), 0);
+  assert.deepEqual(fs.readdirSync(tls), ['ca-bundle.pem']);
+  assert.match(r.log.join('\n'), /keep ca-bundle\.pem, which your NODE_EXTRA_CA_CERTS names \(point it back at your own file\)/);
+});
